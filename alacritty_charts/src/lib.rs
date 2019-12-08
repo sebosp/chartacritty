@@ -6,27 +6,16 @@
 //! and rotate without relocation of memory or shifting of the vector.
 
 // DONE:
-// -- Add step to query (1 second resolution for example)
-// -- Add min/max time to query.
-// -- Move to config.yaml
-// -- The yaml should drive an array of activity dashboards
-// -- Tokio timers
-// -- Use prometheus queries instead of our own aggregation/etc.
-// -- Logging
-// -- in MacOS the data to OpenGL must be sent from the main thread. This would require changing
-// the async_coordinator to send data somehow to the main thread.
-// -- When data is not received from a channel, the line does not move anymore, consider adding a
-//    ($now, None) to the array
-// -- When disconnected from a server, the connection is not retried.
 // -- mock the prometheus server and response
+// -- When disconnected from a server, it is not easy to know which one or why.
 // IN PROGRESS:
 // -- Group labels into separate colors (find something that does color spacing in rust)
-// -- When disconnected from a server, it is not easy to know which one or why.
 // TODO:
 // -- The dashboards should be toggable, some key combination
 // -- When activated on toggle it could blur a portion of the screen
 // -- Create a TimeSeries inside the Term itself so that increments can be done synchronously but
 //    send/fetch the updates to the background every half a second or so?
+// -- Add space for drawing the charts, right now we are decreasing 2 lines, but it breaks tmux
 
 #![warn(rust_2018_idioms)]
 #[macro_use]

@@ -702,9 +702,6 @@ pub fn spawn_async_tasks(
 
 /// `run` is an example use of the crate without drawing the data.
 pub fn run(config: crate::config::Config) {
-    let charts = config.charts.clone();
-    // Create the channel that is used to communicate with the
-    // background task.
     let charts_size_info = SizeInfo {
         width: 100.,
         height: 100.,
@@ -723,14 +720,14 @@ pub fn run(config: crate::config::Config) {
     let (handle_tx, handle_rx) = std::sync::mpsc::channel();
     // Start the Async I/O runtime, this needs to run in a background thread because in OSX, only
     // the main thread can write to the graphics card.
-    let (_tokio_thread, tokio_shutdown) = alacritty_charts::async_utils::spawn_async_tasks(
+    let (tokio_thread, tokio_shutdown) = spawn_async_tasks(
         config.charts.clone(),
         charts_tx.clone(),
         charts_rx,
         handle_tx,
         charts_size_info,
     );
-    let tokio_handle = handle_rx
+    let _tokio_handle = handle_rx
         .recv()
         .expect("Unable to get the tokio handle in a background thread");
 
