@@ -860,16 +860,10 @@ impl<T> Term<T> {
         charts_tx: futures_mpsc::Sender<alacritty_charts::async_utils::AsyncChartTask>,
     ) -> Term<T> {
         // TODO: On Update, we should refresh this.
-        // TODO: Implement key combination to enabled/disable charts
-        let charts_enabled = !config.charts.is_empty();
 
         let num_cols = size.cols();
-        let num_lines = if charts_enabled {
-            // Remove 2 lines from display to draw the Charts
-            size.lines() - 2
-        } else {
-            size.lines()
-        };
+
+        let num_lines = size.lines();
 
         let history_size = config.scrolling.history() as usize;
         let grid = Grid::new(num_lines, num_cols, history_size, Cell::default());
@@ -910,7 +904,11 @@ impl<T> Term<T> {
             is_focused: true,
             title: config.window.title.clone(),
             title_stack: Vec::new(),
-            charts_handle: TermChartsHandle { tokio_handle, charts_tx, enabled: charts_enabled },
+            charts_handle: TermChartsHandle {
+                tokio_handle,
+                charts_tx,
+                enabled: !config.charts.is_empty(),
+            },
         }
     }
 
@@ -1076,10 +1074,6 @@ impl<T> Term<T> {
         // Should not allow less than 1 line, causes all sorts of checks to be required.
         if num_lines <= Line(1) {
             num_lines = Line(2);
-        }
-
-        if self.charts_handle.enabled {
-            num_lines -= 1;
         }
 
         // Scroll up to keep cursor in terminal
