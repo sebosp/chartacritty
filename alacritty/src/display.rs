@@ -344,6 +344,11 @@ impl Display {
             pty_size.height -= pty_size.cell_height * lines as f32;
         }
 
+        // Subtract some space for the charts
+        if !config.charts.is_empty() {
+            pty_size.height -= pty_size.cell_height * 1f32;
+        }
+
         // Resize PTY
         pty_resize_handle.on_resize(&pty_size);
 
