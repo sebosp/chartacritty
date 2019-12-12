@@ -253,6 +253,32 @@ impl<'de> Deserialize<'de> for Rgb {
         }
     }
 }
+/// `ActiveAlertUnderLineDecoration` draws an underlined series of
+/// red triangles below a portion of the screen to denote alert below a
+/// chart
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+pub struct ActiveAlertUnderLineDecoration {
+    /// The value at which to draw the reference point
+    pub value: f64,
+
+    #[serde(default)]
+    pub color: Rgb,
+
+    /// Transparency
+    #[serde(default)]
+    pub alpha: f32,
+
+    /// The pixels to separate from the left and right
+    #[serde(default)]
+    pub padding: Value2D,
+
+    /// The opengl vertices is stored in this vector
+    /// The capacity is dynamic, it draws a triangle every n pixels, see
+    /// opengl_vertices()
+    #[serde(default)]
+    pub opengl_data: Vec<f32>,
+}
+
 /// `ReferencePointDecoration` draws a fixed point to give a reference point
 /// of what a drawn value may mean
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
