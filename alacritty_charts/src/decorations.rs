@@ -64,10 +64,10 @@ impl Decoration {
         match self {
             Decoration::Reference(ref mut d) => {
                 d.update_opengl_vecs(display_size, offset, chart_max_value)
-            },
+            }
             Decoration::Alert(ref mut d) => {
                 d.update_opengl_vecs(display_size, offset, chart_max_value)
-            },
+            }
             Decoration::None => (),
         }
     }
@@ -222,7 +222,6 @@ impl ReferencePointDecoration {
     }
 }
 
-
 /// `ActiveAlertUnderLineDecoration` draws an underlined series of
 /// red triangles below a portion of the screen to denote alert below a
 /// chart
@@ -274,13 +273,13 @@ impl ActiveAlertUnderLineDecoration {
     /// `top_value` increments the reference point value by an additional
     /// percentage to account for space to draw the axis tick
     pub fn top_value(&self) -> f64 {
-        self.value + self.value * self.height_multiplier
+        self.value
     }
 
     /// `bottom_value` decrements the reference point value by a percentage
     /// to account for space to draw the axis tick
     pub fn bottom_value(&self) -> f64 {
-        self.value - self.value * self.height_multiplier
+        self.value
     }
 
     /// `update_opengl_vecs` Draws a marker at a fixed position for
@@ -335,77 +334,5 @@ impl ActiveAlertUnderLineDecoration {
             "ActiveAlertUnderLineDecoration:update_opengl_vecs: Finished: {:?}",
             self.opengl_data
         );
-    }
-}
-
-// XXX: Maybe this should turn into a trait
-impl Decoration {
-    /// `width` of the Decoration as it may need space to be drawn, otherwise
-    /// the decoration and the data itself would overlap, these are pixels
-    fn width(&self) -> f32 {
-        match self {
-            Decoration::Reference(d) => d.padding.x * 2., // it needs space left and right
-            Decoration::None => 0f32,
-        }
-    }
-
-    /// `top_value` is the Y value of the decoration, it needs to be
-    /// in the range of the metrics that have been collected, thus f64
-    /// this is the highest point the Decoration will use
-    fn top_value(&self) -> f64 {
-        match self {
-            Decoration::Reference(ref d) => d.top_value(),
-            Decoration::None => 0f64,
-        }
-    }
-
-    /// `bottom_value` is the Y value of the decoration, it needs to be
-    /// in the range of the metrics that have been collected, thus f64
-    /// this is the lowest point the Decoration will use
-    fn bottom_value(&self) -> f64 {
-        match self {
-            Decoration::Reference(d) => d.value - d.value * d.height_multiplier,
-            Decoration::None => 0f64,
-        }
-    }
-
-    /// `update_opengl_vecs` calls the decoration update methods
-    fn update_opengl_vecs(
-        &mut self,
-        display_size: SizeInfo,
-        offset: Value2D,
-        chart_max_value: f64,
-    ) {
-        match self {
-            Decoration::Reference(ref mut d) => {
-                d.update_opengl_vecs(display_size, offset, chart_max_value)
-            }
-            Decoration::None => (),
-        }
-    }
-
-    /// `opengl_vertices` returns the representation of the decoration in
-    /// opengl. These are for now GL_LINES and 2D
-    pub fn opengl_vertices(&self) -> Vec<f32> {
-        match self {
-            Decoration::Reference(d) => d.opengl_vertices(),
-            Decoration::None => vec![],
-        }
-    }
-
-    /// `color` returns the Rgb for the decoration
-    pub fn color(&self) -> Rgb {
-        match self {
-            Decoration::Reference(d) => d.color,
-            Decoration::None => Rgb::default(),
-        }
-    }
-
-    /// `alpha` returns the transparency for the decoration
-    pub fn alpha(&self) -> f32 {
-        match self {
-            Decoration::Reference(d) => d.alpha,
-            Decoration::None => 0.0f32,
-        }
     }
 }
