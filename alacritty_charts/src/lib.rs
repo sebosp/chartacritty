@@ -21,27 +21,27 @@
 #[macro_use]
 extern crate serde_derive;
 
-pub use futures;
-pub use hyper;
-pub use hyper_tls;
-pub use percent_encoding;
-
-use log::*;
-use serde_yaml;
-use std::fmt;
-use std::str::FromStr;
-use std::time::UNIX_EPOCH;
-pub use tokio;
-pub use tokio_core;
-use tracing::{event, span, Level};
-
-use serde::de::Visitor;
-use serde::{Deserialize, Deserializer};
-
 pub mod async_utils;
 pub mod config;
 pub mod decorations;
 pub mod prometheus;
+
+pub use futures;
+pub use hyper;
+pub use hyper_tls;
+pub use percent_encoding;
+pub use tokio;
+pub use tokio_core;
+
+use decorations::*;
+use log::*;
+use serde::de::Visitor;
+use serde::{Deserialize, Deserializer};
+use serde_yaml;
+use std::fmt;
+use std::str::FromStr;
+use std::time::UNIX_EPOCH;
+use tracing::{event, span, Level};
 
 /// `MissingValuesPolicy` provides several ways to deal with missing values
 /// when drawing the Metric

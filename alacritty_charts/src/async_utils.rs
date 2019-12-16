@@ -17,7 +17,6 @@ use std::time::{Duration, Instant};
 use tokio::prelude::*;
 use tokio::runtime::current_thread;
 use tokio::timer::Interval;
-//use tokio::{prelude::*, runtime::current_thread};
 use tracing::{event, span, Level};
 
 /// `MetricRequest` defines remote data sources that should be loaded regularly

@@ -1,6 +1,7 @@
 //! Alacritty Chart Decorations are drawings or effects over drawings that
-//! are not tied to metrics, these could be reference points or alarms/etc.
+//! are not tied to metrics, these could be reference points, alarms/etc.
 
+use crate::*;
 /// `Decoration` contains several types of decorations to add to a chart
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 #[serde(tag = "type")]
@@ -24,10 +25,10 @@ impl Default for Decoration {
 impl Decoration {
     /// `width` of the Decoration as it may need space to be drawn, otherwise
     /// the decoration and the data itself would overlap, these are pixels
-    fn width(&self) -> f32 {
+    pub fn width(&self) -> f32 {
         match self {
             Decoration::Reference(d) => d.padding.x * 2., // it needs space left and right
-            Decoration::Alert(_d) => 0f32, // The alert is drawn below the chart data.
+            Decoration::Alert(_) => 0f32, // The alert is drawn below the chart data.
             Decoration::None => 0f32,
         }
     }
@@ -35,10 +36,10 @@ impl Decoration {
     /// `top_value` is the Y value of the decoration, it needs to be
     /// in the range of the metrics that have been collected, thus f64
     /// this is the highest point the Decoration will use
-    fn top_value(&self) -> f64 {
+    pub fn top_value(&self) -> f64 {
         match self {
             Decoration::Reference(ref d) => d.top_value(),
-            Decoration::Alert => 0f64,
+            Decoration::Alert(_) => 0f64,
             Decoration::None => 0f64,
         }
     }
@@ -46,7 +47,7 @@ impl Decoration {
     /// `bottom_value` is the Y value of the decoration, it needs to be
     /// in the range of the metrics that have been collected, thus f64
     /// this is the lowest point the Decoration will use
-    fn bottom_value(&self) -> f64 {
+    pub fn bottom_value(&self) -> f64 {
         match self {
             Decoration::Reference(d) => d.value - d.value * d.height_multiplier,
             Decoration::Alert(_d) => 0f64,
@@ -55,7 +56,7 @@ impl Decoration {
     }
 
     /// `update_opengl_vecs` calls the decoration update methods
-    fn update_opengl_vecs(
+    pub fn update_opengl_vecs(
         &mut self,
         display_size: SizeInfo,
         offset: Value2D,
