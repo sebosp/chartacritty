@@ -128,9 +128,12 @@ pub struct ReferencePointDecoration {
     pub padding: Value2D,
 
     /// The opengl vertices is stored in this vector
-    /// The capacity is always 12, see opengl_vertices()
     #[serde(default)]
     pub opengl_data: Vec<f32>,
+
+    /// The capacity is always 12, see opengl_vertices()
+    #[serde(default)]
+    pub opengl_vec_capacity: usize,
 }
 
 impl Default for ReferencePointDecoration {
@@ -145,6 +148,7 @@ impl Default for ReferencePointDecoration {
                 y: 0f32, // No top/bottom padding
             },
             opengl_data: vec![],
+            opengl_vec_capacity: 12,
         }
     }
 }
@@ -177,8 +181,8 @@ impl ReferencePointDecoration {
         chart_max_value: f64,
     ) {
         debug!("ReferencePointDecoration:update_opengl_vecs: Starting");
-        if 12 != self.opengl_data.capacity() {
-            self.opengl_data = vec![0.; 12];
+        if self.opengl_vec_capacity != self.opengl_data.capacity() {
+            self.opengl_data = vec![0.; self.opengl_vec_capacity];
         }
         // The vertexes of the above marker idea can be represented as
         // connecting lines for these coordinates:
@@ -187,7 +191,6 @@ impl ReferencePointDecoration {
         // x1,y1 --|-----------------------|-- x2,y1
         // x1,y3   |                       |   x2,y3
         // |- 10% -|-         80%         -|- 10% -|
-        // TODO: Add marker_line color to opengl
         // TODO: Call only when max or min have changed in collected metrics
         //
         // Calculate X coordinates:
@@ -247,6 +250,10 @@ pub struct ActiveAlertUnderLineDecoration {
     /// opengl_vertices()
     #[serde(default)]
     pub opengl_data: Vec<f32>,
+
+    /// The capacity is always 12, see opengl_vertices()
+    #[serde(default)]
+    pub opengl_vec_capacity: usize,
 }
 
 impl Default for ActiveAlertUnderLineDecoration {
@@ -260,6 +267,7 @@ impl Default for ActiveAlertUnderLineDecoration {
                 y: 1f32, // XXX: figure out how to reserve space vertically
             },
             opengl_data: vec![],
+            opengl_vec_capacity: 8usize, // Minimum to draw left bar to right bar, 4 vertices
         }
     }
 }
@@ -283,8 +291,8 @@ impl ActiveAlertUnderLineDecoration {
         self.value
     }
 
-    /// `update_opengl_vecs` Draws a marker at a fixed position for
-    /// reference.
+    /// `update_opengl_vecs` Draws a series of triangles at the bottom of
+    /// a metric to show an alarm
     pub fn update_opengl_vecs(
         &mut self,
         display_size: SizeInfo,
@@ -292,17 +300,18 @@ impl ActiveAlertUnderLineDecoration {
         chart_max_value: f64,
     ) {
         debug!("ActiveAlertUnderLineDecoration:update_opengl_vecs: Starting");
-        if 12 != self.opengl_data.capacity() {
-            self.opengl_data = vec![0.; 12];
+        // TODO: Calculate every N pixels the actual amount of vertices
+        if self.opengl_vec_capacity != self.opengl_data.capacity() {
+            self.opengl_data = vec![0.; self.opengl_vec_capacity];
         }
         // The vertexes of the above marker idea can be represented as
         // connecting lines for these coordinates:
         //         |Actual Draw Metric Data|
         // x1,y2   |                       |   x2,y2
         // x1,y1 --|-----------------------|-- x2,y1
-        // x1,y3   |                       |   x2,y3
+        // x1,y3   |\ /\ /\ /\ /\ /\ /\ /\ |   x2,y3
+        //         | v  v  v  v  v  v  v  \|
         // |- 10% -|-         80%         -|- 10% -|
-        // TODO: Add marker_line color to opengl
         // TODO: Call only when max or min have changed in collected metrics
         //
         // Calculate X coordinates:
@@ -315,6 +324,7 @@ impl ActiveAlertUnderLineDecoration {
         let y2 = display_size.scale_y(chart_max_value, self.top_value());
         let y3 = display_size.scale_y(chart_max_value, self.bottom_value());
 
+        // TODO: Fix this part in a for loop overwriting the allocated vector
         // Build the left most axis "tick" mark.
         self.opengl_data[0] = x1;
         self.opengl_data[1] = y2;
