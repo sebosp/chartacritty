@@ -259,15 +259,15 @@ pub struct ActiveAlertUnderLineDecoration {
 impl Default for ActiveAlertUnderLineDecoration {
     fn default() -> ActiveAlertUnderLineDecoration {
         ActiveAlertUnderLineDecoration {
-            value: 1.0,
+            value: 0.10, // Up to 10% of the drawn space should be used.
             color: Rgb::default(),
             alpha: 0.5,
             padding: Value2D {
-                x: 0f32,
+                x: 1f32,
                 y: 1f32, // XXX: figure out how to reserve space vertically
             },
             opengl_data: vec![],
-            opengl_vec_capacity: 8usize, // Minimum to draw left bar to right bar, 4 vertices
+            opengl_vec_capacity: 12usize, // Minimum to draw left bar to right bar and whiskers
         }
     }
 }
@@ -300,36 +300,39 @@ impl ActiveAlertUnderLineDecoration {
         chart_max_value: f64,
     ) {
         debug!("ActiveAlertUnderLineDecoration:update_opengl_vecs: Starting");
-        // TODO: Calculate every N pixels the actual amount of vertices
+        // TODO: This needs to be calculated only at the start, perhaps an init() method.
+        // TODO: Depending on the number of alarms, the transparency should become 0.
         if self.opengl_vec_capacity != self.opengl_data.capacity() {
             self.opengl_data = vec![0.; self.opengl_vec_capacity];
         }
         // The vertexes of the above marker idea can be represented as
         // connecting lines for these coordinates:
         //         |Actual Draw Metric Data|
-        // x1,y2   |                       |   x2,y2
-        // x1,y1 --|-----------------------|-- x2,y1
-        // x1,y3   |\ /\ /\ /\ /\ /\ /\ /\ |   x2,y3
-        //         | v  v  v  v  v  v  v  \|
-        // |- 10% -|-         80%         -|- 10% -|
-        // TODO: Call only when max or min have changed in collected metrics
+        //         |                       |
+        //         |                       |
+        // x1,y2   ||\                   /||   x4,y1
+        // x1,y1   |--+-----------------+--|   x4,y3
+        // |- 5 % -|-         90%         -|- 5 % -|
+        //          x2,y1             x3,y1
         //
         // Calculate X coordinates:
         let x1 = display_size.scale_x(offset.x);
-        let x2 = display_size.scale_x(offset.x + display_size.chart_width);
+        let x2 = display_size.scale_x(offset.x + 0.1 * display_size.chart_width);
+        let x3 = display_size
+            .scale_x(offset.x + display_size.chart_width - 0.1 * display_size.chart_width);
+        let x4 = display_size.scale_x(offset.x + display_size.chart_width);
 
-        // Calculate Y, the marker hints are 10% of the current values
-        // This means that the
+        // Calculate Y, the marker hints are by default 10% of the chart height
+        // TODO: Use chart height here:
         let y1 = display_size.scale_y(chart_max_value, self.value);
-        let y2 = display_size.scale_y(chart_max_value, self.top_value());
-        let y3 = display_size.scale_y(chart_max_value, self.bottom_value());
+        let y2 = -1.0;
 
         // TODO: Fix this part in a for loop overwriting the allocated vector
         // Build the left most axis "tick" mark.
         self.opengl_data[0] = x1;
         self.opengl_data[1] = y2;
         self.opengl_data[2] = x1;
-        self.opengl_data[3] = y3;
+        self.opengl_data[3] = y2;
 
         // Create the line to the other side
         self.opengl_data[4] = x1;
@@ -338,7 +341,7 @@ impl ActiveAlertUnderLineDecoration {
         self.opengl_data[7] = y1;
         // Finish the axis "tick" on the other side
         self.opengl_data[8] = x2;
-        self.opengl_data[9] = y3;
+        self.opengl_data[9] = y2;
         self.opengl_data[10] = x2;
         self.opengl_data[11] = y2;
         debug!(
