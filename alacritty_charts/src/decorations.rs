@@ -297,7 +297,7 @@ impl ActiveAlertUnderLineDecoration {
         &mut self,
         display_size: SizeInfo,
         offset: Value2D,
-        chart_max_value: f64,
+        _chart_max_value: f64,
     ) {
         debug!("ActiveAlertUnderLineDecoration:update_opengl_vecs: Starting");
         // TODO: This needs to be calculated only at the start, perhaps an init() method.
@@ -310,10 +310,10 @@ impl ActiveAlertUnderLineDecoration {
         //         |Actual Draw Metric Data|
         //         |                       |
         //         |                       |
-        // x1,y2   ||\                   /||   x4,y1
-        // x1,y1   |--+-----------------+--|   x4,y3
+        // x1,y1   ||\                   /||   x4,y1
+        // x1,y2   |--+-----------------+--|   x4,y2
         // |- 5 % -|-         90%         -|- 5 % -|
-        //          x2,y1             x3,y1
+        //          x2,y2             x3,y2
         //
         // Calculate X coordinates:
         let x1 = display_size.scale_x(offset.x);
@@ -323,27 +323,29 @@ impl ActiveAlertUnderLineDecoration {
         let x4 = display_size.scale_x(offset.x + display_size.chart_width);
 
         // Calculate Y, the marker hints are by default 10% of the chart height
-        // TODO: Use chart height here:
-        let y1 = display_size.scale_y(chart_max_value, self.value);
+        // Same as the chart_width to have the same amount of pixels.
+        let y1 = -1.0 - (0.1 * display_size.chart_width);
         let y2 = -1.0;
 
         // TODO: Fix this part in a for loop overwriting the allocated vector
-        // Build the left most axis "tick" mark.
-        self.opengl_data[0] = x1;
+        // Build the left most triangle
+        self.opengl_data[0] = x2;
         self.opengl_data[1] = y2;
         self.opengl_data[2] = x1;
-        self.opengl_data[3] = y2;
+        self.opengl_data[3] = y1;
+        self.opengl_data[4] = x1;
+        self.opengl_data[5] = y2;
 
         // Create the line to the other side
-        self.opengl_data[4] = x1;
-        self.opengl_data[5] = y1;
-        self.opengl_data[6] = x2;
-        self.opengl_data[7] = y1;
-        // Finish the axis "tick" on the other side
-        self.opengl_data[8] = x2;
+        self.opengl_data[6] = x4;
+        self.opengl_data[7] = y2;
+
+        // Build the right most triangle
+        self.opengl_data[8] = x4;
         self.opengl_data[9] = y2;
-        self.opengl_data[10] = x2;
+        self.opengl_data[10] = x3;
         self.opengl_data[11] = y2;
+
         debug!(
             "ActiveAlertUnderLineDecoration:update_opengl_vecs: Finished: {:?}",
             self.opengl_data
