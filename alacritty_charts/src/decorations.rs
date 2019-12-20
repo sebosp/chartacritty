@@ -352,3 +352,17 @@ impl ActiveAlertUnderLineDecoration {
         );
     }
 }
+
+/// `Decoration` defines functions that a struct must implement to be drawable
+pub trait Decoration {
+    fn init(initial_value: f64) -> Self;
+    fn opengl_vertices(&self) -> Vec<f32>;
+    fn top_value(&self) -> f64;
+    fn bottom_value(&self) -> f64;
+    fn update_opengl_vecs(
+        &mut self,
+        display_size: SizeInfo,
+        offset: Value2D,
+        _chart_max_value: f64,
+    );
+}
