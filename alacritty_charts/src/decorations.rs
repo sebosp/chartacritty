@@ -21,86 +21,35 @@ impl Default for Decoration {
     }
 }
 
-// XXX: Maybe this should turn into a trait
-impl Decoration {
+/// `Decorate` defines functions that a struct must implement to be drawable
+pub trait Decorate {
+    /// Every decoration will implement a different update_opengl_vecs
+    /// This method is called every time it needs to be redrawn.
+    fn update_opengl_vecs(&mut self, display_size: SizeInfo, offset: Value2D, chart_max_value: f64);
+
     /// `width` of the Decoration as it may need space to be drawn, otherwise
     /// the decoration and the data itself would overlap, these are pixels
-    pub fn width(&self) -> f32 {
-        match self {
-            Decoration::Reference(d) => d.padding.x * 2., // it needs space left and right
-            Decoration::Alert(_) => 0f32, // The alert is drawn below the chart data.
-            Decoration::None => 0f32,
-        }
-    }
-
-    /// `top_value` is the Y value of the decoration, it needs to be
-    /// in the range of the metrics that have been collected, thus f64
-    /// this is the highest point the Decoration will use
-    pub fn top_value(&self) -> f64 {
-        match self {
-            Decoration::Reference(ref d) => d.top_value(),
-            Decoration::Alert(_) => 0f64,
-            Decoration::None => 0f64,
-        }
-    }
-
-    /// `bottom_value` is the Y value of the decoration, it needs to be
-    /// in the range of the metrics that have been collected, thus f64
-    /// this is the lowest point the Decoration will use
-    pub fn bottom_value(&self) -> f64 {
-        match self {
-            Decoration::Reference(d) => d.value - d.value * d.height_multiplier,
-            Decoration::Alert(_d) => 0f64,
-            Decoration::None => 0f64,
-        }
-    }
-
-    /// `update_opengl_vecs` calls the decoration update methods
-    pub fn update_opengl_vecs(
-        &mut self,
-        display_size: SizeInfo,
-        offset: Value2D,
-        chart_max_value: f64,
-    ) {
-        match self {
-            Decoration::Reference(ref mut d) => {
-                d.update_opengl_vecs(display_size, offset, chart_max_value)
-            }
-            Decoration::Alert(ref mut d) => {
-                d.update_opengl_vecs(display_size, offset, chart_max_value)
-            }
-            Decoration::None => (),
-        }
+    fn width(&self) -> f32 {
+        0f32
     }
 
     /// `opengl_vertices` returns the representation of the decoration in
     /// opengl. These are for now GL_LINES and 2D
-    pub fn opengl_vertices(&self) -> Vec<f32> {
-        match self {
-            Decoration::Reference(d) => d.opengl_vertices(),
-            Decoration::Alert(d) => d.opengl_vertices(),
-            Decoration::None => vec![],
-        }
+    fn opengl_vertices(&self) -> Vec<f32> {
+        vec![]
     }
 
     /// `color` returns the Rgb for the decoration
-    pub fn color(&self) -> Rgb {
-        match self {
-            Decoration::Reference(d) => d.color,
-            Decoration::Alert(d) => d.color,
-            Decoration::None => Rgb::default(),
-        }
+    fn color(&self) -> Rgb {
+        Rgb::default()
     }
 
     /// `alpha` returns the transparency for the decoration
-    pub fn alpha(&self) -> f32 {
-        match self {
-            Decoration::Reference(d) => d.alpha,
-            Decoration::Alert(d) => d.alpha,
-            Decoration::None => 0.0f32,
-        }
+    fn alpha(&self) -> f32 {
+        0.0f32
     }
 }
+
 /// `ReferencePointDecoration` draws a fixed point to give a reference point
 /// of what a drawn value may mean
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -154,27 +103,34 @@ impl Default for ReferencePointDecoration {
 }
 
 impl ReferencePointDecoration {
-    /// `opengl_vertices` Scales the Marker Line to the current size of
-    /// the displayed points
-    pub fn opengl_vertices(&self) -> Vec<f32> {
-        self.opengl_data.clone()
-    }
-
-    /// `top_value` increments the reference point value by an additional
-    /// percentage to account for space to draw the axis tick
-    pub fn top_value(&self) -> f64 {
+    /// `top_value` is the Y value of the decoration, it needs to be
+    /// in the range of the metrics that have been collected, thus f64
+    /// this is the highest point the Decoration will use
+    fn top_value(&self) -> f64 {
         self.value + self.value * self.height_multiplier
     }
 
     /// `bottom_value` decrements the reference point value by a percentage
     /// to account for space to draw the axis tick
-    pub fn bottom_value(&self) -> f64 {
+    fn bottom_value(&self) -> f64 {
         self.value - self.value * self.height_multiplier
+    }
+}
+
+impl Decorate for ReferencePointDecoration {
+    fn width(&self) -> f32 {
+        self.padding.x * 2. // Reserve space left and right
+    }
+
+    /// `opengl_vertices` Scales the Marker Line to the current size of
+    /// the displayed points
+    fn opengl_vertices(&self) -> Vec<f32> {
+        self.opengl_data.clone()
     }
 
     /// `update_opengl_vecs` Draws a marker at a fixed position for
     /// reference.
-    pub fn update_opengl_vecs(
+    fn update_opengl_vecs(
         &mut self,
         display_size: SizeInfo,
         offset: Value2D,
@@ -272,28 +228,16 @@ impl Default for ActiveAlertUnderLineDecoration {
     }
 }
 
-impl ActiveAlertUnderLineDecoration {
+impl Decorate for ActiveAlertUnderLineDecoration {
     /// `opengl_vertices` Scales the Marker Line to the current size of
     /// the displayed points
-    pub fn opengl_vertices(&self) -> Vec<f32> {
+    fn opengl_vertices(&self) -> Vec<f32> {
         self.opengl_data.clone()
-    }
-
-    /// `top_value` increments the reference point value by an additional
-    /// percentage to account for space to draw the axis tick
-    pub fn top_value(&self) -> f64 {
-        self.value
-    }
-
-    /// `bottom_value` decrements the reference point value by a percentage
-    /// to account for space to draw the axis tick
-    pub fn bottom_value(&self) -> f64 {
-        self.value
     }
 
     /// `update_opengl_vecs` Draws a series of triangles at the bottom of
     /// a metric to show an alarm
-    pub fn update_opengl_vecs(
+    fn update_opengl_vecs(
         &mut self,
         display_size: SizeInfo,
         offset: Value2D,
@@ -351,18 +295,4 @@ impl ActiveAlertUnderLineDecoration {
             self.opengl_data
         );
     }
-}
-
-/// `Decoration` defines functions that a struct must implement to be drawable
-pub trait Decoration {
-    fn init(initial_value: f64) -> Self;
-    fn opengl_vertices(&self) -> Vec<f32>;
-    fn top_value(&self) -> f64;
-    fn bottom_value(&self) -> f64;
-    fn update_opengl_vecs(
-        &mut self,
-        display_size: SizeInfo,
-        offset: Value2D,
-        _chart_max_value: f64,
-    );
 }
