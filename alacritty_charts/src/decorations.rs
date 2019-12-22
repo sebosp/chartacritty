@@ -21,6 +21,16 @@ impl Default for Decoration {
     }
 }
 
+impl Decorate for Decoration {
+    fn update_opengl_vecs(
+        &mut self,
+        _display_size: SizeInfo,
+        _offset: Value2D,
+        chart_max_value: f64,
+    ) {
+    }
+}
+
 /// `Decorate` defines functions that a struct must implement to be drawable
 pub trait Decorate {
     /// Every decoration will implement a different update_opengl_vecs
@@ -47,6 +57,19 @@ pub trait Decorate {
     /// `alpha` returns the transparency for the decoration
     fn alpha(&self) -> f32 {
         0.0f32
+    }
+
+    /// `bottom_value` returns a value in the range of the collected metrics, this helps
+    /// visuallize a point of reference on the actual metrics (the metrics being below or above it)
+    fn bottom_value(&self) -> f64 {
+        0f64
+    }
+
+    /// `top_value` is the Y value of the decoration, it needs to be
+    /// in the range of the metrics that have been collected, thus f64
+    /// this is the highest point the Decoration will use
+    fn top_value(&self) -> f64 {
+        0f64
     }
 }
 
@@ -102,28 +125,11 @@ impl Default for ReferencePointDecoration {
     }
 }
 
-impl ReferencePointDecoration {
-    /// `top_value` is the Y value of the decoration, it needs to be
-    /// in the range of the metrics that have been collected, thus f64
-    /// this is the highest point the Decoration will use
-    fn top_value(&self) -> f64 {
-        self.value + self.value * self.height_multiplier
-    }
-
-    /// `bottom_value` decrements the reference point value by a percentage
-    /// to account for space to draw the axis tick
-    fn bottom_value(&self) -> f64 {
-        self.value - self.value * self.height_multiplier
-    }
-}
-
 impl Decorate for ReferencePointDecoration {
     fn width(&self) -> f32 {
         self.padding.x * 2. // Reserve space left and right
     }
 
-    /// `opengl_vertices` Scales the Marker Line to the current size of
-    /// the displayed points
     fn opengl_vertices(&self) -> Vec<f32> {
         self.opengl_data.clone()
     }
@@ -180,6 +186,18 @@ impl Decorate for ReferencePointDecoration {
             self.opengl_data
         );
     }
+
+    /// `bottom_value` decrements the reference point value by a percentage
+    /// to account for space to draw the axis tick
+    fn bottom_value(&self) -> f64 {
+        self.value - self.value * self.height_multiplier
+    }
+    /// `top_value` is the Y value of the decoration, it needs to be
+    /// in the range of the metrics that have been collected, thus f64
+    /// this is the highest point the Decoration will use
+    fn top_value(&self) -> f64 {
+        self.value + self.value * self.height_multiplier
+    }
 }
 
 /// `ActiveAlertUnderLineDecoration` draws an underlined series of
@@ -202,8 +220,7 @@ pub struct ActiveAlertUnderLineDecoration {
     pub padding: Value2D,
 
     /// The opengl vertices is stored in this vector
-    /// The capacity is dynamic, it draws a triangle every n pixels, see
-    /// opengl_vertices()
+    /// The capacity is static, one triangle on the left and one on the right
     #[serde(default)]
     pub opengl_data: Vec<f32>,
 
@@ -229,8 +246,6 @@ impl Default for ActiveAlertUnderLineDecoration {
 }
 
 impl Decorate for ActiveAlertUnderLineDecoration {
-    /// `opengl_vertices` Scales the Marker Line to the current size of
-    /// the displayed points
     fn opengl_vertices(&self) -> Vec<f32> {
         self.opengl_data.clone()
     }
