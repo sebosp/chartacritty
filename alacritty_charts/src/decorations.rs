@@ -2,6 +2,7 @@
 //! are not tied to metrics, these could be reference points, alarms/etc.
 
 use crate::*;
+use log::*;
 /// `Decoration` contains several types of decorations to add to a chart
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 #[serde(tag = "type")]
@@ -21,16 +22,6 @@ impl Default for Decoration {
     }
 }
 
-impl Decorate for Decoration {
-    fn update_opengl_vecs(
-        &mut self,
-        _display_size: SizeInfo,
-        _offset: Value2D,
-        chart_max_value: f64,
-    ) {
-    }
-}
-
 /// `Decorate` defines functions that a struct must implement to be drawable
 pub trait Decorate {
     /// Every decoration will implement a different update_opengl_vecs
@@ -40,6 +31,7 @@ pub trait Decorate {
     /// `width` of the Decoration as it may need space to be drawn, otherwise
     /// the decoration and the data itself would overlap, these are pixels
     fn width(&self) -> f32 {
+        debug!("Using default Decorate trait method.");
         0f32
     }
 
@@ -70,6 +62,32 @@ pub trait Decorate {
     /// this is the highest point the Decoration will use
     fn top_value(&self) -> f64 {
         0f64
+    }
+}
+
+impl Decorate for Decoration {
+    fn update_opengl_vecs(
+        &mut self,
+        display_size: SizeInfo,
+        offset: Value2D,
+        chart_max_value: f64,
+    ) {
+        match self {
+            Decoration::Reference(ref mut d) => {
+                d.update_opengl_vecs(display_size, offset, chart_max_value)
+            }
+            Decoration::Alert(ref mut d) => {
+                d.update_opengl_vecs(display_size, offset, chart_max_value)
+            }
+            Decoration::None => (),
+        };
+    }
+    fn width(&self) -> f32 {
+        match self {
+            Decoration::Reference(d) => d.width(),
+            Decoration::Alert(d) => d.width(),
+            Decoration::None => 0.0f32,
+        }
     }
 }
 
@@ -127,6 +145,7 @@ impl Default for ReferencePointDecoration {
 
 impl Decorate for ReferencePointDecoration {
     fn width(&self) -> f32 {
+        debug!("Using custom width from ReferencePointDecoration");
         self.padding.x * 2. // Reserve space left and right
     }
 
