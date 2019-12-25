@@ -1,6 +1,16 @@
 //! Alacritty Chart Decorations are drawings or effects over drawings that
 //! are not tied to metrics, these could be reference points, alarms/etc.
 
+// Example config:
+// - name: load
+//   decorations:
+//   - type: reference             # Draw a reference line
+//     value: 1.0                  # At metrics value 1.0
+//     color: "0x00ff00"
+//
+// TODO: There are several RFCs in rust to allow enum variants to impl a specific Trait but they
+// haven't been merged
+
 use crate::*;
 use log::*;
 /// `Decoration` contains several types of decorations to add to a chart
@@ -22,51 +32,9 @@ impl Default for Decoration {
     }
 }
 
-/// `Decorate` defines functions that a struct must implement to be drawable
-pub trait Decorate {
-    /// Every decoration will implement a different update_opengl_vecs
-    /// This method is called every time it needs to be redrawn.
-    fn update_opengl_vecs(&mut self, display_size: SizeInfo, offset: Value2D, chart_max_value: f64);
-
-    /// `width` of the Decoration as it may need space to be drawn, otherwise
-    /// the decoration and the data itself would overlap, these are pixels
-    fn width(&self) -> f32 {
-        debug!("Using default Decorate trait method.");
-        0f32
-    }
-
-    /// `opengl_vertices` returns the representation of the decoration in
-    /// opengl. These are for now GL_LINES and 2D
-    fn opengl_vertices(&self) -> Vec<f32> {
-        vec![]
-    }
-
-    /// `color` returns the Rgb for the decoration
-    fn color(&self) -> Rgb {
-        Rgb::default()
-    }
-
-    /// `alpha` returns the transparency for the decoration
-    fn alpha(&self) -> f32 {
-        0.0f32
-    }
-
-    /// `bottom_value` returns a value in the range of the collected metrics, this helps
-    /// visuallize a point of reference on the actual metrics (the metrics being below or above it)
-    fn bottom_value(&self) -> f64 {
-        0f64
-    }
-
-    /// `top_value` is the Y value of the decoration, it needs to be
-    /// in the range of the metrics that have been collected, thus f64
-    /// this is the highest point the Decoration will use
-    fn top_value(&self) -> f64 {
-        0f64
-    }
-}
-
-impl Decorate for Decoration {
-    fn update_opengl_vecs(
+impl Decoration {
+    /// Calls the internal methods to update the opengl values
+    pub fn update_opengl_vecs(
         &mut self,
         display_size: SizeInfo,
         offset: Value2D,
@@ -82,12 +50,138 @@ impl Decorate for Decoration {
             Decoration::None => (),
         };
     }
-    fn width(&self) -> f32 {
+
+    /// Calls the internal methods to get the width
+    pub fn width(&self) -> f32 {
         match self {
             Decoration::Reference(d) => d.width(),
             Decoration::Alert(d) => d.width(),
-            Decoration::None => 0.0f32,
+            Decoration::None => Decoration::default_width(),
         }
+    }
+
+    /// Calls the internal methods to get the opengl_vertices
+    pub fn opengl_vertices(&self) -> Vec<f32> {
+        match self {
+            Decoration::Reference(d) => d.opengl_vertices(),
+            Decoration::Alert(d) => d.opengl_vertices(),
+            Decoration::None => Decoration::default_opengl_vertices(),
+        }
+    }
+
+    /// Calls the internal methods to get the color
+    pub fn color(&self) -> Rgb {
+        match self {
+            Decoration::Reference(d) => d.color(),
+            Decoration::Alert(d) => d.color(),
+            Decoration::None => Decoration::default_color(),
+        }
+    }
+
+    /// Calls the internal methods to get the alpha
+    pub fn alpha(&self) -> f32 {
+        match self {
+            Decoration::Reference(d) => d.alpha(),
+            Decoration::Alert(d) => d.alpha(),
+            Decoration::None => Decoration::default_alpha(),
+        }
+    }
+
+    /// Calls the internal methods to get the bottom_value
+    pub fn bottom_value(&self) -> f64 {
+        match self {
+            Decoration::Reference(d) => d.bottom_value(),
+            Decoration::Alert(d) => d.bottom_value(),
+            Decoration::None => Decoration::default_bottom_value(),
+        }
+    }
+
+    /// Calls the internal methods to get the top_value
+    pub fn top_value(&self) -> f64 {
+        match self {
+            Decoration::Reference(d) => d.top_value(),
+            Decoration::Alert(d) => d.top_value(),
+            Decoration::None => Decoration::default_top_value(),
+        }
+    }
+
+    /// Default width
+    fn default_width() -> f32 {
+        0f32
+    }
+
+    /// Default opengl_vertices
+    fn default_opengl_vertices() -> Vec<f32> {
+        vec![]
+    }
+
+    /// Default color
+    fn default_color() -> Rgb {
+        Rgb::default()
+    }
+
+    /// Default alpha
+    fn default_alpha() -> f32 {
+        0.0f32
+    }
+
+    /// Default top value
+    fn default_top_value() -> f64 {
+        0f64
+    }
+
+    /// Default bottom value
+    fn default_bottom_value() -> f64 {
+        0f64
+    }
+}
+
+/// `Decorate` defines functions that a struct must implement to be drawable
+pub trait Decorate {
+    /// Every decoration will implement a different update_opengl_vecs
+    /// This method is called every time it needs to be redrawn.
+    fn update_opengl_vecs(
+        &mut self,
+        _display_size: SizeInfo,
+        _offset: Value2D,
+        _chart_max_value: f64,
+    ) {
+    }
+
+    /// `width` of the Decoration as it may need space to be drawn, otherwise
+    /// the decoration and the data itself would overlap, these are pixels
+    fn width(&self) -> f32 {
+        debug!("Using default Decorate trait method.");
+        Decoration::default_width()
+    }
+
+    /// `opengl_vertices` returns the representation of the decoration in
+    /// opengl. These are for now GL_LINES and 2D only
+    fn opengl_vertices(&self) -> Vec<f32> {
+        Decoration::default_opengl_vertices()
+    }
+
+    /// `color` returns the Rgb for the decoration
+    fn color(&self) -> Rgb {
+        Decoration::default_color()
+    }
+
+    /// `alpha` returns the transparency for the decoration
+    fn alpha(&self) -> f32 {
+        Decoration::default_alpha()
+    }
+
+    /// `bottom_value` returns a value in the range of the collected metrics, this helps
+    /// visuallize a point of reference on the actual metrics (the metrics being below or above it)
+    fn bottom_value(&self) -> f64 {
+        Decoration::default_bottom_value()
+    }
+
+    /// `top_value` is the Y value of the decoration, it needs to be
+    /// in the range of the metrics that have been collected, thus f64
+    /// this is the highest point the Decoration will use
+    fn top_value(&self) -> f64 {
+        Decoration::default_top_value()
     }
 }
 
