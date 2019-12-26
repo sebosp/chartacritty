@@ -12,7 +12,7 @@
 // haven't been merged
 
 use crate::*;
-use log::*;
+use tracing::{event, span, Level};
 /// `Decoration` contains several types of decorations to add to a chart
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 #[serde(tag = "type")]
@@ -33,20 +33,24 @@ impl Default for Decoration {
 }
 
 impl Decoration {
+    /// Calls the internal methods to get the top_value
+    pub fn init(&self, display_size: SizeInfo) {
+        match self {
+            Decoration::Reference(ref mut d) => d.init(display_size),
+            Decoration::Alert(ref mut d) => d.init(display_size),
+            Decoration::None => (),
+        };
+    }
     /// Calls the internal methods to update the opengl values
     pub fn update_opengl_vecs(
         &mut self,
         display_size: SizeInfo,
         offset: Value2D,
-        chart_max_value: f64,
+        stats: TimeSeriesStats,
     ) {
         match self {
-            Decoration::Reference(ref mut d) => {
-                d.update_opengl_vecs(display_size, offset, chart_max_value)
-            }
-            Decoration::Alert(ref mut d) => {
-                d.update_opengl_vecs(display_size, offset, chart_max_value)
-            }
+            Decoration::Reference(ref mut d) => d.update_opengl_vecs(display_size, offset, stats),
+            Decoration::Alert(ref mut d) => d.update_opengl_vecs(display_size, offset, stats),
             Decoration::None => (),
         };
     }
@@ -138,14 +142,20 @@ impl Decoration {
 
 /// `Decorate` defines functions that a struct must implement to be drawable
 pub trait Decorate {
+    fn init(&mut self, _display_size: SizeInfo) {}
     /// Every decoration will implement a different update_opengl_vecs
     /// This method is called every time it needs to be redrawn.
     fn update_opengl_vecs(
         &mut self,
         _display_size: SizeInfo,
         _offset: Value2D,
-        _chart_max_value: f64,
+        stats: TimeSeriesStats,
     ) {
+        let span = span!(
+            Level::TRACE,
+            "update_opengl_vecs: default Trait function",
+            name = self.name.clone().as_str()
+        );
     }
 
     /// `width` of the Decoration as it may need space to be drawn, otherwise
@@ -253,7 +263,7 @@ impl Decorate for ReferencePointDecoration {
         &mut self,
         display_size: SizeInfo,
         offset: Value2D,
-        chart_max_value: f64,
+        stats: TimeSeriesStats,
     ) {
         debug!("ReferencePointDecoration:update_opengl_vecs: Starting");
         if self.opengl_vec_capacity != self.opengl_data.capacity() {
@@ -274,9 +284,9 @@ impl Decorate for ReferencePointDecoration {
 
         // Calculate Y, the marker hints are 10% of the current values
         // This means that the
-        let y1 = display_size.scale_y(chart_max_value, self.value);
-        let y2 = display_size.scale_y(chart_max_value, self.top_value());
-        let y3 = display_size.scale_y(chart_max_value, self.bottom_value());
+        let y1 = display_size.scale_y(stats.max, self.value);
+        let y2 = display_size.scale_y(stats.max, self.top_value());
+        let y3 = display_size.scale_y(stats.max, self.bottom_value());
 
         // Build the left most axis "tick" mark.
         self.opengl_data[0] = x1;
@@ -313,13 +323,36 @@ impl Decorate for ReferencePointDecoration {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+pub enum AlertComparator {
+    #[serde(rename = ">")]
+    GreaterThan,
+    #[serde(rename = ">=")]
+    GreaterThanOrEqual,
+    #[serde(rename = "<")]
+    LessThan,
+    #[serde(rename = "<=")]
+    LessThanOrEqual,
+    #[serde(rename = "=")]
+    Equal,
+}
+
+impl Default for AlertComparator {
+    fn default() -> Self {
+        AlertComparator::GreaterThan
+    }
+}
+
 /// `ActiveAlertUnderLineDecoration` draws an underlined series of
 /// red triangles below a portion of the screen to denote alert below a
 /// chart
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct ActiveAlertUnderLineDecoration {
-    /// The value at which to draw the reference point
-    pub value: f64,
+    /// The threshold of the alert, wether is active or not.
+    pub threshold: f64,
+
+    #[serde(default)]
+    pub comparator: AlertComparator,
 
     #[serde(default)]
     pub color: Rgb,
@@ -345,7 +378,8 @@ pub struct ActiveAlertUnderLineDecoration {
 impl Default for ActiveAlertUnderLineDecoration {
     fn default() -> ActiveAlertUnderLineDecoration {
         ActiveAlertUnderLineDecoration {
-            value: 0.10, // Up to 10% of the drawn space should be used.
+            threshold: 1f64, // the value to compare with
+            comparator: AlertComparator::default(),
             color: Rgb::default(),
             alpha: 0.5,
             padding: Value2D {
@@ -369,7 +403,7 @@ impl Decorate for ActiveAlertUnderLineDecoration {
         &mut self,
         display_size: SizeInfo,
         offset: Value2D,
-        _chart_max_value: f64,
+        stats: TimeSeriesStats,
     ) {
         debug!("ActiveAlertUnderLineDecoration:update_opengl_vecs: Starting");
         // TODO: This needs to be calculated only at the start, perhaps an init() method.
