@@ -34,7 +34,7 @@ impl Default for Decoration {
 
 impl Decoration {
     /// Calls the internal methods to get the top_value
-    pub fn init(&self, display_size: SizeInfo) {
+    pub fn init(&mut self, display_size: SizeInfo) {
         match self {
             Decoration::Reference(ref mut d) => d.init(display_size),
             Decoration::Alert(ref mut d) => d.init(display_size),
@@ -151,11 +151,7 @@ pub trait Decorate {
         _offset: Value2D,
         stats: TimeSeriesStats,
     ) {
-        let span = span!(
-            Level::TRACE,
-            "update_opengl_vecs: default Trait function",
-            name = self.name.clone().as_str()
-        );
+        let span = span!(Level::TRACE, "update_opengl_vecs: default Trait function");
     }
 
     /// `width` of the Decoration as it may need space to be drawn, otherwise
@@ -352,8 +348,14 @@ pub struct ActiveAlertUnderLineDecoration {
     pub threshold: f64,
 
     #[serde(default)]
+    pub target: String,
+
+    /// A mathematical operator to compare
+    #[serde(default)]
     pub comparator: AlertComparator,
 
+    /// A target TimeSeries name that we will compare with
+    /// Must be in the current chart item
     #[serde(default)]
     pub color: Rgb,
 
@@ -380,6 +382,7 @@ impl Default for ActiveAlertUnderLineDecoration {
         ActiveAlertUnderLineDecoration {
             threshold: 1f64, // the value to compare with
             comparator: AlertComparator::default(),
+            target: String::from(""),
             color: Rgb::default(),
             alpha: 0.5,
             padding: Value2D {

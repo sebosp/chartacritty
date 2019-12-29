@@ -80,7 +80,7 @@ impl Default for ValueCollisionPolicy {
 }
 
 /// `TimeSeriesStats` contains statistics about the current TimeSeries
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Copy)]
 pub struct TimeSeriesStats {
     max: f64,
     min: f64,
