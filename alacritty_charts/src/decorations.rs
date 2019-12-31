@@ -46,11 +46,16 @@ impl Decoration {
         &mut self,
         display_size: SizeInfo,
         offset: Value2D,
-        chart: &TimeSeriesChart,
+        stats: &TimeSeriesStats,
+        sources: &[TimeSeriesSource],
     ) {
         match self {
-            Decoration::Reference(ref mut d) => d.update_opengl_vecs(display_size, offset, chart),
-            Decoration::Alert(ref mut d) => d.update_opengl_vecs(display_size, offset, chart),
+            Decoration::Reference(ref mut d) => {
+                d.update_opengl_vecs(display_size, offset, stats, sources)
+            }
+            Decoration::Alert(ref mut d) => {
+                d.update_opengl_vecs(display_size, offset, stats, sources)
+            }
             Decoration::None => (),
         };
     }
@@ -149,7 +154,8 @@ pub trait Decorate {
         &mut self,
         _display_size: SizeInfo,
         _offset: Value2D,
-        chart: &TimeSeriesChart,
+        stats: &TimeSeriesStats,
+        sources: &[TimeSeriesSource],
     ) {
         let span = span!(Level::TRACE, "update_opengl_vecs: default Trait function");
     }
@@ -259,7 +265,8 @@ impl Decorate for ReferencePointDecoration {
         &mut self,
         display_size: SizeInfo,
         offset: Value2D,
-        chart: &TimeSeriesChart,
+        stats: &TimeSeriesStats,
+        sources: &[TimeSeriesSource],
     ) {
         debug!("ReferencePointDecoration:update_opengl_vecs: Starting");
         if self.opengl_vec_capacity != self.opengl_data.capacity() {
@@ -280,9 +287,9 @@ impl Decorate for ReferencePointDecoration {
 
         // Calculate Y, the marker hints are 10% of the current values
         // This means that the
-        let y1 = display_size.scale_y(chart.stats.max, self.value);
-        let y2 = display_size.scale_y(chart.stats.max, self.top_value());
-        let y3 = display_size.scale_y(chart.stats.max, self.bottom_value());
+        let y1 = display_size.scale_y(stats.max, self.value);
+        let y2 = display_size.scale_y(stats.max, self.top_value());
+        let y3 = display_size.scale_y(stats.max, self.bottom_value());
 
         // Build the left most axis "tick" mark.
         self.opengl_data[0] = x1;
@@ -339,9 +346,8 @@ impl Default for AlertComparator {
     }
 }
 
-/// `ActiveAlertUnderLineDecoration` draws an underlined series of
-/// red triangles below a portion of the screen to denote alert below a
-/// chart
+/// `ActiveAlertUnderLineDecoration` draws red triangles alert indicators
+/// below a portion of the screen to denote alert below an alarm is on
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct ActiveAlertUnderLineDecoration {
     /// The threshold of the alert, wether is active or not.
@@ -400,13 +406,14 @@ impl Decorate for ActiveAlertUnderLineDecoration {
         self.opengl_data.clone()
     }
 
-    /// `update_opengl_vecs` Draws a series of triangles at the bottom of
-    /// a metric to show an alarm
+    /// `update_opengl_vecs` Draws an alert indicator below the drawn metric
+    /// to show an alarm
     fn update_opengl_vecs(
         &mut self,
         display_size: SizeInfo,
         offset: Value2D,
-        chart: &TimeSeriesChart,
+        stats: &TimeSeriesStats,
+        sources: &[TimeSeriesSource],
     ) {
         debug!("ActiveAlertUnderLineDecoration:update_opengl_vecs: Starting");
         // TODO: This needs to be calculated only at the start, perhaps an init() method.
@@ -455,7 +462,7 @@ impl Decorate for ActiveAlertUnderLineDecoration {
         self.opengl_data[10] = x3;
         self.opengl_data[11] = y2;
 
-        self.alpha = if self.is_series_alert_triggering(chart) {
+        self.alpha = if self.is_series_alert_triggering(sources) {
             0.0
         } else {
             1.0
@@ -468,9 +475,9 @@ impl Decorate for ActiveAlertUnderLineDecoration {
 }
 
 impl ActiveAlertUnderLineDecoration {
-    /// `is_series_alert_triggering` Checks the chart series stats to determine if the alert is triggering or not
-    fn is_series_alert_triggering(&self, chart: &TimeSeriesChart) -> bool {
-        for series in chart.sources {
+    /// `is_series_alert_triggering` Checks the chart sources to determine if the alert is triggering or not
+    fn is_series_alert_triggering(&self, sources: &[TimeSeriesSource]) -> bool {
+        for series in sources {
             if series.name() == self.target {
                 match self.comparator {
                     AlertComparator::Equal => {

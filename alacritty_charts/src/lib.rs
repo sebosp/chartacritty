@@ -552,7 +552,7 @@ impl TimeSeriesChart {
                 "update_series_opengl_vecs: Updating decoration {:?} vertices",
                 decoration
             );
-            decoration.update_opengl_vecs(display_size, self.offset, self.stats);
+            decoration.update_opengl_vecs(display_size, self.offset, &self.stats, &self.sources);
         }
         self.last_updated = std::time::SystemTime::now()
             .duration_since(UNIX_EPOCH)
