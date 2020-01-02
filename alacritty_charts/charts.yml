@@ -43,6 +43,11 @@ charts:
   - type: reference
     value: 1.0
     color: "0x00ff00"
+  - type: alert
+    target: prometheus_alerts # ties to below series of the same name
+    threshold: 1
+    comparator: >
+    color: "0x00ff00"
   series:
   - name: load average 1 min
     type: prometheus
@@ -62,6 +67,12 @@ charts:
     source: 'http://localhost:9090/api/v1/query_range?query=node_load15'
     color: "0xee98fb"
     alpha: 0.3
+  - name: prometheus_alerts
+    type: prometheus
+    refresh: 15
+    source: 'http://localhost:9090/api/v1/query_range?query=count(ALERTS)'
+    color: "0xee98fb"
+    alpha: 0.0
 - name: cpu
   offset:
     x: 1140
@@ -81,7 +92,7 @@ charts:
   width: 100
   height: 25
   series:
-  - name: cpu
+  - name: prometheus_up
     type: prometheus
     refresh: 15
     source: 'http://localhost:9090/api/v1/query?query=up'
