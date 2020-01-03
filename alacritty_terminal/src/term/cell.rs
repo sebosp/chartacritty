@@ -85,6 +85,11 @@ impl GridCell for Cell {
             self.flags.remove(Flags::WRAPLINE);
         }
     }
+
+    #[inline]
+    fn fast_eq(&self, other: Self) -> bool {
+        self.bg == other.bg
+    }
 }
 
 /// Get the length of occupied cells in a line
@@ -135,7 +140,7 @@ impl Cell {
     #[inline]
     pub fn reset(&mut self, template: &Cell) {
         // memcpy template to self
-        *self = *template;
+        *self = Cell { c: template.c, bg: template.bg, ..Cell::default() };
     }
 
     #[inline]

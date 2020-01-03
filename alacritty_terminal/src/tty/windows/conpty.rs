@@ -12,20 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Pty, HANDLE};
-
 use std::i16;
 use std::io::Error;
 use std::mem;
 use std::os::windows::io::IntoRawHandle;
 use std::ptr;
-use std::sync::Arc;
 
-use dunce::canonicalize;
-use log::info;
 use mio_anonymous_pipes::{EventedAnonRead, EventedAnonWrite};
 use miow;
-use widestring::U16CString;
 use winapi::shared::basetsd::{PSIZE_T, SIZE_T};
 use winapi::shared::minwindef::{BYTE, DWORD};
 use winapi::shared::ntdef::{HANDLE, HRESULT, LPWSTR};
@@ -38,10 +32,16 @@ use winapi::um::processthreadsapi::{
 use winapi::um::winbase::{EXTENDED_STARTUPINFO_PRESENT, STARTF_USESTDHANDLES, STARTUPINFOEXW};
 use winapi::um::wincontypes::{COORD, HPCON};
 
-use crate::config::{Config, Shell};
+use crate::config::Config;
 use crate::event::OnResize;
 use crate::term::SizeInfo;
+use crate::tty::windows::child::ChildExitWatcher;
+use crate::tty::windows::{cmdline, win32_string, Pty};
 
+// TODO: Replace with winapi's implementation. This cannot be
+//  done until a safety net is in place for versions of Windows
+//  that do not support the ConPTY api, as such versions will
+//  pass unit testing - but fail to actually function.
 /// Dynamically-loaded Pseudoconsole API from kernel32.dll
 ///
 /// The field names are deliberately PascalCase as this matches
@@ -86,25 +86,21 @@ pub struct Conpty {
     api: ConptyApi,
 }
 
-/// Handle can be cloned freely and moved between threads.
-pub type ConptyHandle = Arc<Conpty>;
-
 impl Drop for Conpty {
     fn drop(&mut self) {
+        // XXX: This will block until the conout pipe is drained. Will cause a deadlock if the
+        // conout pipe has already been dropped by this point.
+        //
+        // See PR #3084 and https://docs.microsoft.com/en-us/windows/console/closepseudoconsole
         unsafe { (self.api.ClosePseudoConsole)(self.handle) }
     }
 }
 
-// The Conpty API can be accessed from multiple threads.
+// The Conpty handle can be sent between threads.
 unsafe impl Send for Conpty {}
-unsafe impl Sync for Conpty {}
 
-pub fn new<'a, C>(
-    config: &Config<C>,
-    size: &SizeInfo,
-    _window_id: Option<usize>,
-) -> Option<Pty<'a>> {
-    if !config.enable_experimental_conpty_backend {
+pub fn new<C>(config: &Config<C>, size: &SizeInfo, _window_id: Option<usize>) -> Option<Pty> {
+    if config.winpty_backend {
         return None;
     }
 
@@ -133,7 +129,7 @@ pub fn new<'a, C>(
         )
     };
 
-    assert!(result == S_OK);
+    assert_eq!(result, S_OK);
 
     let mut success;
 
@@ -143,8 +139,7 @@ pub fn new<'a, C>(
 
     let mut startup_info_ex: STARTUPINFOEXW = Default::default();
 
-    let title = config.window.title.clone();
-    let title = U16CString::from_str(title).unwrap();
+    let title = win32_string(&config.window.title);
     startup_info_ex.StartupInfo.lpTitle = title.as_ptr() as LPWSTR;
 
     startup_info_ex.StartupInfo.cb = mem::size_of::<STARTUPINFOEXW>() as u32;
@@ -207,19 +202,11 @@ pub fn new<'a, C>(
         }
     }
 
-    // Get process commandline
-    let default_shell = &Shell::new("powershell");
-    let shell = config.shell.as_ref().unwrap_or(default_shell);
-    let mut cmdline = shell.args.clone();
-    cmdline.insert(0, shell.program.to_string());
-
-    // Warning, here be borrow hell
-    let cwd = config.working_directory().as_ref().map(|dir| canonicalize(dir).unwrap());
-    let cwd = cwd.as_ref().map(|dir| dir.to_str().unwrap());
-
-    // Create the client application, using startup info containing ConPTY info
-    let cmdline = U16CString::from_str(&cmdline.join(" ")).unwrap();
-    let cwd = cwd.map(|s| U16CString::from_str(&s).unwrap());
+    let cmdline = win32_string(&cmdline(&config));
+    let cwd = config
+        .working_directory()
+        .map(|dir| dir.canonicalize().unwrap())
+        .map(|path| win32_string(&path));
 
     let mut proc_info: PROCESS_INFORMATION = Default::default();
     unsafe {
@@ -241,22 +228,20 @@ pub fn new<'a, C>(
         }
     }
 
-    // Store handle to console
-    unsafe {
-        HANDLE = proc_info.hProcess;
-    }
-
     let conin = EventedAnonWrite::new(conin);
     let conout = EventedAnonRead::new(conout);
 
-    let agent = Conpty { handle: pty_handle, api };
+    let child_watcher = ChildExitWatcher::new(proc_info.hProcess).unwrap();
+    let conpty = Conpty { handle: pty_handle, api };
 
     Some(Pty {
-        handle: super::PtyHandle::Conpty(ConptyHandle::new(agent)),
+        backend: super::PtyBackend::Conpty(conpty),
         conout: super::EventedReadablePipe::Anonymous(conout),
         conin: super::EventedWritablePipe::Anonymous(conin),
         read_token: 0.into(),
         write_token: 0.into(),
+        child_event_token: 0.into(),
+        child_watcher,
     })
 }
 
@@ -265,11 +250,11 @@ fn panic_shell_spawn() {
     panic!("Unable to spawn shell: {}", Error::last_os_error());
 }
 
-impl OnResize for ConptyHandle {
+impl OnResize for Conpty {
     fn on_resize(&mut self, sizeinfo: &SizeInfo) {
         if let Some(coord) = coord_from_sizeinfo(sizeinfo) {
             let result = unsafe { (self.api.ResizePseudoConsole)(self.handle, coord) };
-            assert!(result == S_OK);
+            assert_eq!(result, S_OK);
         }
     }
 }

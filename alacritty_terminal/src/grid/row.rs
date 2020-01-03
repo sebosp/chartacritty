@@ -29,14 +29,10 @@ use crate::index::Column;
 pub struct Row<T> {
     inner: Vec<T>,
 
-    /// occupied entries
+    /// Maximum number of occupied entries.
     ///
-    /// Semantically, this value can be understood as the **end** of an
-    /// Exclusive Range. Thus,
-    ///
-    /// - Zero means there are no occupied entries
-    /// - 1 means there is a value at index zero, but nowhere else
-    /// - `occ == inner.len` means every value is occupied
+    /// This is the upper bound on the number of elements in the row, which have been modified
+    /// since the last reset. All cells after this point are guaranteed to be equal.
     pub(crate) occ: usize,
 }
 
@@ -85,18 +81,29 @@ impl<T: Copy> Row<T> {
         }
     }
 
-    /// Resets contents to the contents of `other`
+    /// Reset all cells in the row to the `template` cell.
+    #[inline]
     pub fn reset(&mut self, template: &T)
     where
-        T: GridCell,
+        T: GridCell + PartialEq,
     {
-        for item in &mut self.inner[..self.occ] {
-            *item = *template;
+        debug_assert!(!self.inner.is_empty());
+
+        let template = *template;
+
+        // Mark all cells as dirty if template cell changed
+        let len = self.inner.len();
+        if !self.inner[len - 1].fast_eq(template) {
+            self.occ = len;
         }
 
-        if template.is_empty() {
-            self.occ = 0;
+        // Reset every dirty in the row
+        // let template = *template;
+        for item in &mut self.inner[..self.occ] {
+            *item = template;
         }
+
+        self.occ = 0;
     }
 }
 

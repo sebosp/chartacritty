@@ -55,6 +55,14 @@ ref_tests! {
     selective_erasure
     colored_reset
     delete_lines
+    delete_chars_reset
+    alt_reset
+    deccolm_reset
+    decaln_reset
+    insert_blank_reset
+    erase_chars_reset
+    scroll_up_reset
+    clear_underline
 }
 
 fn read_u8<P>(path: P) -> Vec<u8>

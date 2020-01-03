@@ -1,17 +1,4 @@
-use std::cmp::Ordering;
-/// Wrapper around Vec which supports fast indexing and rotation
-///
-/// The rotation implemented by grid::Storage is a simple integer addition.
-/// Compare with standard library rotation which requires rearranging items in
-/// memory.
-///
-/// As a consequence, the indexing operators need to be reimplemented for this
-/// type to account for the 0th element not always being at the start of the
-/// allocation.
-///
-/// Because certain Vec operations are no longer valid on this type, no Deref
-/// implementation is provided. Anything from Vec that should be exposed must be
-/// done so manually.
+use std::cmp::{Ordering, PartialEq};
 use std::ops::{Index, IndexMut};
 use std::vec::Drain;
 
@@ -23,10 +10,34 @@ use crate::index::Line;
 /// Maximum number of invisible lines before buffer is resized
 const TRUNCATE_STEP: usize = 100;
 
+/// A ring buffer for optimizing indexing and rotation.
+///
+/// The [`Storage::rotate`] and [`Storage::rotate_up`] functions are fast modular additions on the
+/// internal [`zero`] field. As compared with [`slice::rotate_left`] which must rearrange items in
+/// memory.
+///
+/// As a consequence, both [`Index`] and [`IndexMut`] are reimplemented for this type to account
+/// for the zeroth element not always being at the start of the allocation.
+///
+/// Because certain [`Vec`] operations are no longer valid on this type, no [`Deref`]
+/// implementation is provided. Anything from [`Vec`] that should be exposed must be done so
+/// manually.
+///
+/// [`slice::rotate_left`]: https://doc.rust-lang.org/std/primitive.slice.html#method.rotate_left
+/// [`Deref`]: std::ops::Deref
+/// [`zero`]: #structfield.zero
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Storage<T> {
     inner: Vec<Row<T>>,
+
+    /// Starting point for the storage of rows.
+    ///
+    /// This value represents the starting line offset within the ring buffer. The value of this
+    /// offset may be larger than the `len` itself, and will wrap around to the start to form the
+    /// ring buffer. It represents the bottommost line of the terminal.
     zero: usize,
+
+    /// An index separating the visible and scrollback regions.
     visible_lines: Line,
 
     /// Total number of lines currently active in the terminal (scrollback + visible)
@@ -39,7 +50,7 @@ pub struct Storage<T> {
     len: usize,
 }
 
-impl<T: PartialEq> ::std::cmp::PartialEq for Storage<T> {
+impl<T: PartialEq> PartialEq for Storage<T> {
     fn eq(&self, other: &Self) -> bool {
         // Make sure length is equal
         if self.inner.len() != other.inner.len() {
@@ -51,9 +62,8 @@ impl<T: PartialEq> ::std::cmp::PartialEq for Storage<T> {
             if self.zero >= other.zero { (self, other) } else { (other, self) };
 
         // Calculate the actual zero offset
-        let len = self.inner.len();
-        let bigger_zero = bigger.zero % len;
-        let smaller_zero = smaller.zero % len;
+        let bigger_zero = bigger.zero;
+        let smaller_zero = smaller.zero;
 
         // Compare the slices in chunks
         // Chunks:
@@ -68,6 +78,7 @@ impl<T: PartialEq> ::std::cmp::PartialEq for Storage<T> {
         //   Smaller Zero (3):
         //     7  8  9  | 0  1  2  3  | 4  5  6
         //     C3 C3 C3 | C1 C1 C1 C1 | C2 C2 C2
+        let len = self.inner.len();
         bigger.inner[bigger_zero..]
             == smaller.inner[smaller_zero..smaller_zero + (len - bigger_zero)]
             && bigger.inner[..bigger_zero - smaller_zero]
@@ -138,7 +149,7 @@ impl<T> Storage<T> {
         }
 
         // Update raw buffer length and zero offset
-        self.zero = (self.zero + new_growage) % self.inner.len();
+        self.zero += new_growage;
         self.len += growage;
     }
 
@@ -190,14 +201,17 @@ impl<T> Storage<T> {
         self.len
     }
 
-    #[inline]
     /// Compute actual index in underlying storage given the requested index.
+    #[inline]
     fn compute_index(&self, requested: usize) -> usize {
         debug_assert!(requested < self.len);
-        let zeroed = requested + self.zero;
 
-        // This part is critical for performance,
-        // so an if/else is used here instead of a moludo operation
+        let zeroed = self.zero + requested;
+
+        // Use if/else instead of remainder here to improve performance.
+        //
+        // Requires `zeroed` to be smaller than `self.inner.len() * 2`,
+        // but both `self.zero` and `requested` are always smaller than `self.inner.len()`.
         if zeroed >= self.inner.len() {
             zeroed - self.inner.len()
         } else {
@@ -245,26 +259,30 @@ impl<T> Storage<T> {
         }
     }
 
+    /// Rotate the grid, moving all lines up/down in history.
     #[inline]
     pub fn rotate(&mut self, count: isize) {
         debug_assert!(count.abs() as usize <= self.inner.len());
 
         let len = self.inner.len();
-        self.zero = (self.zero as isize + count + len as isize) as usize % len;
+        self.zero = (self.zero as isize + count + len as isize) as usize % self.inner.len();
     }
 
-    // Fast path
+    /// Rotate the grid up, moving all existing lines down in history.
+    ///
+    /// This is a faster, specialized version of [`rotate`].
     #[inline]
     pub fn rotate_up(&mut self, count: usize) {
         self.zero = (self.zero + count) % self.inner.len();
     }
 
+    /// Drain all rows in the grid.
     pub fn drain(&mut self) -> Drain<'_, Row<T>> {
         self.truncate();
         self.inner.drain(..)
     }
 
-    /// Update the raw storage buffer
+    /// Update the raw storage buffer.
     pub fn replace_inner(&mut self, vec: Vec<Row<T>>) {
         self.len = vec.len();
         self.inner = vec;
@@ -324,6 +342,57 @@ mod test {
         }
 
         fn set_wrap(&mut self, _wrap: bool) {}
+
+        fn fast_eq(&self, other: Self) -> bool {
+            self == &other
+        }
+    }
+
+    #[test]
+    fn with_capacity() {
+        let storage = Storage::with_capacity(Line(3), Row::new(Column(0), &' '));
+
+        assert_eq!(storage.inner.len(), 3);
+        assert_eq!(storage.len, 3);
+        assert_eq!(storage.zero, 0);
+        assert_eq!(storage.visible_lines, Line(2));
+    }
+
+    #[test]
+    fn indexing() {
+        let mut storage = Storage::with_capacity(Line(3), Row::new(Column(0), &' '));
+
+        storage[0] = Row::new(Column(1), &'0');
+        storage[1] = Row::new(Column(1), &'1');
+        storage[2] = Row::new(Column(1), &'2');
+
+        assert_eq!(storage[0], Row::new(Column(1), &'0'));
+        assert_eq!(storage[1], Row::new(Column(1), &'1'));
+        assert_eq!(storage[2], Row::new(Column(1), &'2'));
+
+        storage.zero += 1;
+
+        assert_eq!(storage[0], Row::new(Column(1), &'1'));
+        assert_eq!(storage[1], Row::new(Column(1), &'2'));
+        assert_eq!(storage[2], Row::new(Column(1), &'0'));
+    }
+
+    #[test]
+    #[should_panic]
+    fn indexing_above_inner_len() {
+        let storage = Storage::with_capacity(Line(1), Row::new(Column(0), &' '));
+        let _ = &storage[2];
+    }
+
+    #[test]
+    fn rotate() {
+        let mut storage = Storage::with_capacity(Line(3), Row::new(Column(0), &' '));
+        storage.rotate(2);
+        assert_eq!(storage.zero, 2);
+        storage.shrink_lines(2);
+        assert_eq!(storage.len, 1);
+        assert_eq!(storage.inner.len(), 3);
+        assert_eq!(storage.zero, 2);
     }
 
     /// Grow the buffer one line at the end of the buffer
@@ -766,5 +835,23 @@ mod test {
         assert_eq!(storage.inner, shrinking_expected.inner);
         assert_eq!(storage.zero, shrinking_expected.zero);
         assert_eq!(storage.len, shrinking_expected.len);
+    }
+
+    #[test]
+    fn rotate_wrap_zero() {
+        let mut storage = Storage {
+            inner: vec![
+                Row::new(Column(1), &'-'),
+                Row::new(Column(1), &'-'),
+                Row::new(Column(1), &'-'),
+            ],
+            zero: 2,
+            visible_lines: Line(0),
+            len: 3,
+        };
+
+        storage.rotate(2);
+
+        assert!(storage.zero < storage.inner.len());
     }
 }
