@@ -15,7 +15,7 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt::Display;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use log::error;
 use serde::{Deserialize, Deserializer};
@@ -109,11 +109,10 @@ pub struct Config<T> {
     #[serde(default, deserialize_with = "failure_default")]
     pub cursor: Cursor,
 
-    /// Enable experimental conpty backend instead of using winpty.
-    /// Will only take effect on Windows 10 Oct 2018 and later.
+    /// Use WinPTY backend even if ConPTY is available
     #[cfg(windows)]
     #[serde(default, deserialize_with = "failure_default")]
-    pub enable_experimental_conpty_backend: bool,
+    pub winpty_backend: bool,
 
     /// Send escape sequences using the alt key.
     #[serde(default, deserialize_with = "failure_default")]
@@ -214,8 +213,8 @@ impl<T> Config<T> {
     }
 
     #[inline]
-    pub fn working_directory(&self) -> &Option<PathBuf> {
-        &self.working_directory
+    pub fn working_directory(&self) -> Option<&Path> {
+        self.working_directory.as_ref().map(|path_buf| path_buf.as_path())
     }
 
     #[inline]

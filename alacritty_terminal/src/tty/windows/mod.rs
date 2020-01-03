@@ -12,62 +12,44 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::ffi::OsStr;
 use std::io::{self, Read, Write};
-use std::os::raw::c_void;
+use std::iter::once;
+use std::os::windows::ffi::OsStrExt;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::TryRecvError;
 
 use mio::{self, Evented, Poll, PollOpt, Ready, Token};
 use mio_anonymous_pipes::{EventedAnonRead, EventedAnonWrite};
 use mio_named_pipes::NamedPipe;
 
 use log::info;
-use winapi::shared::winerror::WAIT_TIMEOUT;
-use winapi::um::synchapi::WaitForSingleObject;
-use winapi::um::winbase::WAIT_OBJECT_0;
 
-use crate::config::Config;
+use crate::config::{Config, Shell};
 use crate::event::OnResize;
 use crate::term::SizeInfo;
-use crate::tty::{EventedPty, EventedReadWrite};
+use crate::tty::windows::child::ChildExitWatcher;
+use crate::tty::{ChildEvent, EventedPty, EventedReadWrite};
 
+mod child;
 mod conpty;
 mod winpty;
 
-/// Handle to the winpty agent or conpty process. Required so we know when it closes.
-static mut HANDLE: *mut c_void = 0usize as *mut c_void;
 static IS_CONPTY: AtomicBool = AtomicBool::new(false);
-
-pub fn process_should_exit() -> bool {
-    unsafe {
-        match WaitForSingleObject(HANDLE, 0) {
-            // Process has exited
-            WAIT_OBJECT_0 => {
-                info!("wait_object_0");
-                true
-            },
-            // Reached timeout of 0, process has not exited
-            WAIT_TIMEOUT => false,
-            // Error checking process, winpty gave us a bad agent handle?
-            _ => {
-                info!("Bad exit: {}", ::std::io::Error::last_os_error());
-                true
-            },
-        }
-    }
-}
 
 pub fn is_conpty() -> bool {
     IS_CONPTY.load(Ordering::Relaxed)
 }
 
-#[derive(Clone)]
-pub enum PtyHandle<'a> {
-    Winpty(winpty::WinptyHandle<'a>),
-    Conpty(conpty::ConptyHandle),
+enum PtyBackend {
+    Winpty(winpty::Agent),
+    Conpty(conpty::Conpty),
 }
 
-pub struct Pty<'a> {
-    handle: PtyHandle<'a>,
+pub struct Pty {
+    // XXX: Backend is required to be the first field, to ensure correct drop order. Dropping
+    // `conout` before `backend` will cause a deadlock.
+    backend: PtyBackend,
     // TODO: It's on the roadmap for the Conpty API to support Overlapped I/O.
     // See https://github.com/Microsoft/console/issues/262
     // When support for that lands then it should be possible to use
@@ -76,21 +58,17 @@ pub struct Pty<'a> {
     conin: EventedWritablePipe,
     read_token: mio::Token,
     write_token: mio::Token,
+    child_event_token: mio::Token,
+    child_watcher: ChildExitWatcher,
 }
 
-impl<'a> Pty<'a> {
-    pub fn resize_handle(&self) -> impl OnResize + 'a {
-        self.handle.clone()
-    }
-}
-
-pub fn new<'a, C>(config: &Config<C>, size: &SizeInfo, window_id: Option<usize>) -> Pty<'a> {
+pub fn new<C>(config: &Config<C>, size: &SizeInfo, window_id: Option<usize>) -> Pty {
     if let Some(pty) = conpty::new(config, size, window_id) {
-        info!("Using Conpty agent");
+        info!("Using ConPTY backend");
         IS_CONPTY.store(true, Ordering::Relaxed);
         pty
     } else {
-        info!("Using Winpty agent");
+        info!("Using WinPTY backend");
         winpty::new(config, size, window_id)
     }
 }
@@ -207,19 +185,7 @@ impl Write for EventedWritablePipe {
     }
 }
 
-impl<'a> OnResize for PtyHandle<'a> {
-    fn on_resize(&mut self, sizeinfo: &SizeInfo) {
-        match self {
-            PtyHandle::Winpty(w) => w.resize(sizeinfo),
-            PtyHandle::Conpty(c) => {
-                let mut handle = c.clone();
-                handle.on_resize(sizeinfo)
-            },
-        }
-    }
-}
-
-impl<'a> EventedReadWrite for Pty<'a> {
+impl EventedReadWrite for Pty {
     type Reader = EventedReadablePipe;
     type Writer = EventedWritablePipe;
 
@@ -244,6 +210,15 @@ impl<'a> EventedReadWrite for Pty<'a> {
         } else {
             poll.register(&self.conin, self.write_token, mio::Ready::empty(), poll_opts)?
         }
+
+        self.child_event_token = token.next().unwrap();
+        poll.register(
+            self.child_watcher.event_rx(),
+            self.child_event_token,
+            mio::Ready::readable(),
+            poll_opts,
+        )?;
+
         Ok(())
     }
 
@@ -264,6 +239,14 @@ impl<'a> EventedReadWrite for Pty<'a> {
         } else {
             poll.reregister(&self.conin, self.write_token, mio::Ready::empty(), poll_opts)?;
         }
+
+        poll.reregister(
+            self.child_watcher.event_rx(),
+            self.child_event_token,
+            mio::Ready::readable(),
+            poll_opts,
+        )?;
+
         Ok(())
     }
 
@@ -271,6 +254,7 @@ impl<'a> EventedReadWrite for Pty<'a> {
     fn deregister(&mut self, poll: &mio::Poll) -> io::Result<()> {
         poll.deregister(&self.conout)?;
         poll.deregister(&self.conin)?;
+        poll.deregister(self.child_watcher.event_rx())?;
         Ok(())
     }
 
@@ -295,4 +279,41 @@ impl<'a> EventedReadWrite for Pty<'a> {
     }
 }
 
-impl<'a> EventedPty for Pty<'a> {}
+impl EventedPty for Pty {
+    fn child_event_token(&self) -> mio::Token {
+        self.child_event_token
+    }
+
+    fn next_child_event(&mut self) -> Option<ChildEvent> {
+        match self.child_watcher.event_rx().try_recv() {
+            Ok(ev) => Some(ev),
+            Err(TryRecvError::Empty) => None,
+            Err(TryRecvError::Disconnected) => Some(ChildEvent::Exited),
+        }
+    }
+}
+
+impl OnResize for Pty {
+    fn on_resize(&mut self, size: &SizeInfo) {
+        match &mut self.backend {
+            PtyBackend::Winpty(w) => w.on_resize(size),
+            PtyBackend::Conpty(c) => c.on_resize(size),
+        }
+    }
+}
+
+fn cmdline<C>(config: &Config<C>) -> String {
+    let default_shell = Shell::new("powershell");
+    let shell = config.shell.as_ref().unwrap_or(&default_shell);
+
+    once(shell.program.as_ref())
+        .chain(shell.args.iter().map(|a| a.as_ref()))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Converts the string slice into a Windows-standard representation for "W"-
+/// suffixed function variants, which accept UTF-16 encoded string values.
+pub fn win32_string<S: AsRef<OsStr> + ?Sized>(value: &S) -> Vec<u16> {
+    OsStr::new(value).encode_wide().chain(once(0)).collect()
+}

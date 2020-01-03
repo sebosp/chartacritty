@@ -27,8 +27,6 @@ use std::env;
 use std::error::Error;
 use std::fs;
 use std::io::{self, Write};
-#[cfg(not(windows))]
-use std::os::unix::io::AsRawFd;
 use std::sync::Arc;
 
 #[cfg(target_os = "macos")]
@@ -52,12 +50,19 @@ use alacritty_terminal::tty;
 
 mod cli;
 mod config;
+mod cursor;
 mod display;
 mod event;
 mod input;
 mod logging;
+mod renderer;
 mod url;
 mod window;
+
+mod gl {
+    #![allow(clippy::all)]
+    include!(concat!(env!("OUT_DIR"), "/gl_bindings.rs"));
+}
 
 use crate::cli::Options;
 use crate::config::monitor::Monitor;
@@ -198,16 +203,6 @@ fn run(window_event_loop: GlutinEventLoop<Event>, config: Config) -> Result<(), 
     #[cfg(any(target_os = "macos", windows))]
     let pty = tty::new(&config, &display.size_info, None);
 
-    // Create PTY resize handle
-    //
-    // This exists because rust doesn't know the interface is thread-safe
-    // and we need to be able to resize the PTY from the main thread while the IO
-    // thread owns the EventedRW object.
-    #[cfg(windows)]
-    let resize_handle = pty.resize_handle();
-    #[cfg(not(windows))]
-    let resize_handle = pty.fd.as_raw_fd();
-
     // Create the pseudoterminal I/O loop
     //
     // pty I/O is ran on another thread as to not occupy cycles used by the
@@ -254,7 +249,7 @@ fn run(window_event_loop: GlutinEventLoop<Event>, config: Config) -> Result<(), 
     // Need the Rc<RefCell<_>> here since a ref is shared in the resize callback
     let mut processor = Processor::new(
         event_loop::Notifier(loop_tx.clone()),
-        Box::new(resize_handle),
+        // Box::new(resize_handle), # TODO: REMOVE this from event_loop.rs
         message_buffer,
         config,
         display,
@@ -274,6 +269,21 @@ fn run(window_event_loop: GlutinEventLoop<Event>, config: Config) -> Result<(), 
     // FIXME: For some reason if I try this it will never finish.
     // I believe this is because the interval runs from Tokio have not been cancelled.
     // tokio_thread.join().expect("Unable to shutdown tokio channel");
+
+    // This explicit drop is needed for Windows, ConPTY backend. Otherwise a deadlock can occur.
+    // The cause:
+    //   - Drop for Conpty will deadlock if the conout pipe has already been dropped.
+    //   - The conout pipe is dropped when the io_thread is joined below (io_thread owns pty).
+    //   - Conpty is dropped when the last of processor and io_thread are dropped, because both of
+    //     them own an Arc<Conpty>.
+    //
+    // The fix is to ensure that processor is dropped first. That way, when io_thread (i.e. pty)
+    // is dropped, it can ensure Conpty is dropped before the conout pipe in the pty drop order.
+    //
+    // FIXME: Change PTY API to enforce the correct drop order with the typesystem.
+    drop(processor);
+
+    // Shutdown PTY parser event loop
     loop_tx.send(Msg::Shutdown).expect("Error sending shutdown to pty event loop");
     io_thread.join().expect("join io thread");
 
