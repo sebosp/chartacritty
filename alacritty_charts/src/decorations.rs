@@ -154,16 +154,16 @@ pub trait Decorate {
         &mut self,
         _display_size: SizeInfo,
         _offset: Value2D,
-        stats: &TimeSeriesStats,
-        sources: &[TimeSeriesSource],
+        _stats: &TimeSeriesStats,
+        _sources: &[TimeSeriesSource],
     ) {
-        let span = span!(Level::TRACE, "update_opengl_vecs: default Trait function");
+        let _span = span!(Level::TRACE, "update_opengl_vecs: default Trait function");
     }
 
     /// `width` of the Decoration as it may need space to be drawn, otherwise
     /// the decoration and the data itself would overlap, these are pixels
     fn width(&self) -> f32 {
-        debug!("Using default Decorate trait method.");
+        event!(Level::DEBUG, "Using default Decorate trait method.");
         Decoration::default_width()
     }
 
@@ -197,6 +197,8 @@ pub trait Decorate {
     }
 }
 
+const REFERENCE_POINT_DECORATION_VEC_CAPACITY: usize = 12;
+
 /// `ReferencePointDecoration` draws a fixed point to give a reference point
 /// of what a drawn value may mean
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -226,10 +228,6 @@ pub struct ReferencePointDecoration {
     /// The opengl vertices is stored in this vector
     #[serde(default)]
     pub opengl_data: Vec<f32>,
-
-    /// The capacity is always 12, see opengl_vertices()
-    #[serde(default)]
-    pub opengl_vec_capacity: usize,
 }
 
 impl Default for ReferencePointDecoration {
@@ -244,14 +242,16 @@ impl Default for ReferencePointDecoration {
                 y: 0f32, // No top/bottom padding
             },
             opengl_data: vec![],
-            opengl_vec_capacity: 12,
         }
     }
 }
 
 impl Decorate for ReferencePointDecoration {
     fn width(&self) -> f32 {
-        debug!("Using custom width from ReferencePointDecoration");
+        event!(
+            Level::DEBUG,
+            "Using custom width from ReferencePointDecoration"
+        );
         self.padding.x * 2. // Reserve space left and right
     }
 
@@ -266,11 +266,12 @@ impl Decorate for ReferencePointDecoration {
         display_size: SizeInfo,
         offset: Value2D,
         stats: &TimeSeriesStats,
-        sources: &[TimeSeriesSource],
+        _sources: &[TimeSeriesSource],
     ) {
-        debug!("ReferencePointDecoration:update_opengl_vecs: Starting");
-        if self.opengl_vec_capacity != self.opengl_data.capacity() {
-            self.opengl_data = vec![0.; self.opengl_vec_capacity];
+        let _span = span!(Level::TRACE, "ReferencePointDecoration::update_opengl_vecs",);
+        if REFERENCE_POINT_DECORATION_VEC_CAPACITY != self.opengl_data.capacity() {
+            event!(Level::DEBUG, "Initializing vector");
+            self.opengl_data = vec![0.; REFERENCE_POINT_DECORATION_VEC_CAPACITY];
         }
         // The vertexes of the above marker idea can be represented as
         // connecting lines for these coordinates:
@@ -292,7 +293,9 @@ impl Decorate for ReferencePointDecoration {
         let y3 = display_size.scale_y(stats.max, self.bottom_value());
 
         // Build the left most axis "tick" mark.
+        event!(Level::DEBUG, "Before 0th");
         self.opengl_data[0] = x1;
+        event!(Level::DEBUG, "After 0th");
         self.opengl_data[1] = y2;
         self.opengl_data[2] = x1;
         self.opengl_data[3] = y3;
@@ -307,7 +310,8 @@ impl Decorate for ReferencePointDecoration {
         self.opengl_data[9] = y3;
         self.opengl_data[10] = x2;
         self.opengl_data[11] = y2;
-        debug!(
+        event!(
+            Level::DEBUG,
             "ReferencePointDecoration:update_opengl_vecs: Finished: {:?}",
             self.opengl_data
         );
@@ -377,11 +381,9 @@ pub struct ActiveAlertUnderLineDecoration {
     /// The capacity is static, one triangle on the left and one on the right
     #[serde(default)]
     pub opengl_data: Vec<f32>,
-
-    /// The capacity is always 12, see opengl_vertices()
-    #[serde(default)]
-    pub opengl_vec_capacity: usize,
 }
+
+const ACTIVE_ALERT_UNDER_LINE_DECORATION_VEC_CAPACITY: usize = 12;
 
 impl Default for ActiveAlertUnderLineDecoration {
     fn default() -> ActiveAlertUnderLineDecoration {
@@ -396,7 +398,6 @@ impl Default for ActiveAlertUnderLineDecoration {
                 y: 1f32, // XXX: figure out how to reserve space vertically
             },
             opengl_data: vec![],
-            opengl_vec_capacity: 12usize, // Minimum to draw left bar to right bar and whiskers
         }
     }
 }
@@ -412,14 +413,14 @@ impl Decorate for ActiveAlertUnderLineDecoration {
         &mut self,
         display_size: SizeInfo,
         offset: Value2D,
-        stats: &TimeSeriesStats,
+        _stats: &TimeSeriesStats,
         sources: &[TimeSeriesSource],
     ) {
         debug!("ActiveAlertUnderLineDecoration:update_opengl_vecs: Starting");
         // TODO: This needs to be calculated only at the start, perhaps an init() method.
         // TODO: Depending on the number of alarms, the transparency should become 0.
-        if self.opengl_vec_capacity != self.opengl_data.capacity() {
-            self.opengl_data = vec![0.; self.opengl_vec_capacity];
+        if ACTIVE_ALERT_UNDER_LINE_DECORATION_VEC_CAPACITY != self.opengl_data.capacity() {
+            self.opengl_data = vec![0.; ACTIVE_ALERT_UNDER_LINE_DECORATION_VEC_CAPACITY];
         }
         // The vertexes of the above marker idea can be represented as
         // connecting lines for these coordinates:
