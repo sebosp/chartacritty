@@ -81,8 +81,8 @@ impl Decoration {
     /// Calls the internal methods to get the color
     pub fn color(&self) -> Rgb {
         match self {
-            Decoration::Reference(d) => d.color(),
-            Decoration::Alert(d) => d.color(),
+            Decoration::Reference(d) => d.color,
+            Decoration::Alert(d) => d.color,
             Decoration::None => Decoration::default_color(),
         }
     }
@@ -90,8 +90,8 @@ impl Decoration {
     /// Calls the internal methods to get the alpha
     pub fn alpha(&self) -> f32 {
         match self {
-            Decoration::Reference(d) => d.alpha(),
-            Decoration::Alert(d) => d.alpha(),
+            Decoration::Reference(d) => d.alpha,
+            Decoration::Alert(d) => d.alpha,
             Decoration::None => Decoration::default_alpha(),
         }
     }
@@ -131,7 +131,7 @@ impl Decoration {
 
     /// Default alpha
     fn default_alpha() -> f32 {
-        0.0f32
+        1.0f32
     }
 
     /// Default top value
