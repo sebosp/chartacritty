@@ -157,7 +157,7 @@ pub trait Decorate {
         _stats: &TimeSeriesStats,
         _sources: &[TimeSeriesSource],
     ) {
-        let _span = span!(Level::TRACE, "update_opengl_vecs: default Trait function");
+        event!(Level::DEBUG, "update_opengl_vecs: default Trait function");
     }
 
     /// `width` of the Decoration as it may need space to be drawn, otherwise
@@ -268,7 +268,8 @@ impl Decorate for ReferencePointDecoration {
         stats: &TimeSeriesStats,
         _sources: &[TimeSeriesSource],
     ) {
-        let _span = span!(Level::TRACE, "ReferencePointDecoration::update_opengl_vecs",);
+        let span = span!(Level::TRACE, "ReferencePointDecoration::update_opengl_vecs");
+        let _enter = span.enter();
         if REFERENCE_POINT_DECORATION_VEC_CAPACITY != self.opengl_data.capacity() {
             event!(Level::DEBUG, "Initializing vector");
             self.opengl_data = vec![0.; REFERENCE_POINT_DECORATION_VEC_CAPACITY];
@@ -293,9 +294,7 @@ impl Decorate for ReferencePointDecoration {
         let y3 = display_size.scale_y(stats.max, self.bottom_value());
 
         // Build the left most axis "tick" mark.
-        event!(Level::DEBUG, "Before 0th");
         self.opengl_data[0] = x1;
-        event!(Level::DEBUG, "After 0th");
         self.opengl_data[1] = y2;
         self.opengl_data[2] = x1;
         self.opengl_data[3] = y3;
@@ -416,10 +415,15 @@ impl Decorate for ActiveAlertUnderLineDecoration {
         _stats: &TimeSeriesStats,
         sources: &[TimeSeriesSource],
     ) {
-        debug!("ActiveAlertUnderLineDecoration:update_opengl_vecs: Starting");
+        let span = span!(
+            Level::TRACE,
+            "ActiveAlertUnderLineDecoration::update_opengl_vecs",
+        );
+        let _enter = span.enter();
         // TODO: This needs to be calculated only at the start, perhaps an init() method.
         // TODO: Depending on the number of alarms, the transparency should become 0.
         if ACTIVE_ALERT_UNDER_LINE_DECORATION_VEC_CAPACITY != self.opengl_data.capacity() {
+            event!(Level::DEBUG, "Initializing vector");
             self.opengl_data = vec![0.; ACTIVE_ALERT_UNDER_LINE_DECORATION_VEC_CAPACITY];
         }
         // The vertexes of the above marker idea can be represented as
@@ -469,8 +473,8 @@ impl Decorate for ActiveAlertUnderLineDecoration {
             1.0
         };
         debug!(
-            "ActiveAlertUnderLineDecoration:update_opengl_vecs: Finished: {:?}",
-            self.opengl_data
+            "ActiveAlertUnderLineDecoration:update_opengl_vecs: Finished: alpha: {} vecs {:?}",
+            self.alpha, self.opengl_data
         );
     }
 }
@@ -478,8 +482,11 @@ impl Decorate for ActiveAlertUnderLineDecoration {
 impl ActiveAlertUnderLineDecoration {
     /// `is_series_alert_triggering` Checks the chart sources to determine if the alert is triggering or not
     fn is_series_alert_triggering(&self, sources: &[TimeSeriesSource]) -> bool {
+        let span = span!(Level::TRACE, "is_series_alert_triggering");
+        let _enter = span.enter();
         for series in sources {
             if series.name() == self.target {
+                event!(Level::DEBUG, "Matching target series: {}", series.name());
                 match self.comparator {
                     AlertComparator::Equal => {
                         if series.series().stats.last == self.threshold {
@@ -497,6 +504,12 @@ impl ActiveAlertUnderLineDecoration {
                         }
                     }
                     AlertComparator::GreaterThan => {
+                        event!(
+                            Level::DEBUG,
+                            "Comparing threshold {} vs stats: {:?}",
+                            self.threshold,
+                            series.series().stats
+                        );
                         if series.series().stats.last > self.threshold {
                             return true;
                         }
