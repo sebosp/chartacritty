@@ -467,14 +467,14 @@ impl TimeSeriesChart {
             series_idx = series_idx,
         );
         let _enter = span.enter();
-        if series_idx > self.sources.len() {
+        if series_idx >= self.sources.len() {
             error!(
                 "update_series_opengl_vecs: Request for out of bound series index: {}",
                 series_idx
             );
             return;
         }
-        while self.opengl_vecs.capacity() < self.sources.capacity() {
+        while self.opengl_vecs.capacity() <= self.sources.capacity() {
             self.opengl_vecs.push(vec![]);
         }
         let mut display_size = display_size;
@@ -570,7 +570,7 @@ impl TimeSeriesChart {
         );
         let _enter = span.enter();
         event!(Level::DEBUG, "update_all_series_opengl_vecs: Starting");
-        for idx in 0..self.sources.len() {
+        for idx in 0..self.sources.len() - 1 {
             self.update_series_opengl_vecs(idx, display_size);
         }
         event!(Level::DEBUG, "update_all_series_opengl_vecs: Finished");
