@@ -412,7 +412,7 @@ impl Decorate for ActiveAlertUnderLineDecoration {
         &mut self,
         display_size: SizeInfo,
         offset: Value2D,
-        _stats: &TimeSeriesStats,
+        stats: &TimeSeriesStats,
         sources: &[TimeSeriesSource],
     ) {
         let span = span!(
@@ -445,8 +445,8 @@ impl Decorate for ActiveAlertUnderLineDecoration {
 
         // Calculate Y, the marker hints are by default 10% of the chart height
         // Same as the chart_width to have the same amount of pixels.
-        let y1 = -1.0 - (0.1 * display_size.chart_width);
-        let y2 = -1.0;
+        let y1 = display_size.scale_y(stats.max, stats.min + ((stats.max - stats.min) / 10f64));
+        let y2 = display_size.scale_y(stats.max, stats.min);
 
         // TODO: Fix this part in a for loop overwriting the allocated vector
         // Build the left most triangle
@@ -468,9 +468,9 @@ impl Decorate for ActiveAlertUnderLineDecoration {
         self.opengl_data[11] = y2;
 
         self.alpha = if self.is_series_alert_triggering(sources) {
-            0.0
-        } else {
             1.0
+        } else {
+            0.0
         };
         debug!(
             "ActiveAlertUnderLineDecoration:update_opengl_vecs: Finished: alpha: {} vecs {:?}",
