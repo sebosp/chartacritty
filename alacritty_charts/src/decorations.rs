@@ -472,7 +472,7 @@ impl Decorate for ActiveAlertUnderLineDecoration {
         } else {
             0.0
         };
-        debug!(
+        info!(
             "ActiveAlertUnderLineDecoration:update_opengl_vecs: Finished: alpha: {} vecs {:?}",
             self.alpha, self.opengl_data
         );

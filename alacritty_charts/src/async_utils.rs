@@ -35,8 +35,8 @@ pub struct MetricRequest {
 #[derive(Debug)]
 pub enum AsyncChartTask {
     LoadResponse(MetricRequest),
-    SendMetricsOpenGLData(usize, usize, oneshot::Sender<Vec<f32>>),
-    SendDecorationsOpenGLData(usize, usize, oneshot::Sender<Vec<f32>>),
+    SendMetricsOpenGLData(usize, usize, oneshot::Sender<(Vec<f32>, f32)>),
+    SendDecorationsOpenGLData(usize, usize, oneshot::Sender<(Vec<f32>, f32)>),
     ChangeDisplaySize(f32, f32, f32, f32, oneshot::Sender<bool>),
     SendLastUpdatedEpoch(oneshot::Sender<u64>),
     IncrementInputCounter(u64, f64),
@@ -214,7 +214,7 @@ pub fn send_metrics_opengl_vecs(
     charts: &[TimeSeriesChart],
     chart_index: usize,
     series_index: usize,
-    channel: oneshot::Sender<Vec<f32>>,
+    channel: oneshot::Sender<(Vec<f32>, f32)>,
 ) {
     event!(
         Level::DEBUG,
@@ -247,14 +247,14 @@ pub fn send_metrics_opengl_vecs(
     };
 }
 
-/// `send_decorations_opengl_vecs` handles the async_coordinator task of type
+/// `send_decorations_opengl_data` handles the async_coordinator task of type
 /// SendDecorationsOpenGLData, it returns the chart index as opengl vertices
-/// representation through the channel parameter
-pub fn send_decorations_opengl_vecs(
+/// representation and the alpha through the channel parameter
+pub fn send_decorations_opengl_data(
     charts: &[TimeSeriesChart],
     chart_index: usize,
     data_index: usize,
-    channel: oneshot::Sender<Vec<f32>>,
+    channel: oneshot::Sender<(Vec<f32>, f32)>,
 ) {
     event!(
         Level::DEBUG,
@@ -263,26 +263,29 @@ pub fn send_decorations_opengl_vecs(
     );
     match channel.send(
         if chart_index >= charts.len() || data_index >= charts[chart_index].decorations.len() {
-            vec![]
+            (vec![], 0f32)
         } else {
             event!(
                 Level::DEBUG,
-                "send_decorations_opengl_vecs Sending vertices: {:?}",
+                "send_decorations_opengl_data Sending vertices: {:?}",
                 charts[chart_index].decorations[data_index].opengl_vertices()
             );
-            charts[chart_index].decorations[data_index].opengl_vertices()
+            (
+                charts[chart_index].decorations[data_index].opengl_vertices(),
+                charts[chart_index].decorations[data_index].alpha(),
+            )
         },
     ) {
         Ok(()) => {
             event!(
                 Level::DEBUG,
-                "send_decorations_opengl_vecs: oneshot::message sent for index: {}",
+                "send_decorations_opengl_data: oneshot::message sent for index: {}",
                 chart_index
             );
         }
         Err(err) => event!(
             Level::ERROR,
-            "send_decorations_opengl_vecs: Error sending: {:?}",
+            "send_decorations_opengl_data: Error sending: {:?}",
             err
         ),
     };
@@ -377,7 +380,7 @@ pub fn async_coordinator(
                 send_metrics_opengl_vecs(&charts, chart_index, data_index, channel);
             }
             AsyncChartTask::SendDecorationsOpenGLData(chart_index, data_index, channel) => {
-                send_decorations_opengl_vecs(&charts, chart_index, data_index, channel);
+                send_decorations_opengl_data(&charts, chart_index, data_index, channel);
             }
             AsyncChartTask::ChangeDisplaySize(height, width, padding_y, padding_x, channel) => {
                 change_display_size(
@@ -551,16 +554,16 @@ pub fn spawn_datasource_interval_polls(
         .map(|_| ())
 }
 
-/// `get_metric_opengl_vecs` generates a oneshot::channel to communicate
+/// `get_metric_opengl_data` generates a oneshot::channel to communicate
 /// with the async coordinator and request the vectors of the metric_data
-/// or the decorations vertices
-pub fn get_metric_opengl_vecs(
+/// or the decorations vertices, along with its alpha
+pub fn get_metric_opengl_data(
     charts_tx: mpsc::Sender<AsyncChartTask>,
     chart_idx: usize,
     series_idx: usize,
     request_type: &'static str,
     tokio_handle: current_thread::Handle,
-) -> Vec<f32> {
+) -> (Vec<f32>, f32) {
     let (opengl_tx, opengl_rx) = oneshot::channel();
     let get_opengl_task = charts_tx
         .clone()
@@ -572,7 +575,7 @@ pub fn get_metric_opengl_vecs(
         .map_err(move |e| {
             event!(
                 Level::ERROR,
-                "get_metric_opengl_vecs:(Chart: {}, Series: {}) Sending {} Task. err={:?}",
+                "get_metric_opengl_data:(Chart: {}, Series: {}) Sending {} Task. err={:?}",
                 chart_idx,
                 series_idx,
                 request_type,
@@ -582,7 +585,7 @@ pub fn get_metric_opengl_vecs(
         .and_then(move |_res| {
             event!(
                 Level::DEBUG,
-                "get_metric_opengl_vecs:(Chart: {}, Series: {}) Sent Request for {} Task",
+                "get_metric_opengl_data:(Chart: {}, Series: {}) Sent Request for {} Task",
                 chart_idx,
                 series_idx,
                 request_type
@@ -592,7 +595,7 @@ pub fn get_metric_opengl_vecs(
     tokio_handle
         .spawn(lazy(move || get_opengl_task))
         .expect(&format!(
-            "get_metric_opengl_vecs:(Chart: {}, Series: {}) Unable to spawn get_opengl_task",
+            "get_metric_opengl_data:(Chart: {}, Series: {}) Unable to spawn get_opengl_task",
             chart_idx, series_idx
         ));
     let opengl_rx = opengl_rx.map(|x| x);
@@ -600,7 +603,7 @@ pub fn get_metric_opengl_vecs(
         Ok(data) => {
             event!(
                 Level::DEBUG,
-                "get_metric_opengl_vecs:(Chart: {}, Series: {}) Response from {} Task: {:?}",
+                "get_metric_opengl_data:(Chart: {}, Series: {}) Response from {} Task: {:?}",
                 chart_idx,
                 series_idx,
                 request_type,
@@ -611,13 +614,13 @@ pub fn get_metric_opengl_vecs(
         Err(err) => {
             event!(
                 Level::ERROR,
-                "get_metric_opengl_vecs:(Chart: {}, Series: {}) Error from {} Task: {:?}",
+                "get_metric_opengl_data:(Chart: {}, Series: {}) Error from {} Task: {:?}",
                 chart_idx,
                 series_idx,
                 request_type,
                 err
             );
-            vec![]
+            (vec![], 0f32)
         }
     }
 }
