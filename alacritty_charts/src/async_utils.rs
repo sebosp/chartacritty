@@ -224,9 +224,12 @@ pub fn send_metrics_opengl_vecs(
     );
     match channel.send(
         if chart_index >= charts.len() || series_index >= charts[chart_index].sources.len() {
-            vec![]
+            (vec![], 0.0f32)
         } else {
-            charts[chart_index].get_deduped_opengl_vecs(series_index)
+            (
+                charts[chart_index].get_deduped_opengl_vecs(series_index),
+                charts[chart_index].sources[series_index].alpha(),
+            )
         },
     ) {
         Ok(()) => {
