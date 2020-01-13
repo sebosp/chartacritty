@@ -570,7 +570,7 @@ impl TimeSeriesChart {
         );
         let _enter = span.enter();
         event!(Level::DEBUG, "update_all_series_opengl_vecs: Starting");
-        for idx in 0..self.sources.len() - 1 {
+        for idx in 0..self.sources.len() {
             self.update_series_opengl_vecs(idx, display_size);
         }
         event!(Level::DEBUG, "update_all_series_opengl_vecs: Finished");
@@ -590,7 +590,7 @@ impl TimeSeriesChart {
         let mut max_activity_value = std::f64::MIN;
         let mut min_activity_value = std::f64::MAX;
         let mut sum_activity_values = 0f64;
-        let mut filled_stats = 0usize;
+        let mut total_count = 0usize;
         for source in &mut self.sources {
             if source.series_mut().stats.is_dirty {
                 source.series_mut().calculate_stats();
@@ -604,11 +604,7 @@ impl TimeSeriesChart {
                 min_activity_value = source.series().stats.min;
             }
             sum_activity_values += source.series().stats.sum;
-            for series_idx in source.series().as_vec() {
-                if series_idx.1.is_some() {
-                    filled_stats += 1;
-                }
-            }
+            total_count += source.series().stats.count;
         }
         // Account for the decoration requested height
         for decoration in &self.decorations {
@@ -621,16 +617,16 @@ impl TimeSeriesChart {
                 min_activity_value = bottom_value;
             }
         }
+        self.stats.count = total_count;
         self.stats.max = max_activity_value;
         self.stats.min = min_activity_value;
         self.stats.sum = sum_activity_values;
-        self.stats.avg = sum_activity_values / filled_stats as f64;
+        self.stats.avg = sum_activity_values / total_count as f64;
         self.stats.is_dirty = false;
         event!(
             Level::DEBUG,
-            "TimeSeriesChart::calculate_stats: Updated statistics to: {:?}, filled_stats: {:?}",
-            self.stats,
-            filled_stats
+            "TimeSeriesChart::calculate_stats: Updated statistics to: {:?}",
+            self.stats
         );
     }
 
