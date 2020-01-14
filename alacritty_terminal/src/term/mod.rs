@@ -1576,6 +1576,8 @@ impl<T: EventListener> ansi::Handler for Term<T> {
         trace!("Carriage return");
         self.cursor.point.col = Column(0);
         self.input_needs_wrap = false;
+        // Send the line drawn increment to the tokio background thread
+        self.increment_chart_output_counter(1f64);
     }
 
     /// Linefeed
@@ -1632,8 +1634,6 @@ impl<T: EventListener> ansi::Handler for Term<T> {
         if self.mode.contains(TermMode::LINE_FEED_NEW_LINE) {
             self.carriage_return();
         }
-        // Send the line drawn increment to the tokio background thread
-        self.increment_chart_output_counter(1f64);
     }
 
     #[inline]
