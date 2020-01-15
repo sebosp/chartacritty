@@ -445,8 +445,11 @@ impl Decorate for ActiveAlertUnderLineDecoration {
 
         // Calculate Y, the marker hints are by default 10% of the chart height
         // Same as the chart_width to have the same amount of pixels.
-        let y1 = display_size.scale_y(stats.max, stats.min + ((stats.max - stats.min) / 10f64));
-        let y2 = display_size.scale_y(stats.max, stats.min);
+        let y1 = display_size.scale_y(
+            stats.max,
+            stats.min + ((stats.max - stats.min) / 10f64) * 2f64,
+        );
+        let y2 = display_size.scale_y(stats.max, stats.min + ((stats.max - stats.min) / 10f64));
 
         // TODO: Fix this part in a for loop overwriting the allocated vector
         // Build the left most triangle
@@ -463,7 +466,7 @@ impl Decorate for ActiveAlertUnderLineDecoration {
 
         // Build the right most triangle
         self.opengl_data[8] = x4;
-        self.opengl_data[9] = y2;
+        self.opengl_data[9] = y1;
         self.opengl_data[10] = x3;
         self.opengl_data[11] = y2;
 
