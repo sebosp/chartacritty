@@ -757,6 +757,12 @@ impl TimeSeries {
                 sum_activity_values += metric;
                 filled_metrics += 1;
                 last = metric;
+            } else {
+                if !is_first_filled {
+                    is_first_filled = true;
+                    first = self.get_missing_values_fill();
+                }
+                last = self.get_missing_values_fill();
             }
         }
         self.stats.max = max_activity_value;
