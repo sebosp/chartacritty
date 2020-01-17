@@ -89,11 +89,16 @@ pub struct TimeSeriesStats {
     last: f64,
     count: usize,
     sum: f64, // May overflow
+    last_epoch: u64,
     is_dirty: bool,
 }
 
 impl Default for TimeSeriesStats {
     fn default() -> TimeSeriesStats {
+        let now = std::time::SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
         TimeSeriesStats {
             max: 0f64,
             min: 0f64,
@@ -102,6 +107,7 @@ impl Default for TimeSeriesStats {
             last: 0f64,
             count: 0usize,
             sum: 0f64,
+            last_epoch: now,
             is_dirty: false,
         }
     }
@@ -591,6 +597,7 @@ impl TimeSeriesChart {
         let mut min_activity_value = std::f64::MAX;
         let mut sum_activity_values = 0f64;
         let mut total_count = 0usize;
+        let mut max_epoch = 0u64;
         for source in &mut self.sources {
             if source.series_mut().stats.is_dirty {
                 source.series_mut().calculate_stats();
@@ -599,6 +606,9 @@ impl TimeSeriesChart {
         for source in &self.sources {
             if source.series().stats.max > max_activity_value {
                 max_activity_value = source.series().stats.max;
+            }
+            if source.series().stats.last_epoch > max_epoch {
+                max_epoch = source.series().stats.last_epoch;
             }
             if source.series().stats.min < min_activity_value {
                 min_activity_value = source.series().stats.min;
@@ -623,6 +633,7 @@ impl TimeSeriesChart {
         self.stats.sum = sum_activity_values;
         self.stats.avg = sum_activity_values / total_count as f64;
         self.stats.is_dirty = false;
+        self.stats.last_epoch = max_epoch;
         event!(
             Level::DEBUG,
             "TimeSeriesChart::calculate_stats: Updated statistics to: {:?}",
