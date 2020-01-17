@@ -10,7 +10,6 @@
 //
 // TODO: There are several RFCs in rust to allow enum variants to impl a specific Trait but they
 // haven't been merged
-
 use crate::*;
 use tracing::{event, span, Level};
 /// `Decoration` contains several types of decorations to add to a chart
@@ -507,12 +506,6 @@ impl ActiveAlertUnderLineDecoration {
                         }
                     }
                     AlertComparator::GreaterThan => {
-                        event!(
-                            Level::DEBUG,
-                            "Comparing threshold {} vs stats: {:?}",
-                            self.threshold,
-                            series.series().stats
-                        );
                         if series.series().stats.last > self.threshold {
                             return true;
                         }
