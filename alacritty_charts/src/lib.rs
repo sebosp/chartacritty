@@ -95,10 +95,6 @@ pub struct TimeSeriesStats {
 
 impl Default for TimeSeriesStats {
     fn default() -> TimeSeriesStats {
-        let now = std::time::SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
         TimeSeriesStats {
             max: 0f64,
             min: 0f64,
@@ -107,7 +103,7 @@ impl Default for TimeSeriesStats {
             last: 0f64,
             count: 0usize,
             sum: 0f64,
-            last_epoch: now,
+            last_epoch: 0u64,
             is_dirty: false,
         }
     }
@@ -694,6 +690,24 @@ impl TimeSeriesChart {
         debug!("get_deduped_opengl_vecs[{}] result: {:?}", idx, res);
         res
     }
+
+    /// `synchronize_series_epoch_range` ensures that, for the items inside a chart.series vector,
+    /// the epochs are synchronized so that we can draw them and make sense of their values.
+    pub fn synchronize_series_epoch_range(&mut self) {
+        let span = span!(Level::TRACE, "synchronize_series_epoch_range");
+        let _enter = span.enter();
+        let last_epoch = self.stats.last_epoch;
+        let updated_series: usize = self
+            .sources
+            .iter_mut()
+            .map(|x| x.series_mut().upsert((last_epoch, None)))
+            .sum();
+        event!(
+            Level::DEBUG,
+            "synchronize_series_epoch_range: Total number of items added to series {}",
+            updated_series
+        );
+    }
 }
 
 impl Default for TimeSeries {
@@ -753,7 +767,11 @@ impl TimeSeries {
         let mut first = 0.;
         let mut last = 0.;
         let mut is_first_filled = false;
+        let mut max_epoch = 0u64;
         for entry in self.iter() {
+            if entry.0 > max_epoch {
+                max_epoch = entry.0;
+            }
             if let Some(metric) = entry.1 {
                 if !is_first_filled {
                     is_first_filled = true;
@@ -783,6 +801,7 @@ impl TimeSeries {
         self.stats.count = filled_metrics;
         self.stats.first = first;
         self.stats.last = last;
+        self.stats.last_epoch = max_epoch;
         self.stats.is_dirty = false;
     }
 
