@@ -4,7 +4,6 @@
 //! An async_coordinator is defined that receives requests over a futures mpsc
 //! channel that may contain new data, may request OpenGL data or increment
 //! internal counters.
-use crate::decorations::Decorate;
 use crate::prometheus;
 use crate::SizeInfo;
 use crate::TimeSeriesChart;
@@ -85,25 +84,32 @@ pub fn increment_internal_counter(
     size: SizeInfo,
 ) {
     for chart in charts {
+        let mut chart_updated = false;
         for series in &mut chart.sources {
             if counter_type == "input" {
                 if let TimeSeriesSource::AlacrittyInput(ref mut input) = series {
                     input.series.upsert((epoch, Some(value)));
+                    chart_updated = true;
                 }
             }
             if counter_type == "output" {
                 if let TimeSeriesSource::AlacrittyOutput(ref mut output) = series {
                     output.series.upsert((epoch, Some(value)));
+                    chart_updated = true;
                 }
             }
             // Update the loaded item counters
             if counter_type == "async_loaded_items" {
                 if let TimeSeriesSource::AsyncLoadedItems(ref mut items) = series {
                     items.series.upsert((epoch, Some(value)));
+                    chart_updated = true;
                 }
             }
         }
-        chart.update_all_series_opengl_vecs(size);
+        if chart_updated {
+            chart.synchronize_series_epoch_range();
+            chart.update_all_series_opengl_vecs(size);
+        }
     }
 }
 
@@ -111,6 +117,7 @@ pub fn increment_internal_counter(
 /// SendLastUpdatedEpoch. Once the max epoch of all the charts is known, it is
 /// inserted it on the other series so that they also progress in time.
 pub fn send_last_updated_epoch(charts: &mut Vec<TimeSeriesChart>, channel: oneshot::Sender<u64>) {
+    // Under different timezones, this probably makes no sense
     let max: u64 = charts
         .iter()
         .map(|x| x.last_updated)
@@ -161,7 +168,6 @@ pub fn load_http_response(
         idx = response.chart_index
     );
     let _enter = span.enter();
-    event!(Level::DEBUG, "load_http_response: Starting");
     if let Some(data) = response.data {
         if data.status != "success" {
             return;
@@ -196,6 +202,7 @@ pub fn load_http_response(
                     charts[response.chart_index].sources[response.series_index]
                 );
             }
+            charts[response.chart_index].synchronize_series_epoch_range();
             charts[response.chart_index].update_series_opengl_vecs(response.series_index, size);
         }
         let now = std::time::SystemTime::now()
