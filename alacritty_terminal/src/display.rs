@@ -601,43 +601,43 @@ impl Display {
             }
             for chart_idx in 0..config.charts.len() {
                 for decoration_idx in 0..config.charts[chart_idx].decorations.len() {
-                    let alpha = config.charts[chart_idx].decorations[decoration_idx].alpha();
+                    let opengl_data = alacritty_charts::async_utils::get_metric_opengl_data(
+                        charts_tx.clone(),
+                        chart_idx,
+                        decoration_idx,
+                        "decoration",
+                        tokio_handle.clone(),
+                    );
                     self.renderer.draw_charts_line(
                         config,
                         &size_info,
-                        &alacritty_charts::async_utils::get_metric_opengl_vecs(
-                            charts_tx.clone(),
-                            chart_idx,
-                            decoration_idx,
-                            "decoration",
-                            tokio_handle.clone(),
-                        ),
+                        &opengl_data.0,
                         Rgb {
                             r: config.charts[chart_idx].decorations[decoration_idx].color().r,
                             g: config.charts[chart_idx].decorations[decoration_idx].color().g,
                             b: config.charts[chart_idx].decorations[decoration_idx].color().b,
                         },
-                        alpha,
+                        opengl_data.1,
                     );
                 }
                 for series_idx in 0..config.charts[chart_idx].sources.len() {
-                    let alpha = config.charts[chart_idx].sources[series_idx].alpha();
+                    let opengl_data = alacritty_charts::async_utils::get_metric_opengl_vecs(
+                        charts_tx.clone(),
+                        chart_idx,
+                        series_idx,
+                        "metric_data",
+                        tokio_handle.clone(),
+                    );
                     self.renderer.draw_charts_line(
                         config,
                         &size_info,
-                        &alacritty_charts::async_utils::get_metric_opengl_vecs(
-                            charts_tx.clone(),
-                            chart_idx,
-                            series_idx,
-                            "metric_data",
-                            tokio_handle.clone(),
-                        ),
+                        &opengl_data.0,
                         Rgb {
                             r: config.charts[chart_idx].sources[series_idx].color().r,
                             g: config.charts[chart_idx].sources[series_idx].color().g,
                             b: config.charts[chart_idx].sources[series_idx].color().b,
                         },
-                        alpha,
+                        opengl_data.1,
                     );
                 }
             }

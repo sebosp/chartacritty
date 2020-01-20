@@ -30,6 +30,7 @@ use alacritty_terminal::selection::Selection;
 use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::cell::Cell;
 use alacritty_terminal::term::{SizeInfo, Term};
+#[cfg(not(windows))]
 use alacritty_terminal::tty;
 use alacritty_terminal::util::{limit, start_daemon};
 
@@ -310,7 +311,6 @@ pub struct Processor<N> {
     suppress_chars: bool,
     modifiers: ModifiersState,
     config: Config,
-    pty_resize_handle: Box<dyn OnResize>,
     message_buffer: MessageBuffer,
     display: Display,
     font_size: Size,
@@ -318,14 +318,13 @@ pub struct Processor<N> {
     charts_tx: futures_mpsc::Sender<alacritty_charts::async_utils::AsyncChartTask>,
 }
 
-impl<N: Notify> Processor<N> {
+impl<N: Notify + OnResize> Processor<N> {
     /// Create a new event processor
     ///
     /// Takes a writer which is expected to be hooked up to the write end of a
     /// pty.
     pub fn new(
         notifier: N,
-        pty_resize_handle: Box<dyn OnResize>,
         message_buffer: MessageBuffer,
         config: Config,
         display: Display,
@@ -340,7 +339,6 @@ impl<N: Notify> Processor<N> {
             modifiers: Default::default(),
             font_size: config.font.size,
             config,
-            pty_resize_handle,
             message_buffer,
             display,
             tokio_handle,
@@ -360,14 +358,14 @@ impl<N: Notify> Processor<N> {
                 info!("glutin event: {:?}", event);
             }
 
-            match (&event, tty::process_should_exit()) {
+            match &event {
                 // Check for shutdown
-                (GlutinEvent::UserEvent(Event::Exit), _) | (_, true) => {
+                GlutinEvent::UserEvent(Event::Exit) => {
                     *control_flow = ControlFlow::Exit;
                     return;
                 },
                 // Process events
-                (GlutinEvent::EventsCleared, _) => {
+                GlutinEvent::EventsCleared => {
                     *control_flow = ControlFlow::Wait;
 
                     if event_queue.is_empty() {
@@ -413,7 +411,7 @@ impl<N: Notify> Processor<N> {
             if !display_update_pending.is_empty() {
                 self.display.handle_update(
                     &mut terminal,
-                    self.pty_resize_handle.as_mut(),
+                    &mut self.notifier,
                     &self.message_buffer,
                     &self.config,
                     display_update_pending,
@@ -498,6 +496,17 @@ impl<N: Notify> Processor<N> {
                 match event {
                     CloseRequested => processor.ctx.terminal.exit(),
                     Resized(lsize) => {
+                        #[cfg(windows)]
+                        {
+                            // Minimizing the window sends a Resize event with zero width and
+                            // height. But there's no need to ever actually resize to this.
+                            // Both WinPTY & ConPTY have issues when resizing down to zero size
+                            // and back.
+                            if lsize.width == 0.0 && lsize.height == 0.0 {
+                                return;
+                            }
+                        }
+
                         let psize = lsize.to_physical(processor.ctx.size_info.dpr);
                         processor.ctx.display_update_pending.dimensions = Some(psize);
                         processor.ctx.terminal.dirty = true;

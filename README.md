@@ -1,6 +1,6 @@
 <h1 align="center">Alacritty</h1>
 <p align="center">
-    <img width="200" alt="Alacritty Logo" src="extra/logo/alacritty-term+scanlines.svg">
+    <img width="200" alt="Alacritty Logo" src="extra/logo/compat/alacritty-term+scanlines.png">
 </p>
 
 Alacritty is the fastest terminal emulator in existence. Using the GPU for
@@ -140,15 +140,18 @@ scoop install alacritty
 ### Other
 
 Prebuilt binaries for Linux, macOS, and Windows can be downloaded from the
-[GitHub releases page](https://github.com/jwilm/alacritty/releases).
+[GitHub releases page](https://github.com/jwilm/alacritty/releases). If your
+desktop environment has trouble rendering the default SVG icons, you can find
+a prerendered SVG as well as simplified versions of the SVG in the
+`extra/logo/compat` directory.
 
-To work properly on Windows, Alacritty requires winpty to emulate UNIX's PTY
-API. The agent is a single binary (`winpty-agent.exe`) which **must** be in
-the same directory as the Alacritty executable and is available through the
-[GitHub releases page](https://github.com/jwilm/alacritty/releases).
+On Windows, Alacritty also requires Microsoft's VC++ redistributable.
 
-On Windows, Alacritty also requires Microsoft's VC++ redistributable to work
-properly.
+For Windows versions older than Windows 10 (October 2018 Update), Alacritty
+requires winpty to emulate UNIX's PTY API. The agent is a single binary
+(`winpty-agent.exe`) which **must** be in the same directory as the Alacritty
+executable and is available through the
+[GitHub releases page](https://github.com/jwilm/alacritty/releases).
 
 ## Configuration
 
@@ -209,11 +212,6 @@ running on another machine which is connected to Alacritty via SSH, this issue
 disappears. Actual throughput and rendering performance are still better in
 Alacritty.
 
-**_My arrow keys don't work._**
-
-It sounds like you deleted some key bindings from your config file. Please
-reference the default config file to restore them.
-
 ## IRC
 
 Alacritty discussion can be found in `#alacritty` on freenode.
@@ -232,6 +230,4 @@ env WINIT_UNIX_BACKEND=x11 alacritty
 Alacritty is released under the [Apache License, Version 2.0].
 
 [Apache License, Version 2.0]: https://github.com/jwilm/alacritty/blob/master/LICENSE-APACHE
-[faq]: https://github.com/jwilm/alacritty#faq
 [tmux]: https://github.com/tmux/tmux
-[Wayland meta issue]: https://github.com/tomaka/winit/issues/306

@@ -730,6 +730,7 @@ mod tests {
                 min: 4.,
                 sum: test0_sum,
                 avg: test0_sum / 24.,
+                last_epoch: 1566918936,
             }
         );
     }
@@ -1003,6 +1004,7 @@ mod tests {
                     count: 5,
                     sum: 1202590842880.0,
                     is_dirty: false,
+                    last_epoch: 1571511826,
                 },
                 collision_policy: ValueCollisionPolicy::Overwrite,
                 missing_values_policy: MissingValuesPolicy::Zero,

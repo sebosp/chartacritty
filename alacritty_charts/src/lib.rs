@@ -21,26 +21,27 @@
 #[macro_use]
 extern crate serde_derive;
 
+pub mod async_utils;
+pub mod config;
+pub mod decorations;
+pub mod prometheus;
+
 pub use futures;
 pub use hyper;
 pub use hyper_tls;
 pub use percent_encoding;
+pub use tokio;
+pub use tokio_core;
 
+use decorations::*;
 use log::*;
+use serde::de::Visitor;
+use serde::{Deserialize, Deserializer};
 use serde_yaml;
 use std::fmt;
 use std::str::FromStr;
 use std::time::UNIX_EPOCH;
-pub use tokio;
-pub use tokio_core;
 use tracing::{event, span, Level};
-
-use serde::de::Visitor;
-use serde::{Deserialize, Deserializer};
-
-pub mod async_utils;
-pub mod config;
-pub mod prometheus;
 
 /// `MissingValuesPolicy` provides several ways to deal with missing values
 /// when drawing the Metric
@@ -79,7 +80,7 @@ impl Default for ValueCollisionPolicy {
 }
 
 /// `TimeSeriesStats` contains statistics about the current TimeSeries
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Copy)]
 pub struct TimeSeriesStats {
     max: f64,
     min: f64,
@@ -88,6 +89,7 @@ pub struct TimeSeriesStats {
     last: f64,
     count: usize,
     sum: f64, // May overflow
+    last_epoch: u64,
     is_dirty: bool,
 }
 
@@ -101,6 +103,7 @@ impl Default for TimeSeriesStats {
             last: 0f64,
             count: 0usize,
             sum: 0f64,
+            last_epoch: 0u64,
             is_dirty: false,
         }
     }
@@ -253,217 +256,6 @@ impl<'de> Deserialize<'de> for Rgb {
         }
     }
 }
-/// `ReferencePointDecoration` draws a fixed point to give a reference point
-/// of what a drawn value may mean
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
-pub struct ReferencePointDecoration {
-    /// The value at which to draw the reference point
-    pub value: f64,
-
-    /// The reference point will use additional height for the axis line
-    /// this makes it fit in the configured space, basically the value
-    /// will be incremented by this additional percentage to give more
-    /// space to draw the axis tick
-    #[serde(default)]
-    pub height_multiplier: f64,
-
-    /// RGB color
-    #[serde(default)]
-    pub color: Rgb,
-
-    /// Transparency
-    #[serde(default)]
-    pub alpha: f32,
-
-    /// The pixels to separate from the left and right
-    #[serde(default)]
-    pub padding: Value2D,
-
-    /// The opengl vertices is stored in this vector
-    /// The capacity is always 12, see opengl_vertices()
-    #[serde(default)]
-    pub opengl_data: Vec<f32>,
-}
-
-impl Default for ReferencePointDecoration {
-    fn default() -> ReferencePointDecoration {
-        ReferencePointDecoration {
-            value: 1.0,
-            height_multiplier: 0.05,
-            color: Rgb::default(),
-            alpha: 0.5,
-            padding: Value2D {
-                x: 1f32,
-                y: 0f32, // No top/bottom padding
-            },
-            opengl_data: vec![],
-        }
-    }
-}
-
-impl ReferencePointDecoration {
-    /// `opengl_vertices` Scales the Marker Line to the current size of
-    /// the displayed points
-    pub fn opengl_vertices(&self) -> Vec<f32> {
-        self.opengl_data.clone()
-    }
-
-    /// `top_value` increments the reference point value by an additional
-    /// percentage to account for space to draw the axis tick
-    pub fn top_value(&self) -> f64 {
-        self.value + self.value * self.height_multiplier
-    }
-
-    /// `bottom_value` decrements the reference point value by a percentage
-    /// to account for space to draw the axis tick
-    pub fn bottom_value(&self) -> f64 {
-        self.value - self.value * self.height_multiplier
-    }
-
-    /// `update_opengl_vecs` Draws a marker at a fixed position for
-    /// reference.
-    pub fn update_opengl_vecs(
-        &mut self,
-        display_size: SizeInfo,
-        offset: Value2D,
-        chart_max_value: f64,
-    ) {
-        debug!("ReferencePointDecoration:update_opengl_vecs: Starting");
-        if 12 != self.opengl_data.capacity() {
-            self.opengl_data = vec![0.; 12];
-        }
-        // The vertexes of the above marker idea can be represented as
-        // connecting lines for these coordinates:
-        //         |Actual Draw Metric Data|
-        // x1,y2   |                       |   x2,y2
-        // x1,y1 --|-----------------------|-- x2,y1
-        // x1,y3   |                       |   x2,y3
-        // |- 10% -|-         80%         -|- 10% -|
-        // TODO: Add marker_line color to opengl
-        // TODO: Call only when max or min have changed in collected metrics
-        //
-        // Calculate X coordinates:
-        let x1 = display_size.scale_x(offset.x);
-        let x2 = display_size.scale_x(offset.x + display_size.chart_width);
-
-        // Calculate Y, the marker hints are 10% of the current values
-        // This means that the
-        let y1 = display_size.scale_y(chart_max_value, self.value);
-        let y2 = display_size.scale_y(chart_max_value, self.top_value());
-        let y3 = display_size.scale_y(chart_max_value, self.bottom_value());
-
-        // Build the left most axis "tick" mark.
-        self.opengl_data[0] = x1;
-        self.opengl_data[1] = y2;
-        self.opengl_data[2] = x1;
-        self.opengl_data[3] = y3;
-
-        // Create the line to the other side
-        self.opengl_data[4] = x1;
-        self.opengl_data[5] = y1;
-        self.opengl_data[6] = x2;
-        self.opengl_data[7] = y1;
-        // Finish the axis "tick" on the other side
-        self.opengl_data[8] = x2;
-        self.opengl_data[9] = y3;
-        self.opengl_data[10] = x2;
-        self.opengl_data[11] = y2;
-        debug!(
-            "ReferencePointDecoration:update_opengl_vecs: Finished: {:?}",
-            self.opengl_data
-        );
-    }
-}
-
-/// `Decoration` contains several types of decorations to add to a chart
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
-#[serde(tag = "type")]
-pub enum Decoration {
-    #[serde(rename = "reference")]
-    Reference(ReferencePointDecoration),
-    None,
-    /* Maybe add Average, threshold coloring (turn line red after a certain
-     * point) */
-}
-
-impl Default for Decoration {
-    fn default() -> Decoration {
-        Decoration::None
-    }
-}
-
-// XXX: Maybe this should turn into a trait
-impl Decoration {
-    /// `width` of the Decoration as it may need space to be drawn, otherwise
-    /// the decoration and the data itself would overlap, these are pixels
-    fn width(&self) -> f32 {
-        match self {
-            Decoration::Reference(d) => d.padding.x * 2., // it needs space left and right
-            Decoration::None => 0f32,
-        }
-    }
-
-    /// `top_value` is the Y value of the decoration, it needs to be
-    /// in the range of the metrics that have been collected, thus f64
-    /// this is the highest point the Decoration will use
-    fn top_value(&self) -> f64 {
-        match self {
-            Decoration::Reference(ref d) => d.top_value(),
-            Decoration::None => 0f64,
-        }
-    }
-
-    /// `bottom_value` is the Y value of the decoration, it needs to be
-    /// in the range of the metrics that have been collected, thus f64
-    /// this is the lowest point the Decoration will use
-    fn bottom_value(&self) -> f64 {
-        match self {
-            Decoration::Reference(d) => d.value - d.value * d.height_multiplier,
-            Decoration::None => 0f64,
-        }
-    }
-
-    /// `update_opengl_vecs` calls the decoration update methods
-    fn update_opengl_vecs(
-        &mut self,
-        display_size: SizeInfo,
-        offset: Value2D,
-        chart_max_value: f64,
-    ) {
-        match self {
-            Decoration::Reference(ref mut d) => {
-                d.update_opengl_vecs(display_size, offset, chart_max_value)
-            }
-            Decoration::None => (),
-        }
-    }
-
-    /// `opengl_vertices` returns the representation of the decoration in
-    /// opengl. These are for now GL_LINES and 2D
-    pub fn opengl_vertices(&self) -> Vec<f32> {
-        match self {
-            Decoration::Reference(d) => d.opengl_vertices(),
-            Decoration::None => vec![],
-        }
-    }
-
-    /// `color` returns the Rgb for the decoration
-    pub fn color(&self) -> Rgb {
-        match self {
-            Decoration::Reference(d) => d.color,
-            Decoration::None => Rgb::default(),
-        }
-    }
-
-    /// `alpha` returns the transparency for the decoration
-    pub fn alpha(&self) -> f32 {
-        match self {
-            Decoration::Reference(d) => d.alpha,
-            Decoration::None => 0.0f32,
-        }
-    }
-}
-
 /// `ManualTimeSeries` is a basic time series that we feed ourselves, used for internal counters
 /// for example keyboard input, output newlines, loaded items count.
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -677,14 +469,14 @@ impl TimeSeriesChart {
             series_idx = series_idx,
         );
         let _enter = span.enter();
-        if series_idx > self.sources.len() {
+        if series_idx >= self.sources.len() {
             error!(
                 "update_series_opengl_vecs: Request for out of bound series index: {}",
                 series_idx
             );
             return;
         }
-        while self.opengl_vecs.capacity() < self.sources.capacity() {
+        while self.opengl_vecs.capacity() <= self.sources.capacity() {
             self.opengl_vecs.push(vec![]);
         }
         let mut display_size = display_size;
@@ -762,7 +554,7 @@ impl TimeSeriesChart {
                 "update_series_opengl_vecs: Updating decoration {:?} vertices",
                 decoration
             );
-            decoration.update_opengl_vecs(display_size, self.offset, self.stats.max);
+            decoration.update_opengl_vecs(display_size, self.offset, &self.stats, &self.sources);
         }
         self.last_updated = std::time::SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -800,7 +592,8 @@ impl TimeSeriesChart {
         let mut max_activity_value = std::f64::MIN;
         let mut min_activity_value = std::f64::MAX;
         let mut sum_activity_values = 0f64;
-        let mut filled_stats = 0usize;
+        let mut total_count = 0usize;
+        let mut max_epoch = 0u64;
         for source in &mut self.sources {
             if source.series_mut().stats.is_dirty {
                 source.series_mut().calculate_stats();
@@ -810,15 +603,14 @@ impl TimeSeriesChart {
             if source.series().stats.max > max_activity_value {
                 max_activity_value = source.series().stats.max;
             }
+            if source.series().stats.last_epoch > max_epoch {
+                max_epoch = source.series().stats.last_epoch;
+            }
             if source.series().stats.min < min_activity_value {
                 min_activity_value = source.series().stats.min;
             }
             sum_activity_values += source.series().stats.sum;
-            for series_idx in source.series().as_vec() {
-                if series_idx.1.is_some() {
-                    filled_stats += 1;
-                }
-            }
+            total_count += source.series().stats.count;
         }
         // Account for the decoration requested height
         for decoration in &self.decorations {
@@ -831,16 +623,17 @@ impl TimeSeriesChart {
                 min_activity_value = bottom_value;
             }
         }
+        self.stats.count = total_count;
         self.stats.max = max_activity_value;
         self.stats.min = min_activity_value;
         self.stats.sum = sum_activity_values;
-        self.stats.avg = sum_activity_values / filled_stats as f64;
+        self.stats.avg = sum_activity_values / total_count as f64;
         self.stats.is_dirty = false;
+        self.stats.last_epoch = max_epoch;
         event!(
             Level::DEBUG,
-            "TimeSeriesChart::calculate_stats: Updated statistics to: {:?}, filled_stats: {:?}",
-            self.stats,
-            filled_stats
+            "TimeSeriesChart::calculate_stats: Updated statistics to: {:?}",
+            self.stats
         );
     }
 
@@ -896,6 +689,24 @@ impl TimeSeriesChart {
         }
         debug!("get_deduped_opengl_vecs[{}] result: {:?}", idx, res);
         res
+    }
+
+    /// `synchronize_series_epoch_range` ensures that, for the items inside a chart.series vector,
+    /// the epochs are synchronized so that we can draw them and make sense of their values.
+    pub fn synchronize_series_epoch_range(&mut self) {
+        let span = span!(Level::TRACE, "synchronize_series_epoch_range");
+        let _enter = span.enter();
+        let last_epoch = self.stats.last_epoch;
+        let updated_series: usize = self
+            .sources
+            .iter_mut()
+            .map(|x| x.series_mut().upsert((last_epoch, None)))
+            .sum();
+        event!(
+            Level::DEBUG,
+            "synchronize_series_epoch_range: Total number of items added to series {}",
+            updated_series
+        );
     }
 }
 
@@ -956,7 +767,11 @@ impl TimeSeries {
         let mut first = 0.;
         let mut last = 0.;
         let mut is_first_filled = false;
+        let mut max_epoch = 0u64;
         for entry in self.iter() {
+            if entry.0 > max_epoch {
+                max_epoch = entry.0;
+            }
             if let Some(metric) = entry.1 {
                 if !is_first_filled {
                     is_first_filled = true;
@@ -971,6 +786,12 @@ impl TimeSeries {
                 sum_activity_values += metric;
                 filled_metrics += 1;
                 last = metric;
+            } else {
+                if !is_first_filled {
+                    is_first_filled = true;
+                    first = self.get_missing_values_fill();
+                }
+                last = self.get_missing_values_fill();
             }
         }
         self.stats.max = max_activity_value;
@@ -980,6 +801,7 @@ impl TimeSeries {
         self.stats.count = filled_metrics;
         self.stats.first = first;
         self.stats.last = last;
+        self.stats.last_epoch = max_epoch;
         self.stats.is_dirty = false;
     }
 

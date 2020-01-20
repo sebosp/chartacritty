@@ -22,21 +22,23 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use fnv::FnvHasher;
-use font::{self, FontDesc, FontKey, GlyphKey, Rasterize, RasterizedGlyph, Rasterizer};
+use font::{
+    self, BitmapBuffer, FontDesc, FontKey, GlyphKey, Rasterize, RasterizedGlyph, Rasterizer,
+};
 use log::{error, info};
 use notify::{watcher, DebouncedEvent, RecursiveMode, Watcher};
 
-use crate::config::{self, Config, Delta, Font, StartupMode};
-use crate::cursor::{get_cursor_glyph, CursorKey};
+use crate::cursor;
 use crate::gl;
 use crate::gl::types::*;
-use crate::index::{Column, Line};
 use crate::renderer::rects::RenderRect;
-use crate::term::cell::{self, Flags};
-use crate::term::color::Rgb;
-use crate::term::SizeInfo;
-use crate::term::{self, RenderableCell, RenderableCellContent};
-use crate::util;
+use alacritty_terminal::config::{self, Config, Delta, Font, StartupMode};
+use alacritty_terminal::index::{Column, Line};
+use alacritty_terminal::term::cell::{self, Flags};
+use alacritty_terminal::term::color::Rgb;
+use alacritty_terminal::term::{self, CursorKey, RenderableCell, RenderableCellContent, SizeInfo};
+use alacritty_terminal::util;
+use std::fmt::{self, Display, Formatter};
 
 pub mod rects;
 
@@ -82,32 +84,22 @@ pub enum Error {
     ShaderCreation(ShaderCreationError),
 }
 
-impl ::std::error::Error for Error {
-    fn cause(&self) -> Option<&dyn (::std::error::Error)> {
-        match *self {
-            Error::ShaderCreation(ref err) => Some(err),
-        }
-    }
-
-    fn description(&self) -> &str {
-        match *self {
-            Error::ShaderCreation(ref err) => err.description(),
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Error::ShaderCreation(err) => err.source(),
         }
     }
 }
 
-impl ::std::fmt::Display for Error {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-        match *self {
-            Error::ShaderCreation(ref err) => {
-                write!(f, "There was an error initializing the shaders: {}", err)
-            },
-        }
+impl Display for Error {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "There was an error initializing the shaders: {}", self)
     }
 }
 
 impl From<ShaderCreationError> for Error {
-    fn from(val: ShaderCreationError) -> Error {
+    fn from(val: ShaderCreationError) -> Self {
         Error::ShaderCreation(val)
     }
 }
@@ -157,6 +149,7 @@ pub struct ChartsShaderProgram {
 #[derive(Copy, Debug, Clone)]
 pub struct Glyph {
     tex_id: GLuint,
+    colored: bool,
     top: f32,
     left: f32,
     width: f32,
@@ -199,7 +192,7 @@ pub struct GlyphCache {
     /// glyph offset
     glyph_offset: Delta<i8>,
 
-    metrics: ::font::Metrics,
+    metrics: font::Metrics,
 }
 
 impl GlyphCache {
@@ -220,7 +213,7 @@ impl GlyphCache {
 
         let metrics = rasterizer.metrics(regular, font.size)?;
 
-        let mut cache = GlyphCache {
+        let mut cache = Self {
             cache: HashMap::default(),
             cursor_cache: HashMap::default(),
             rasterizer,
@@ -303,7 +296,7 @@ impl GlyphCache {
         FontDesc::new(desc.family.clone(), style)
     }
 
-    pub fn get<'a, L>(&'a mut self, glyph_key: GlyphKey, loader: &mut L) -> &'a Glyph
+    pub fn get<L>(&mut self, glyph_key: GlyphKey, loader: &mut L) -> &Glyph
     where
         L: LoadGlyph,
     {
@@ -469,12 +462,6 @@ pub struct LoaderApi<'a> {
     current_atlas: &'a mut usize,
 }
 
-#[derive(Debug)]
-pub struct PackedVertex {
-    x: f32,
-    y: f32,
-}
-
 #[derive(Debug, Default)]
 pub struct Batch {
     tex: GLuint,
@@ -483,13 +470,21 @@ pub struct Batch {
 
 impl Batch {
     #[inline]
-    pub fn new() -> Batch {
-        Batch { tex: 0, instances: Vec::with_capacity(BATCH_MAX) }
+    pub fn new() -> Self {
+        Self { tex: 0, instances: Vec::with_capacity(BATCH_MAX) }
     }
 
-    pub fn add_item(&mut self, cell: RenderableCell, glyph: &Glyph) {
+    pub fn add_item(&mut self, mut cell: RenderableCell, glyph: &Glyph) {
         if self.is_empty() {
             self.tex = glyph.tex_id;
+        }
+
+        if glyph.colored {
+            // XXX Temporary workaround to prevent emojis being rendered with a wrong colors on, at
+            // least, dark backgrounds. For more info see #1864.
+            cell.fg.r = 255;
+            cell.fg.g = 255;
+            cell.fg.b = 255;
         }
 
         self.instances.push(InstanceData {
@@ -683,7 +678,7 @@ impl QuadRenderer {
 
         if cfg!(feature = "live-shader-reload") {
             util::thread::spawn_named("live shader reload", move || {
-                let (tx, rx) = ::std::sync::mpsc::channel();
+                let (tx, rx) = std::sync::mpsc::channel();
                 // The Duration argument is a debouncing period.
                 let mut watcher =
                     watcher(tx, Duration::from_millis(10)).expect("create file watcher");
@@ -710,7 +705,7 @@ impl QuadRenderer {
             });
         }
 
-        let mut renderer = QuadRenderer {
+        let mut renderer = Self {
             program,
             rect_program,
             charts_program,
@@ -1109,7 +1104,7 @@ impl<'a, C> RenderApi<'a, C> {
                 // Raw cell pixel buffers like cursors don't need to go through font lookup
                 let metrics = glyph_cache.metrics;
                 let glyph = glyph_cache.cursor_cache.entry(cursor_key).or_insert_with(|| {
-                    self.load_glyph(&get_cursor_glyph(
+                    self.load_glyph(&cursor::get_cursor_glyph(
                         cursor_key.style,
                         metrics,
                         self.config.font.offset.x,
@@ -1117,7 +1112,7 @@ impl<'a, C> RenderApi<'a, C> {
                         cursor_key.is_wide,
                     ))
                 });
-                self.add_render_item(cell, &glyph);
+                self.add_render_item(cell, glyph);
                 return;
             },
             RenderableCellContent::Chars(chars) => chars,
@@ -1191,6 +1186,7 @@ fn load_glyph(
         },
         Err(AtlasInsertError::GlyphTooLarge) => Glyph {
             tex_id: atlas[*current_atlas].id,
+            colored: false,
             top: 0.0,
             left: 0.0,
             width: 0.0,
@@ -1283,7 +1279,7 @@ impl TextShaderProgram {
 
         assert_uniform_valid!(projection, cell_dim, background);
 
-        let shader = TextShaderProgram {
+        let shader = Self {
             id: program,
             u_projection: projection,
             u_cell_dim: cell_dim,
@@ -1361,7 +1357,7 @@ impl RectShaderProgram {
         // get uniform locations
         let u_color = unsafe { gl::GetUniformLocation(program, b"color\0".as_ptr() as *const _) };
 
-        let shader = RectShaderProgram { id: program, u_color };
+        let shader = Self { id: program, u_color };
 
         unsafe { gl::UseProgram(0) }
 
@@ -1563,37 +1559,29 @@ pub enum ShaderCreationError {
     Link(String),
 }
 
-impl ::std::error::Error for ShaderCreationError {
-    fn cause(&self) -> Option<&dyn (::std::error::Error)> {
-        match *self {
-            ShaderCreationError::Io(ref err) => Some(err),
+impl std::error::Error for ShaderCreationError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            ShaderCreationError::Io(err) => err.source(),
             _ => None,
-        }
-    }
-
-    fn description(&self) -> &str {
-        match *self {
-            ShaderCreationError::Io(ref err) => err.description(),
-            ShaderCreationError::Compile(ref _path, ref s) => s.as_str(),
-            ShaderCreationError::Link(ref s) => s.as_str(),
         }
     }
 }
 
-impl ::std::fmt::Display for ShaderCreationError {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-        match *self {
-            ShaderCreationError::Io(ref err) => write!(f, "Couldn't read shader: {}", err),
-            ShaderCreationError::Compile(ref path, ref log) => {
+impl Display for ShaderCreationError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            ShaderCreationError::Io(err) => write!(f, "Couldn't read shader: {}", err),
+            ShaderCreationError::Compile(path, log) => {
                 write!(f, "Failed compiling shader at {}: {}", path.display(), log)
             },
-            ShaderCreationError::Link(ref log) => write!(f, "Failed linking shader: {}", log),
+            ShaderCreationError::Link(log) => write!(f, "Failed linking shader: {}", log),
         }
     }
 }
 
 impl From<io::Error> for ShaderCreationError {
-    fn from(val: io::Error) -> ShaderCreationError {
+    fn from(val: io::Error) -> Self {
         ShaderCreationError::Io(val)
     }
 }
@@ -1652,7 +1640,7 @@ enum AtlasInsertError {
 }
 
 impl Atlas {
-    fn new(size: i32) -> Atlas {
+    fn new(size: i32) -> Self {
         let mut id: GLuint = 0;
         unsafe {
             gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
@@ -1678,7 +1666,7 @@ impl Atlas {
             gl::BindTexture(gl::TEXTURE_2D, 0);
         }
 
-        Atlas { id, width: size, height: size, row_extent: 0, row_baseline: 0, row_tallest: 0 }
+        Self { id, width: size, height: size, row_extent: 0, row_baseline: 0, row_tallest: 0 }
     }
 
     pub fn clear(&mut self) {
@@ -1721,11 +1709,23 @@ impl Atlas {
         let offset_x = self.row_extent;
         let height = glyph.height as i32;
         let width = glyph.width as i32;
+        let colored;
 
         unsafe {
             gl::BindTexture(gl::TEXTURE_2D, self.id);
 
             // Load data into OpenGL
+            let (format, buf) = match &glyph.buf {
+                BitmapBuffer::RGB(buf) => {
+                    colored = false;
+                    (gl::RGB, buf)
+                },
+                BitmapBuffer::RGBA(buf) => {
+                    colored = true;
+                    (gl::RGBA, buf)
+                },
+            };
+
             gl::TexSubImage2D(
                 gl::TEXTURE_2D,
                 0,
@@ -1733,9 +1733,9 @@ impl Atlas {
                 offset_y,
                 width,
                 height,
-                gl::RGB,
+                format,
                 gl::UNSIGNED_BYTE,
-                glyph.buf.as_ptr() as *const _,
+                buf.as_ptr() as *const _,
             );
 
             gl::BindTexture(gl::TEXTURE_2D, 0);
@@ -1756,6 +1756,7 @@ impl Atlas {
 
         Glyph {
             tex_id: self.id,
+            colored,
             top: glyph.top as f32,
             width: width as f32,
             height: height as f32,

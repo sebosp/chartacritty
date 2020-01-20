@@ -18,7 +18,7 @@ use futures::future::lazy;
 use futures::sync::mpsc as futures_mpsc;
 use futures::sync::oneshot;
 use std::f64;
-use std::fmt;
+use std::fmt::{self, Formatter};
 use std::time::Instant;
 use std::time::UNIX_EPOCH;
 use tokio::prelude::*;
@@ -27,25 +27,28 @@ use tokio::runtime::current_thread;
 use glutin::dpi::{PhysicalPosition, PhysicalSize};
 use glutin::event::ModifiersState;
 use glutin::event_loop::EventLoop;
+#[cfg(not(any(target_os = "macos", windows)))]
+use glutin::platform::unix::EventLoopWindowTargetExtUnix;
 use glutin::window::CursorIcon;
 use log::{debug, error, info};
 use parking_lot::MutexGuard;
 
 use font::{self, Rasterize};
 
+use alacritty_charts::decorations::Decorate;
 use alacritty_terminal::config::{Font, StartupMode};
 use alacritty_terminal::event::{Event, OnResize};
 use alacritty_terminal::index::Line;
 use alacritty_terminal::message_bar::MessageBuffer;
 use alacritty_terminal::meter::Meter;
-use alacritty_terminal::renderer::rects::{RenderLines, RenderRect};
-use alacritty_terminal::renderer::{self, GlyphCache, QuadRenderer};
 use alacritty_terminal::selection::Selection;
 use alacritty_terminal::term::color::Rgb;
 use alacritty_terminal::term::{RenderableCell, SizeInfo, Term, TermMode};
 
 use crate::config::Config;
 use crate::event::{DisplayUpdate, Mouse};
+use crate::renderer::rects::{RenderLines, RenderRect};
+use crate::renderer::{self, GlyphCache, QuadRenderer};
 use crate::url::{Url, Urls};
 use crate::window::{self, Window};
 
@@ -65,56 +68,47 @@ pub enum Error {
 }
 
 impl std::error::Error for Error {
-    fn cause(&self) -> Option<&dyn (std::error::Error)> {
-        match *self {
-            Error::Window(ref err) => Some(err),
-            Error::Font(ref err) => Some(err),
-            Error::Render(ref err) => Some(err),
-            Error::ContextError(ref err) => Some(err),
-        }
-    }
-
-    fn description(&self) -> &str {
-        match *self {
-            Error::Window(ref err) => err.description(),
-            Error::Font(ref err) => err.description(),
-            Error::Render(ref err) => err.description(),
-            Error::ContextError(ref err) => err.description(),
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Error::Window(err) => err.source(),
+            Error::Font(err) => err.source(),
+            Error::Render(err) => err.source(),
+            Error::ContextError(err) => err.source(),
         }
     }
 }
 
 impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match *self {
-            Error::Window(ref err) => err.fmt(f),
-            Error::Font(ref err) => err.fmt(f),
-            Error::Render(ref err) => err.fmt(f),
-            Error::ContextError(ref err) => err.fmt(f),
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Error::Window(err) => err.fmt(f),
+            Error::Font(err) => err.fmt(f),
+            Error::Render(err) => err.fmt(f),
+            Error::ContextError(err) => err.fmt(f),
         }
     }
 }
 
 impl From<window::Error> for Error {
-    fn from(val: window::Error) -> Error {
+    fn from(val: window::Error) -> Self {
         Error::Window(val)
     }
 }
 
 impl From<font::Error> for Error {
-    fn from(val: font::Error) -> Error {
+    fn from(val: font::Error) -> Self {
         Error::Font(val)
     }
 }
 
 impl From<renderer::Error> for Error {
-    fn from(val: renderer::Error) -> Error {
+    fn from(val: renderer::Error) -> Self {
         Error::Render(val)
     }
 }
 
 impl From<glutin::ContextError> for Error {
-    fn from(val: glutin::ContextError) -> Error {
+    fn from(val: glutin::ContextError) -> Self {
         Error::ContextError(val)
     }
 }
@@ -215,7 +209,14 @@ impl Display {
 
         // We should call `clear` when window is offscreen, so when `window.show()` happens it
         // would be with background color instead of uninitialized surface.
-        window.swap_buffers();
+        #[cfg(not(any(target_os = "macos", windows)))]
+        {
+            // On Wayland we can safely ignore this call, since the window isn't visible until you
+            // actually draw something into it.
+            if event_loop.is_x11() {
+                window.swap_buffers()
+            }
+        }
 
         window.set_visible(true);
 
@@ -239,7 +240,7 @@ impl Display {
             _ => (),
         }
 
-        Ok(Display {
+        Ok(Self {
             window,
             renderer,
             glyph_cache,
@@ -519,41 +520,43 @@ impl Display {
         for chart_idx in 0..config.charts.len() {
             debug!("draw: Drawing chart: {}", config.charts[chart_idx].name);
             for decoration_idx in 0..config.charts[chart_idx].decorations.len() {
-                let alpha = config.charts[chart_idx].decorations[decoration_idx].alpha();
+                /// TODO: Change this to return a ChartOpenglData that contains (ves: Vec<f32>,
+                /// alpha: f32)
+                let opengl_data = alacritty_charts::async_utils::get_metric_opengl_data(
+                    charts_tx.clone(),
+                    chart_idx,
+                    decoration_idx,
+                    "decoration",
+                    tokio_handle.clone(),
+                );
                 self.renderer.draw_charts_line(
                     &size_info,
-                    &alacritty_charts::async_utils::get_metric_opengl_vecs(
-                        charts_tx.clone(),
-                        chart_idx,
-                        decoration_idx,
-                        "decoration",
-                        tokio_handle.clone(),
-                    ),
+                    &opengl_data.0,
                     Rgb {
                         r: config.charts[chart_idx].decorations[decoration_idx].color().r,
                         g: config.charts[chart_idx].decorations[decoration_idx].color().g,
                         b: config.charts[chart_idx].decorations[decoration_idx].color().b,
                     },
-                    alpha,
+                    opengl_data.1,
                 );
             }
             for series_idx in 0..config.charts[chart_idx].sources.len() {
-                let alpha = config.charts[chart_idx].sources[series_idx].alpha();
+                let opengl_data = alacritty_charts::async_utils::get_metric_opengl_data(
+                    charts_tx.clone(),
+                    chart_idx,
+                    series_idx,
+                    "metric_data",
+                    tokio_handle.clone(),
+                );
                 self.renderer.draw_charts_line(
                     &size_info,
-                    &alacritty_charts::async_utils::get_metric_opengl_vecs(
-                        charts_tx.clone(),
-                        chart_idx,
-                        series_idx,
-                        "metric_data",
-                        tokio_handle.clone(),
-                    ),
+                    &opengl_data.0,
                     Rgb {
                         r: config.charts[chart_idx].sources[series_idx].color().r,
                         g: config.charts[chart_idx].sources[series_idx].color().g,
                         b: config.charts[chart_idx].sources[series_idx].color().b,
                     },
-                    alpha,
+                    opengl_data.1,
                 );
             }
             let chart_last_drawn =
