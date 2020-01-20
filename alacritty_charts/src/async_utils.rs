@@ -203,7 +203,7 @@ pub fn load_http_response(
                 );
             }
             charts[response.chart_index].synchronize_series_epoch_range();
-            charts[response.chart_index].update_series_opengl_vecs(response.series_index, size);
+            charts[response.chart_index].update_all_series_opengl_vecs(size);
         }
         let now = std::time::SystemTime::now()
             .duration_since(UNIX_EPOCH)
