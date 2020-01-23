@@ -520,8 +520,8 @@ impl Display {
         for chart_idx in 0..config.charts.len() {
             debug!("draw: Drawing chart: {}", config.charts[chart_idx].name);
             for decoration_idx in 0..config.charts[chart_idx].decorations.len() {
-                /// TODO: Change this to return a ChartOpenglData that contains (ves: Vec<f32>,
-                /// alpha: f32)
+                // TODO: Change this to return a ChartOpenglData that contains:
+                // (ves: Vec<f32>, alpha: f32)
                 let opengl_data = alacritty_charts::async_utils::get_metric_opengl_data(
                     charts_tx.clone(),
                     chart_idx,
