@@ -2,11 +2,26 @@
 //! are not tied to metrics, these could be reference points, alarms/etc.
 
 // Example config:
+//charts:
 // - name: load
 //   decorations:
 //   - type: reference             # Draw a reference line
 //     value: 1.0                  # At metrics value 1.0
 //     color: "0x00ff00"
+//  - type: alert
+//    target: prometheus alerts # ties to below series of the same name
+//    threshold: 0
+//    comparator: '>'
+//    color: "0xff0000"
+//  series:
+//  - name: prometheus alerts  # this series matches
+//    type: prometheus
+//    refresh: 15
+//    source: 'http://localhost:9090/api/v1/query_range?query=ALERTS'
+//    color: "0xff0000"
+//    collision_policy: Overwrite
+//    missing_values_policy: zero
+//    alpha: 0.0
 //
 // TODO: There are several RFCs in rust to allow enum variants to impl a specific Trait but they
 // haven't been merged
