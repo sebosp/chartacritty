@@ -8,6 +8,7 @@
 // DONE:
 // -- mock the prometheus server and response
 // -- When disconnected from a server, it is not easy to know which one or why.
+// -- Add space for drawing the charts, right now we are decreasing 2 lines, but it breaks tmux
 // IN PROGRESS:
 // -- Group labels into separate colors (find something that does color spacing in rust)
 // TODO:
@@ -15,7 +16,6 @@
 // -- When activated on toggle it could blur a portion of the screen
 // -- Create a TimeSeries inside the Term itself so that increments can be done synchronously but
 //    send/fetch the updates to the background every half a second or so?
-// -- Add space for drawing the charts, right now we are decreasing 2 lines, but it breaks tmux
 
 #![warn(rust_2018_idioms)]
 #[macro_use]
