@@ -94,7 +94,11 @@ impl std::error::Error for Error {
 
 impl Display for Error {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "There was an error initializing the shaders: {}", self)
+        match self {
+            Error::ShaderCreation(err) => {
+                write!(f, "There was an error initializing the shaders: {}", err)
+            },
+        }
     }
 }
 
@@ -354,9 +358,7 @@ impl GlyphCache {
     }
 
     pub fn font_metrics(&self) -> font::Metrics {
-        self.rasterizer
-            .metrics(self.font_key, self.font_size)
-            .expect("metrics load since font is loaded at glyph cache creation")
+        self.metrics
     }
 
     // Calculate font metrics without access to a glyph cache
@@ -375,7 +377,7 @@ impl GlyphCache {
         dpr: f64,
         cell_width: f32,
         cell_height: f32,
-    ) -> Option<(f64, f64)> {
+    ) -> Option<(u32, u32)> {
         let dimensions = config.window.dimensions;
 
         if dimensions.columns_u32() == 0
@@ -395,7 +397,7 @@ impl GlyphCache {
         let width = padding_x.mul_add(2., f64::from(grid_width)).floor();
         let height = padding_y.mul_add(2., f64::from(grid_height)).floor();
 
-        Some((width, height))
+        Some((width as u32, height as u32))
     }
 }
 

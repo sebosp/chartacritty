@@ -6,11 +6,12 @@ use std::env;
 use std::fs;
 use std::fs::File;
 use std::io::Write;
+use std::mem;
 use std::sync::Arc;
 use std::time::Instant;
 
 use glutin::dpi::PhysicalSize;
-use glutin::event::{ElementState, Event as GlutinEvent, ModifiersState, MouseButton};
+use glutin::event::{ElementState, Event as GlutinEvent, ModifiersState, MouseButton, WindowEvent};
 use glutin::event_loop::{ControlFlow, EventLoop, EventLoopProxy};
 use glutin::platform::desktop::EventLoopExtDesktop;
 use log::{debug, info, warn};
@@ -34,6 +35,7 @@ use alacritty_terminal::term::{SizeInfo, Term};
 use alacritty_terminal::tty;
 use alacritty_terminal::util::{limit, start_daemon};
 
+use crate::cli::Options;
 use crate::config;
 use crate::config::Config;
 use crate::display::Display;
@@ -45,7 +47,7 @@ use tokio::runtime::current_thread;
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct DisplayUpdate {
-    pub dimensions: Option<PhysicalSize>,
+    pub dimensions: Option<PhysicalSize<u32>>,
     pub message_buffer: Option<()>,
     pub font: Option<Font>,
 }
@@ -358,26 +360,41 @@ impl<N: Notify + OnResize> Processor<N> {
                 info!("glutin event: {:?}", event);
             }
 
-            match &event {
+            // Ignore all events we do not care about
+            if Self::skip_event(&event) {
+                return;
+            }
+
+            match event {
                 // Check for shutdown
                 GlutinEvent::UserEvent(Event::Exit) => {
                     *control_flow = ControlFlow::Exit;
                     return;
                 },
                 // Process events
-                GlutinEvent::EventsCleared => {
+                GlutinEvent::RedrawEventsCleared => {
                     *control_flow = ControlFlow::Wait;
 
                     if event_queue.is_empty() {
                         return;
                     }
                 },
-                // Buffer events
-                _ => {
+                // Remap DPR change event to remove lifetime
+                GlutinEvent::WindowEvent {
+                    event: WindowEvent::ScaleFactorChanged { scale_factor, new_inner_size },
+                    ..
+                } => {
                     *control_flow = ControlFlow::Poll;
-                    if !Self::skip_event(&event) {
-                        event_queue.push(event);
-                    }
+                    let size = (new_inner_size.width, new_inner_size.height);
+                    let event = GlutinEvent::UserEvent(Event::DPRChanged(scale_factor, size));
+                    event_queue.push(event);
+                    return;
+                },
+                // Transmute to extend lifetime, which exists only for `ScaleFactorChanged` event.
+                // Since we remap that event to remove the lifetime, this is safe.
+                event => unsafe {
+                    *control_flow = ControlFlow::Poll;
+                    event_queue.push(mem::transmute(event));
                     return;
                 },
             }
@@ -456,6 +473,19 @@ impl<N: Notify + OnResize> Processor<N> {
     {
         match event {
             GlutinEvent::UserEvent(event) => match event {
+                Event::DPRChanged(scale_factor, (width, height)) => {
+                    let display_update_pending = &mut processor.ctx.display_update_pending;
+
+                    // Push current font to update its DPR
+                    display_update_pending.font =
+                        Some(processor.ctx.config.font.clone().with_size(*processor.ctx.font_size));
+
+                    // Resize to event's dimensions, since no resize event is emitted on Wayland
+                    display_update_pending.dimensions = Some(PhysicalSize::new(width, height));
+
+                    processor.ctx.size_info.dpr = scale_factor;
+                    processor.ctx.terminal.dirty = true;
+                },
                 Event::Title(title) => processor.ctx.window.set_title(&title),
                 Event::Wakeup => processor.ctx.terminal.dirty = true,
                 Event::Urgent => {
@@ -466,6 +496,9 @@ impl<N: Notify + OnResize> Processor<N> {
                     processor.ctx.display_update_pending.message_buffer = Some(());
 
                     if let Ok(config) = config::reload_from(&path) {
+                        let options = Options::new();
+                        let config = options.into_config(config);
+
                         processor.ctx.terminal.update_config(&config);
 
                         if processor.ctx.config.font != config.font {
@@ -491,27 +524,27 @@ impl<N: Notify + OnResize> Processor<N> {
                 Event::MouseCursorDirty => processor.reset_mouse_cursor(),
                 Event::Exit => (),
             },
+            GlutinEvent::RedrawRequested(_) => processor.ctx.terminal.dirty = true,
             GlutinEvent::WindowEvent { event, window_id, .. } => {
                 use glutin::event::WindowEvent::*;
                 match event {
                     CloseRequested => processor.ctx.terminal.exit(),
-                    Resized(lsize) => {
+                    Resized(size) => {
                         #[cfg(windows)]
                         {
                             // Minimizing the window sends a Resize event with zero width and
                             // height. But there's no need to ever actually resize to this.
                             // Both WinPTY & ConPTY have issues when resizing down to zero size
                             // and back.
-                            if lsize.width == 0.0 && lsize.height == 0.0 {
+                            if size.width == 0 && size.height == 0 {
                                 return;
                             }
                         }
 
-                        let psize = lsize.to_physical(processor.ctx.size_info.dpr);
-                        processor.ctx.display_update_pending.dimensions = Some(psize);
+                        processor.ctx.display_update_pending.dimensions = Some(size);
                         processor.ctx.terminal.dirty = true;
                     },
-                    KeyboardInput { input, .. } => {
+                    KeyboardInput { input, is_synthetic: false, .. } => {
                         processor.key_input(input);
                         if input.state == ElementState::Pressed {
                             // Hide cursor while typing
@@ -521,24 +554,24 @@ impl<N: Notify + OnResize> Processor<N> {
                         }
                     },
                     ReceivedCharacter(c) => processor.received_char(c),
-                    MouseInput { state, button, modifiers, .. } => {
+                    MouseInput { state, button, .. } => {
                         if !cfg!(target_os = "macos") || processor.ctx.terminal.is_focused {
                             processor.ctx.window.set_mouse_visible(true);
-                            processor.mouse_input(state, button, modifiers);
+                            processor.mouse_input(state, button);
                             processor.ctx.terminal.dirty = true;
                         }
                     },
-                    CursorMoved { position: lpos, modifiers, .. } => {
-                        let (x, y) = lpos.to_physical(processor.ctx.size_info.dpr).into();
-                        let x: i32 = limit(x, 0, processor.ctx.size_info.width as i32);
-                        let y: i32 = limit(y, 0, processor.ctx.size_info.height as i32);
+                    CursorMoved { position, .. } => {
+                        let (x, y) = position.into();
+                        let x = limit(x, 0, processor.ctx.size_info.width as i32);
+                        let y = limit(y, 0, processor.ctx.size_info.height as i32);
 
                         processor.ctx.window.set_mouse_visible(true);
-                        processor.mouse_moved(x as usize, y as usize, modifiers);
+                        processor.mouse_moved(x as usize, y as usize);
                     },
-                    MouseWheel { delta, phase, modifiers, .. } => {
+                    MouseWheel { delta, phase, .. } => {
                         processor.ctx.window.set_mouse_visible(true);
-                        processor.mouse_wheel_input(delta, phase, modifiers);
+                        processor.mouse_wheel_input(delta, phase);
                     },
                     Focused(is_focused) => {
                         if window_id == processor.ctx.window.window_id() {
@@ -558,27 +591,6 @@ impl<N: Notify + OnResize> Processor<N> {
                         let path: String = path.to_string_lossy().into();
                         processor.ctx.write_to_pty(path.into_bytes());
                     },
-                    HiDpiFactorChanged(dpr) => {
-                        let dpr_change = (dpr / processor.ctx.size_info.dpr) as f32;
-                        let display_update_pending = &mut processor.ctx.display_update_pending;
-
-                        // Push current font to update its DPR
-                        display_update_pending.font = Some(processor.ctx.config.font.clone());
-
-                        // Scale window dimensions with new DPR
-                        let old_width = processor.ctx.size_info.width;
-                        let old_height = processor.ctx.size_info.height;
-                        let dimensions =
-                            display_update_pending.dimensions.get_or_insert_with(|| {
-                                PhysicalSize::new(f64::from(old_width), f64::from(old_height))
-                            });
-                        dimensions.width *= f64::from(dpr_change);
-                        dimensions.height *= f64::from(dpr_change);
-
-                        processor.ctx.terminal.dirty = true;
-                        processor.ctx.size_info.dpr = dpr;
-                    },
-                    RedrawRequested => processor.ctx.terminal.dirty = true,
                     CursorLeft { .. } => {
                         processor.ctx.mouse.inside_grid = false;
 
@@ -586,11 +598,14 @@ impl<N: Notify + OnResize> Processor<N> {
                             processor.ctx.terminal.dirty = true;
                         }
                     },
-                    TouchpadPressure { .. }
+                    KeyboardInput { is_synthetic: true, .. }
+                    | TouchpadPressure { .. }
+                    | ScaleFactorChanged { .. }
                     | CursorEntered { .. }
                     | AxisMotion { .. }
                     | HoveredFileCancelled
                     | Destroyed
+                    | ThemeChanged(_)
                     | HoveredFile(_)
                     | Touch(_)
                     | Moved(_) => (),
@@ -598,13 +613,14 @@ impl<N: Notify + OnResize> Processor<N> {
             },
             GlutinEvent::DeviceEvent { event, .. } => {
                 use glutin::event::DeviceEvent::*;
-                if let ModifiersChanged { modifiers } = event {
+                if let ModifiersChanged(modifiers) = event {
                     processor.modifiers_input(modifiers);
                 }
             },
             GlutinEvent::Suspended { .. }
             | GlutinEvent::NewEvents { .. }
-            | GlutinEvent::EventsCleared
+            | GlutinEvent::MainEventsCleared
+            | GlutinEvent::RedrawEventsCleared
             | GlutinEvent::Resumed
             | GlutinEvent::LoopDestroyed => (),
         }
@@ -613,11 +629,11 @@ impl<N: Notify + OnResize> Processor<N> {
     /// Check if an event is irrelevant and can be skipped
     fn skip_event(event: &GlutinEvent<Event>) -> bool {
         match event {
-            GlutinEvent::UserEvent(Event::Exit) => true,
             GlutinEvent::WindowEvent { event, .. } => {
                 use glutin::event::WindowEvent::*;
                 match event {
-                    TouchpadPressure { .. }
+                    KeyboardInput { is_synthetic: true, .. }
+                    | TouchpadPressure { .. }
                     | CursorEntered { .. }
                     | AxisMotion { .. }
                     | HoveredFileCancelled
@@ -628,16 +644,9 @@ impl<N: Notify + OnResize> Processor<N> {
                     _ => false,
                 }
             },
-            GlutinEvent::DeviceEvent { event, .. } => {
-                use glutin::event::DeviceEvent::*;
-                match event {
-                    ModifiersChanged { .. } => false,
-                    _ => true,
-                }
-            },
             GlutinEvent::Suspended { .. }
             | GlutinEvent::NewEvents { .. }
-            | GlutinEvent::EventsCleared
+            | GlutinEvent::MainEventsCleared
             | GlutinEvent::LoopDestroyed => true,
             _ => false,
         }

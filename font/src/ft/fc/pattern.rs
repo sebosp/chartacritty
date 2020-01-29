@@ -18,13 +18,13 @@ use std::path::PathBuf;
 use std::ptr::{self, NonNull};
 use std::str;
 
-use foreign_types::{ForeignType, ForeignTypeRef};
+use foreign_types::{foreign_type, ForeignType, ForeignTypeRef};
 use libc::{c_char, c_double, c_int};
 
 use super::ffi::FcResultMatch;
 use super::ffi::{FcBool, FcFontRenderPrepare, FcPatternGetBool, FcPatternGetDouble};
 use super::ffi::{FcChar8, FcConfigSubstitute, FcDefaultSubstitute, FcPattern};
-use super::ffi::{FcPatternAddCharSet, FcPatternDestroy};
+use super::ffi::{FcPatternAddCharSet, FcPatternDestroy, FcPatternDuplicate, FcPatternGetCharSet};
 use super::ffi::{FcPatternAddDouble, FcPatternAddString, FcPatternCreate, FcPatternGetString};
 use super::ffi::{FcPatternAddInteger, FcPatternGetInteger, FcPatternPrint};
 
@@ -329,6 +329,7 @@ foreign_type! {
     pub unsafe type Pattern {
         type CType = FcPattern;
         fn drop = FcPatternDestroy;
+        fn clone = FcPatternDuplicate;
     }
 }
 
@@ -518,7 +519,7 @@ impl PatternRef {
     }
 
     pub fn get_width(&self) -> Option<Width> {
-        unsafe { self.get_integer(b"width\0").nth(0).map(Width::from) }
+        unsafe { self.get_integer(b"width\0").next().map(Width::from) }
     }
 
     pub fn rgba(&self) -> RgbaPropertyIter {
@@ -531,7 +532,7 @@ impl PatternRef {
 
     pub fn render_prepare(&self, config: &ConfigRef, request: &PatternRef) -> Pattern {
         unsafe {
-            let ptr = FcFontRenderPrepare(config.as_ptr(), request.as_ptr(), self.as_ptr());
+            let ptr = FcFontRenderPrepare(config.as_ptr(), self.as_ptr(), request.as_ptr());
             Pattern::from_ptr(ptr)
         }
     }
@@ -549,6 +550,25 @@ impl PatternRef {
                 b"charset\0".as_ptr() as *mut c_char,
                 charset.as_ptr(),
             ) == 1
+        }
+    }
+
+    pub fn get_charset(&self) -> Option<&CharSetRef> {
+        unsafe {
+            let mut charset: *mut _ = ptr::null_mut();
+
+            let result = FcPatternGetCharSet(
+                self.as_ptr(),
+                b"charset\0".as_ptr() as *mut c_char,
+                0,
+                &mut charset,
+            );
+
+            if result == FcResultMatch {
+                Some(&*(charset as *const CharSetRef))
+            } else {
+                None
+            }
         }
     }
 

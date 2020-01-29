@@ -129,9 +129,11 @@ fn main() {
 /// config change monitor, and runs the main display loop.
 fn run(window_event_loop: GlutinEventLoop<Event>, config: Config) -> Result<(), Box<dyn Error>> {
     info!("Welcome to Alacritty");
-    if let Some(config_path) = &config.config_path {
-        info!("Configuration loaded from \"{}\"", config_path.display());
-    };
+
+    match &config.config_path {
+        Some(config_path) => info!("Configuration loaded from \"{}\"", config_path.display()),
+        None => info!("No configuration file found"),
+    }
 
     // Set environment variables
     tty::setup_env(&config);
@@ -245,11 +247,8 @@ fn run(window_event_loop: GlutinEventLoop<Event>, config: Config) -> Result<(), 
     let message_buffer = MessageBuffer::new();
 
     // Event processor
-    //
-    // Need the Rc<RefCell<_>> here since a ref is shared in the resize callback
     let mut processor = Processor::new(
         event_loop::Notifier(loop_tx.clone()),
-        // Box::new(resize_handle), # TODO: REMOVE this from event_loop.rs
         message_buffer,
         config,
         display,
