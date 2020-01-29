@@ -135,7 +135,7 @@ fn get_pw_entry(buf: &mut [i8; 1024]) -> Passwd<'_> {
 
 pub struct Pty {
     child: Child,
-    pub fd: File,
+    fd: File,
     token: mio::Token,
     signals: Signals,
     signals_token: mio::Token,
@@ -208,8 +208,8 @@ pub fn new<C>(config: &Config<C>, size: &SizeInfo, window_id: Option<usize>) -> 
     }
 
     // Handle set working directory option
-    if let Some(ref dir) = config.working_directory() {
-        builder.current_dir(dir.as_path());
+    if let Some(dir) = &config.working_directory {
+        builder.current_dir(dir);
     }
 
     // Prepare signal handling before spawning child
@@ -226,14 +226,14 @@ pub fn new<C>(config: &Config<C>, size: &SizeInfo, window_id: Option<usize>) -> 
                 set_nonblocking(master);
             }
 
-            let pty = Pty {
+            let mut pty = Pty {
                 child,
                 fd: unsafe { File::from_raw_fd(master) },
                 token: mio::Token::from(0),
                 signals,
                 signals_token: mio::Token::from(0),
             };
-            pty.fd.as_raw_fd().on_resize(size);
+            pty.on_resize(size);
             pty
         },
         Err(err) => die!("Failed to spawn command '{}': {}", shell.program, err),
@@ -333,10 +333,6 @@ impl EventedPty for Pty {
     }
 }
 
-pub fn process_should_exit() -> bool {
-    false
-}
-
 /// Types that can produce a `libc::winsize`
 pub trait ToWinsize {
     /// Get a `libc::winsize`
@@ -354,7 +350,7 @@ impl<'a> ToWinsize for &'a SizeInfo {
     }
 }
 
-impl OnResize for i32 {
+impl OnResize for Pty {
     /// Resize the pty
     ///
     /// Tells the kernel that the window size changed with the new pixel
@@ -362,7 +358,7 @@ impl OnResize for i32 {
     fn on_resize(&mut self, size: &SizeInfo) {
         let win = size.to_winsize();
 
-        let res = unsafe { libc::ioctl(*self, libc::TIOCSWINSZ, &win as *const _) };
+        let res = unsafe { libc::ioctl(self.fd.as_raw_fd(), libc::TIOCSWINSZ, &win as *const _) };
 
         if res < 0 {
             die!("ioctl TIOCSWINSZ failed: {}", io::Error::last_os_error());

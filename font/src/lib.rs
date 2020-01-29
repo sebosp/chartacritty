@@ -20,31 +20,6 @@
 
 #![deny(clippy::all, clippy::if_not_else, clippy::enum_glob_use, clippy::wrong_pub_self_convention)]
 
-#[cfg(not(any(target_os = "macos", windows)))]
-extern crate fontconfig;
-#[cfg(not(any(target_os = "macos", windows)))]
-extern crate freetype;
-
-#[cfg(target_os = "macos")]
-extern crate core_foundation;
-#[cfg(target_os = "macos")]
-extern crate core_foundation_sys;
-#[cfg(target_os = "macos")]
-extern crate core_graphics;
-#[cfg(target_os = "macos")]
-extern crate core_text;
-#[cfg(target_os = "macos")]
-extern crate euclid;
-
-extern crate libc;
-
-#[cfg(not(any(target_os = "macos", windows)))]
-#[macro_use]
-extern crate foreign_types;
-
-#[cfg_attr(not(windows), macro_use)]
-extern crate log;
-
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::ops::{Add, Mul};
@@ -59,7 +34,7 @@ pub use ft::{Error, FreeTypeRasterizer as Rasterizer};
 #[cfg(windows)]
 pub mod directwrite;
 #[cfg(windows)]
-pub use crate::directwrite::{DirectWriteRasterizer as Rasterizer, Error};
+pub use directwrite::{DirectWriteRasterizer as Rasterizer, Error};
 
 // If target is macos, reexport everything from darwin
 #[cfg(target_os = "macos")]
@@ -220,20 +195,25 @@ pub struct RasterizedGlyph {
     pub height: i32,
     pub top: i32,
     pub left: i32,
-    pub buf: Vec<u8>,
+    pub buf: BitmapBuffer,
+}
+
+#[derive(Clone, Debug)]
+pub enum BitmapBuffer {
+    RGB(Vec<u8>),
+    RGBA(Vec<u8>),
 }
 
 impl Default for RasterizedGlyph {
     fn default() -> RasterizedGlyph {
-        RasterizedGlyph { c: ' ', width: 0, height: 0, top: 0, left: 0, buf: Vec::new() }
-    }
-}
-
-struct BufDebugger<'a>(&'a [u8]);
-
-impl<'a> fmt::Debug for BufDebugger<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_struct("GlyphBuffer").field("len", &self.0.len()).field("bytes", &self.0).finish()
+        RasterizedGlyph {
+            c: ' ',
+            width: 0,
+            height: 0,
+            top: 0,
+            left: 0,
+            buf: BitmapBuffer::RGB(Vec::new()),
+        }
     }
 }
 
@@ -245,7 +225,7 @@ impl fmt::Debug for RasterizedGlyph {
             .field("height", &self.height)
             .field("top", &self.top)
             .field("left", &self.left)
-            .field("buf", &BufDebugger(&self.buf[..]))
+            .field("buf", &self.buf)
             .finish()
     }
 }

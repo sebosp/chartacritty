@@ -18,7 +18,7 @@ use futures::future::lazy;
 use futures::sync::mpsc as futures_mpsc;
 use futures::sync::oneshot;
 use std::f64;
-use std::fmt;
+use std::fmt::{self, Formatter};
 use std::time::Instant;
 use std::time::UNIX_EPOCH;
 use tokio::prelude::*;
@@ -27,6 +27,8 @@ use tokio::runtime::current_thread;
 use glutin::dpi::{PhysicalPosition, PhysicalSize};
 use glutin::event::ModifiersState;
 use glutin::event_loop::EventLoop;
+#[cfg(not(any(target_os = "macos", windows)))]
+use glutin::platform::unix::EventLoopWindowTargetExtUnix;
 use glutin::window::CursorIcon;
 use log::{debug, error, info};
 use parking_lot::MutexGuard;
@@ -38,14 +40,14 @@ use alacritty_terminal::event::{Event, OnResize};
 use alacritty_terminal::index::Line;
 use alacritty_terminal::message_bar::MessageBuffer;
 use alacritty_terminal::meter::Meter;
-use alacritty_terminal::renderer::rects::{RenderLines, RenderRect};
-use alacritty_terminal::renderer::{self, GlyphCache, QuadRenderer};
 use alacritty_terminal::selection::Selection;
 use alacritty_terminal::term::color::Rgb;
 use alacritty_terminal::term::{RenderableCell, SizeInfo, Term, TermMode};
 
 use crate::config::Config;
 use crate::event::{DisplayUpdate, Mouse};
+use crate::renderer::rects::{RenderLines, RenderRect};
+use crate::renderer::{self, GlyphCache, QuadRenderer};
 use crate::url::{Url, Urls};
 use crate::window::{self, Window};
 
@@ -65,56 +67,47 @@ pub enum Error {
 }
 
 impl std::error::Error for Error {
-    fn cause(&self) -> Option<&dyn (std::error::Error)> {
-        match *self {
-            Error::Window(ref err) => Some(err),
-            Error::Font(ref err) => Some(err),
-            Error::Render(ref err) => Some(err),
-            Error::ContextError(ref err) => Some(err),
-        }
-    }
-
-    fn description(&self) -> &str {
-        match *self {
-            Error::Window(ref err) => err.description(),
-            Error::Font(ref err) => err.description(),
-            Error::Render(ref err) => err.description(),
-            Error::ContextError(ref err) => err.description(),
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Error::Window(err) => err.source(),
+            Error::Font(err) => err.source(),
+            Error::Render(err) => err.source(),
+            Error::ContextError(err) => err.source(),
         }
     }
 }
 
 impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match *self {
-            Error::Window(ref err) => err.fmt(f),
-            Error::Font(ref err) => err.fmt(f),
-            Error::Render(ref err) => err.fmt(f),
-            Error::ContextError(ref err) => err.fmt(f),
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Error::Window(err) => err.fmt(f),
+            Error::Font(err) => err.fmt(f),
+            Error::Render(err) => err.fmt(f),
+            Error::ContextError(err) => err.fmt(f),
         }
     }
 }
 
 impl From<window::Error> for Error {
-    fn from(val: window::Error) -> Error {
+    fn from(val: window::Error) -> Self {
         Error::Window(val)
     }
 }
 
 impl From<font::Error> for Error {
-    fn from(val: font::Error) -> Error {
+    fn from(val: font::Error) -> Self {
         Error::Font(val)
     }
 }
 
 impl From<renderer::Error> for Error {
-    fn from(val: renderer::Error) -> Error {
+    fn from(val: renderer::Error) -> Self {
         Error::Render(val)
     }
 }
 
 impl From<glutin::ContextError> for Error {
-    fn from(val: glutin::ContextError) -> Error {
+    fn from(val: glutin::ContextError) -> Self {
         Error::ContextError(val)
     }
 }
@@ -138,7 +131,7 @@ impl Display {
     pub fn new(config: &Config, event_loop: &EventLoop<Event>) -> Result<Display, Error> {
         // Guess DPR based on first monitor
         let estimated_dpr =
-            event_loop.available_monitors().next().map(|m| m.hidpi_factor()).unwrap_or(1.);
+            event_loop.available_monitors().next().map(|m| m.scale_factor()).unwrap_or(1.);
 
         // Guess the target window dimensions
         let metrics = GlyphCache::static_metrics(config.font.clone(), estimated_dpr)?;
@@ -151,16 +144,16 @@ impl Display {
         debug!("Estimated Dimensions: {:?}", dimensions);
 
         // Create the window where Alacritty will be displayed
-        let logical = dimensions.map(|d| PhysicalSize::new(d.0, d.1).to_logical(estimated_dpr));
+        let size = dimensions.map(|(width, height)| PhysicalSize::new(width, height));
 
         // Spawn window
-        let mut window = Window::new(event_loop, &config, logical)?;
+        let mut window = Window::new(event_loop, &config, size)?;
 
-        let dpr = window.hidpi_factor();
+        let dpr = window.scale_factor();
         info!("Device pixel ratio: {}", dpr);
 
         // get window properties for initializing the other subsystems
-        let mut viewport_size = window.inner_size().to_physical(dpr);
+        let viewport_size = window.inner_size();
 
         // Create renderer
         let mut renderer = QuadRenderer::new()?;
@@ -174,12 +167,11 @@ impl Display {
         if let Some((width, height)) =
             GlyphCache::calculate_dimensions(config, dpr, cell_width, cell_height)
         {
-            let PhysicalSize { width: w, height: h } = window.inner_size().to_physical(dpr);
-            if (w - width).abs() < f64::EPSILON && (h - height).abs() < f64::EPSILON {
+            let PhysicalSize { width: w, height: h } = window.inner_size();
+            if w == width && h == height {
                 info!("Estimated DPR correctly, skipping resize");
             } else {
-                viewport_size = PhysicalSize::new(width, height);
-                window.set_inner_size(viewport_size.to_logical(dpr));
+                window.set_inner_size(PhysicalSize::new(width, height));
             }
         } else if config.window.dynamic_padding {
             // Make sure additional padding is spread evenly
@@ -215,18 +207,23 @@ impl Display {
 
         // We should call `clear` when window is offscreen, so when `window.show()` happens it
         // would be with background color instead of uninitialized surface.
-        window.swap_buffers();
+        #[cfg(not(any(target_os = "macos", windows)))]
+        {
+            // On Wayland we can safely ignore this call, since the window isn't visible until you
+            // actually draw something into it.
+            if event_loop.is_x11() {
+                window.swap_buffers()
+            }
+        }
 
         window.set_visible(true);
 
         // Set window position
         //
         // TODO: replace `set_position` with `with_position` once available
-        // Upstream issue: https://github.com/tomaka/winit/issues/806
+        // Upstream issue: https://github.com/rust-windowing/winit/issues/806
         if let Some(position) = config.window.position {
-            let physical = PhysicalPosition::from((position.x, position.y));
-            let logical = physical.to_logical(dpr);
-            window.set_outer_position(logical);
+            window.set_outer_position(PhysicalPosition::from((position.x, position.y)));
         }
 
         #[allow(clippy::single_match)]
@@ -239,7 +236,7 @@ impl Display {
             _ => (),
         }
 
-        Ok(Display {
+        Ok(Self {
             window,
             renderer,
             glyph_cache,
@@ -351,9 +348,7 @@ impl Display {
         terminal.resize(&pty_size);
 
         // Resize renderer
-        let physical =
-            PhysicalSize::new(f64::from(self.size_info.width), f64::from(self.size_info.height));
-        self.renderer.resize(&self.size_info);
+        let physical = PhysicalSize::new(self.size_info.width as u32, self.size_info.height as u32);
         self.window.resize(physical);
         let (height, width) = (self.size_info.height, self.size_info.width);
         let (chart_resize_tx, chart_resize_rx) = oneshot::channel();
@@ -385,6 +380,7 @@ impl Display {
                 error!("Error response from ChangeDisplaySize Task: {:?}", err);
             },
         }
+        self.renderer.resize(&self.size_info);
     }
 
     /// Draw the screen

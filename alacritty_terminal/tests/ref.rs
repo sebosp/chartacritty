@@ -55,6 +55,14 @@ ref_tests! {
     selective_erasure
     colored_reset
     delete_lines
+    delete_chars_reset
+    alt_reset
+    deccolm_reset
+    decaln_reset
+    insert_blank_reset
+    erase_chars_reset
+    scroll_up_reset
+    clear_underline
 }
 
 fn read_u8<P>(path: P) -> Vec<u8>
@@ -91,11 +99,11 @@ fn ref_test(dir: &Path) {
     let recording = read_u8(dir.join("alacritty.recording"));
     let serialized_size = read_string(dir.join("size.json")).unwrap();
     let serialized_grid = read_string(dir.join("grid.json")).unwrap();
-    let serialized_cfg = read_string(dir.join("config.json")).unwrap_or_default();
+    let serialized_cfg = read_string(dir.join("config.json")).unwrap();
 
     let size: SizeInfo = json::from_str(&serialized_size).unwrap();
     let grid: Grid<Cell> = json::from_str(&serialized_grid).unwrap();
-    let ref_config: RefConfig = json::from_str(&serialized_cfg).unwrap_or_default();
+    let ref_config: RefConfig = json::from_str(&serialized_cfg).unwrap();
 
     let mut config = MockConfig::default();
     config.scrolling.set_history(ref_config.history_size);

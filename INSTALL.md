@@ -39,7 +39,7 @@
 Before compiling Alacritty, you'll have to first clone the source code:
 
 ```sh
-git clone https://github.com/jwilm/alacritty.git
+git clone https://github.com/alacritty/alacritty.git
 cd alacritty
 ```
 
@@ -242,7 +242,7 @@ cp -r target/release/osx/Alacritty.app /Applications/
 If you don't want to clone the repository, you can install Alacritty directly using cargo:
 
 ```sh
-cargo install --git https://github.com/jwilm/alacritty
+cargo install --git https://github.com/alacritty/alacritty
 ```
 
 ### Debian/Ubuntu
@@ -251,7 +251,7 @@ Using `cargo deb`, you can create and install a deb file.
 
 ```sh
 cargo install cargo-deb
-cargo deb --install --manifest-path alacritty/Cargo.toml
+cargo deb --install -p alacritty
 ```
 
 To choose a default terminal app, use Debian's `update-alternatives`.

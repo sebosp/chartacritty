@@ -27,13 +27,12 @@ use crate::ansi::{
 };
 use crate::clipboard::{Clipboard, ClipboardType};
 use crate::config::{Config, VisualBellAnimation, DEFAULT_NAME};
-use crate::cursor::CursorKey;
 use crate::event::{Event, EventListener};
 use crate::grid::{
     BidirectionalIterator, DisplayIter, Grid, GridCell, IndexRegion, Indexed, Scroll,
 };
 use crate::index::{self, Column, IndexRange, Line, Point};
-use crate::selection::{self, Selection, SelectionRange, Span};
+use crate::selection::{Selection, SelectionRange};
 use crate::term::cell::{Cell, Flags, LineLength};
 use crate::term::color::Rgb;
 #[cfg(windows)]
@@ -61,6 +60,10 @@ pub trait Search {
     fn semantic_search_left(&self, _: Point<usize>) -> Point<usize>;
     /// Find the nearest semantic boundary _to the point_ of provided point.
     fn semantic_search_right(&self, _: Point<usize>) -> Point<usize>;
+    /// Find the beginning of a line, following line wraps.
+    fn line_search_left(&self, _: Point<usize>) -> Point<usize>;
+    /// Find the end of a line, following line wraps.
+    fn line_search_right(&self, _: Point<usize>) -> Point<usize>;
     /// Find the nearest matching bracket.
     fn bracket_search(&self, _: Point<usize>) -> Option<Point<usize>>;
 }
@@ -74,7 +77,9 @@ impl<T> Search for Term<T> {
         let last_col = self.grid.num_cols() - Column(1);
 
         while let Some(cell) = iter.prev() {
-            if self.semantic_escape_chars.contains(cell.c) {
+            if !cell.flags.intersects(Flags::WIDE_CHAR | Flags::WIDE_CHAR_SPACER)
+                && self.semantic_escape_chars.contains(cell.c)
+            {
                 break;
             }
 
@@ -96,7 +101,9 @@ impl<T> Search for Term<T> {
         let last_col = self.grid.num_cols() - 1;
 
         while let Some(cell) = iter.next() {
-            if self.semantic_escape_chars.contains(cell.c) {
+            if !cell.flags.intersects(Flags::WIDE_CHAR | Flags::WIDE_CHAR_SPACER)
+                && self.semantic_escape_chars.contains(cell.c)
+            {
                 break;
             }
 
@@ -106,6 +113,28 @@ impl<T> Search for Term<T> {
                 break; // cut off if on new line or hit escape char
             }
         }
+
+        point
+    }
+
+    fn line_search_left(&self, mut point: Point<usize>) -> Point<usize> {
+        while point.line + 1 < self.grid.len()
+            && self.grid[point.line + 1][self.grid.num_cols() - 1].flags.contains(Flags::WRAPLINE)
+        {
+            point.line += 1;
+        }
+
+        point.col = Column(0);
+
+        point
+    }
+
+    fn line_search_right(&self, mut point: Point<usize>) -> Point<usize> {
+        while self.grid[point.line][self.grid.num_cols() - 1].flags.contains(Flags::WRAPLINE) {
+            point.line -= 1;
+        }
+
+        point.col = self.grid.num_cols() - 1;
 
         point
     }
@@ -154,15 +183,11 @@ impl<T> Search for Term<T> {
     }
 }
 
-impl<T> selection::Dimensions for Term<T> {
-    fn dimensions(&self) -> Point {
-        let line = if self.mode.contains(TermMode::ALT_SCREEN) {
-            self.grid.num_lines()
-        } else {
-            Line(self.grid.len())
-        };
-        Point { col: self.grid.num_cols(), line }
-    }
+/// A key for caching cursor glyphs
+#[derive(Debug, Eq, PartialEq, Copy, Clone, Hash, Deserialize)]
+pub struct CursorKey {
+    pub style: CursorStyle,
+    pub is_wide: bool,
 }
 
 /// Iterator that yields cells needing render
@@ -182,7 +207,7 @@ pub struct RenderableCellsIter<'a, C> {
     cursor_style: CursorStyle,
     config: &'a Config<C>,
     colors: &'a color::List,
-    selection: Option<SelectionRange>,
+    selection: Option<SelectionRange<Line>>,
 }
 
 impl<'a, C> RenderableCellsIter<'a, C> {
@@ -193,30 +218,46 @@ impl<'a, C> RenderableCellsIter<'a, C> {
     fn new<'b, T>(
         term: &'b Term<T>,
         config: &'b Config<C>,
-        selection: Option<Span>,
+        selection: Option<SelectionRange>,
         mut cursor_style: CursorStyle,
     ) -> RenderableCellsIter<'b, C> {
         let grid = &term.grid;
+        let num_cols = grid.num_cols();
+        let num_lines = grid.num_lines();
 
         let cursor_offset = grid.line_to_offset(term.cursor.point.line);
         let inner = grid.display_iter();
 
-        let selection_range = selection.map(|span| {
+        let selection_range = selection.and_then(|span| {
             let (limit_start, limit_end) = if span.is_block {
                 (span.start.col, span.end.col)
             } else {
-                (Column(0), term.cols() - 1)
+                (Column(0), num_cols - 1)
             };
 
             // Get on-screen lines of the selection's locations
-            let mut start = term.buffer_to_visible(span.start);
-            let mut end = term.buffer_to_visible(span.end);
+            let start = term.buffer_to_visible(span.start);
+            let end = term.buffer_to_visible(span.end);
+
+            // Clamp visible selection to the viewport
+            let (mut start, mut end) = match (start, end) {
+                (Some(start), Some(end)) => (start, end),
+                (Some(start), None) => {
+                    let end = Point::new(num_lines.0 - 1, num_cols - 1);
+                    (start, end)
+                },
+                (None, Some(end)) => {
+                    let start = Point::new(0, Column(0));
+                    (start, end)
+                },
+                (None, None) => return None,
+            };
 
             // Trim start/end with partially visible block selection
             start.col = max(limit_start, start.col);
             end.col = min(limit_end, end.col);
 
-            SelectionRange::new(start.into(), end.into(), span.is_block)
+            Some(SelectionRange::new(start.into(), end.into(), span.is_block))
         });
 
         // Load cursor glyph
@@ -224,7 +265,7 @@ impl<'a, C> RenderableCellsIter<'a, C> {
         let cursor_visible = term.mode.contains(TermMode::SHOW_CURSOR) && grid.contains(cursor);
         let cursor_key = if cursor_visible {
             let is_wide =
-                grid[cursor].flags.contains(Flags::WIDE_CHAR) && (cursor.col + 1) < grid.num_cols();
+                grid[cursor].flags.contains(Flags::WIDE_CHAR) && (cursor.col + 1) < num_cols;
             Some(CursorKey { style: cursor_style, is_wide })
         } else {
             // Use hidden cursor so text will not get inverted
@@ -389,7 +430,7 @@ impl<'a, C> Iterator for RenderableCellsIter<'a, C> {
                         inner: self.grid[self.cursor],
                         column: self.cursor.col,
                         // Using `self.cursor.line` leads to inconsitent cursor position when
-                        // scrolling. See https://github.com/jwilm/alacritty/issues/2570 for more
+                        // scrolling. See https://github.com/alacritty/alacritty/issues/2570 for more
                         // info.
                         line: self.inner.line(),
                     };
@@ -718,7 +759,9 @@ pub struct Term<T> {
     /// Mode flags
     mode: TermMode,
 
-    /// Scroll region
+    /// Scroll region.
+    ///
+    /// Range going from top to bottom of the terminal, indexed from the top of the viewport.
     scroll_region: Range<Line>,
 
     pub dirty: bool,
@@ -753,9 +796,6 @@ pub struct Term<T> {
 
     /// Number of spaces in one tab
     tabspaces: usize,
-
-    /// Automatically scroll to bottom when new lines are added
-    auto_scroll: bool,
 
     /// Clipboard access coupled to the active window
     clipboard: Clipboard,
@@ -904,7 +944,6 @@ impl<T> Term<T> {
             default_cursor_style: config.cursor.style,
             dynamic_title: config.dynamic_title(),
             tabspaces,
-            auto_scroll: config.scrolling.auto_scroll,
             clipboard,
             event_proxy,
             is_focused: true,
@@ -930,14 +969,13 @@ impl<T> Term<T> {
         }
         self.default_cursor_style = config.cursor.style;
         self.dynamic_title = config.dynamic_title();
-        self.auto_scroll = config.scrolling.auto_scroll;
-        self.grid.update_history(config.scrolling.history() as usize, &self.cursor.template);
+        self.grid.update_history(config.scrolling.history() as usize);
     }
 
     /// Convert the active selection to a String.
     pub fn selection_to_string(&self) -> Option<String> {
         let selection = self.grid.selection.clone()?;
-        let Span { start, end, is_block } = selection.to_span(self)?;
+        let SelectionRange { start, end, is_block } = selection.to_range(self)?;
 
         let mut res = String::new();
 
@@ -993,7 +1031,7 @@ impl<T> Term<T> {
                 tab_mode = true;
             }
 
-            if !cell.flags.contains(cell::Flags::WIDE_CHAR_SPACER) {
+            if !cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
                 // Push cells primary character
                 text.push(cell.c);
 
@@ -1006,7 +1044,7 @@ impl<T> Term<T> {
 
         if cols.end >= self.cols() - 1
             && (line_end == Column(0)
-                || !self.grid[line][line_end - 1].flags.contains(cell::Flags::WRAPLINE))
+                || !self.grid[line][line_end - 1].flags.contains(Flags::WRAPLINE))
         {
             text.push('\n');
         }
@@ -1018,7 +1056,7 @@ impl<T> Term<T> {
         self.grid.visible_to_buffer(point)
     }
 
-    pub fn buffer_to_visible(&self, point: impl Into<Point<usize>>) -> Point<usize> {
+    pub fn buffer_to_visible(&self, point: impl Into<Point<usize>>) -> Option<Point<usize>> {
         self.grid.buffer_to_visible(point)
     }
 
@@ -1042,7 +1080,7 @@ impl<T> Term<T> {
     /// background color.  Cells with an alternate background color are
     /// considered renderable as are cells with any text content.
     pub fn renderable_cells<'b, C>(&'b self, config: &'b Config<C>) -> RenderableCellsIter<'_, C> {
-        let selection = self.grid.selection.as_ref().and_then(|s| s.to_span(self));
+        let selection = self.grid.selection.as_ref().and_then(|s| s.to_range(self));
 
         let cursor = if self.is_focused || !config.cursor.unfocused_hollow() {
             self.cursor_style.unwrap_or(self.default_cursor_style)
@@ -1085,24 +1123,21 @@ impl<T> Term<T> {
         // Scroll up to keep cursor in terminal
         if self.cursor.point.line >= num_lines {
             let lines = self.cursor.point.line - num_lines + 1;
-            self.grid.scroll_up(&(Line(0)..old_lines), lines, &self.cursor.template);
+            let template = Cell { bg: self.cursor.template.bg, ..Cell::default() };
+            self.grid.scroll_up(&(Line(0)..old_lines), lines, &template);
         }
 
         // Scroll up alt grid as well
         if self.cursor_save_alt.point.line >= num_lines {
             let lines = self.cursor_save_alt.point.line - num_lines + 1;
-            self.alt_grid.scroll_up(&(Line(0)..old_lines), lines, &self.cursor_save_alt.template);
+            let template = Cell { bg: self.cursor_save_alt.template.bg, ..Cell::default() };
+            self.alt_grid.scroll_up(&(Line(0)..old_lines), lines, &template);
         }
 
         // Move prompt down when growing if scrollback lines are available
-        if num_lines > old_lines {
-            if self.mode.contains(TermMode::ALT_SCREEN) {
-                let growage = min(num_lines - old_lines, Line(self.alt_grid.scroll_limit()));
-                self.cursor_save.point.line += growage;
-            } else {
-                let growage = min(num_lines - old_lines, Line(self.grid.scroll_limit()));
-                self.cursor.point.line += growage;
-            }
+        if num_lines > old_lines && !self.mode.contains(TermMode::ALT_SCREEN) {
+            let growage = min(num_lines - old_lines, Line(self.grid.history_size()));
+            self.cursor.point.line += growage;
         }
 
         debug!("New num_cols is {} and num_lines is {}", num_cols, num_lines);
@@ -1204,12 +1239,12 @@ impl<T> Term<T> {
 
     pub fn swap_alt(&mut self) {
         if self.alt {
-            let template = &self.cursor.template;
-            self.grid.region_mut(..).each(|c| c.reset(template));
+            let template = self.cursor.template;
+            self.grid.region_mut(..).each(|c| c.reset(&template));
         }
 
         self.alt = !self.alt;
-        ::std::mem::swap(&mut self.grid, &mut self.alt_grid);
+        std::mem::swap(&mut self.grid, &mut self.alt_grid);
     }
 
     /// Scroll screen down
@@ -1223,8 +1258,7 @@ impl<T> Term<T> {
         lines = min(lines, self.scroll_region.end - origin);
 
         // Scroll between origin and bottom
-        let mut template = self.cursor.template;
-        template.flags = Flags::empty();
+        let template = Cell { bg: self.cursor.template.bg, ..Cell::default() };
         self.grid.scroll_down(&(origin..self.scroll_region.end), lines, &template);
     }
 
@@ -1238,8 +1272,7 @@ impl<T> Term<T> {
         let lines = min(lines, self.scroll_region.end - self.scroll_region.start);
 
         // Scroll from origin to bottom less number of lines
-        let mut template = self.cursor.template;
-        template.flags = Flags::empty();
+        let template = Cell { bg: self.cursor.template.bg, ..Cell::default() };
         self.grid.scroll_up(&(origin..self.scroll_region.end), lines, &template);
     }
 
@@ -1272,6 +1305,42 @@ impl<T> Term<T> {
     pub fn clipboard(&mut self) -> &mut Clipboard {
         &mut self.clipboard
     }
+
+    /// Insert a linebreak at the current cursor position.
+    #[inline]
+    fn wrapline(&mut self)
+    where
+        T: EventListener,
+    {
+        if !self.mode.contains(TermMode::LINE_WRAP) {
+            return;
+        }
+
+        trace!("Wrapping input");
+
+        self.grid[&self.cursor.point].flags.insert(Flags::WRAPLINE);
+
+        if (self.cursor.point.line + 1) >= self.scroll_region.end {
+            self.linefeed();
+        } else {
+            self.cursor.point.line += 1;
+        }
+
+        self.cursor.point.col = Column(0);
+        self.input_needs_wrap = false;
+    }
+
+    /// Write `c` to the cell at the cursor position.
+    #[inline]
+    fn write_at_cursor(&mut self, c: char) -> &mut Cell
+    where
+        T: EventListener,
+    {
+        let cell = &mut self.grid[&self.cursor.point];
+        *cell = self.cursor.template;
+        cell.c = self.cursor.charsets[self.active_charset].map(c);
+        cell
+    }
 }
 
 impl<T> TermInfo for Term<T> {
@@ -1286,7 +1355,7 @@ impl<T> TermInfo for Term<T> {
     }
 }
 
-impl<T: EventListener> ansi::Handler for Term<T> {
+impl<T: EventListener> Handler for Term<T> {
     #[inline]
     #[cfg(not(windows))]
     fn set_title(&mut self, title: &str) {
@@ -1317,89 +1386,68 @@ impl<T: EventListener> ansi::Handler for Term<T> {
             };
 
             self.title = title.clone();
-            self.event_proxy.send_event(Event::Title(title.to_owned()));
+            self.event_proxy.send_event(Event::Title(title));
         }
     }
 
     /// A character to be displayed
     #[inline]
     fn input(&mut self, c: char) {
-        // If enabled, scroll to bottom when character is received
-        if self.auto_scroll {
-            self.scroll_display(Scroll::Bottom);
-        }
-
-        if self.input_needs_wrap {
-            if !self.mode.contains(TermMode::LINE_WRAP) {
-                return;
-            }
-
-            trace!("Wrapping input");
-
-            {
-                let location = Point { line: self.cursor.point.line, col: self.cursor.point.col };
-
-                let cell = &mut self.grid[&location];
-                cell.flags.insert(Flags::WRAPLINE);
-            }
-
-            if (self.cursor.point.line + 1) >= self.scroll_region.end {
-                self.linefeed();
-            } else {
-                self.cursor.point.line += 1;
-            }
-
-            self.cursor.point.col = Column(0);
-            self.input_needs_wrap = false;
-        }
-
         // Number of cells the char will occupy
-        if let Some(width) = c.width() {
-            let num_cols = self.grid.num_cols();
+        let width = match c.width() {
+            Some(width) => width,
+            None => return,
+        };
 
-            // If in insert mode, first shift cells to the right.
-            if self.mode.contains(TermMode::INSERT) && self.cursor.point.col + width < num_cols {
-                let line = self.cursor.point.line;
-                let col = self.cursor.point.col;
-                let line = &mut self.grid[line];
-
-                let src = line[col..].as_ptr();
-                let dst = line[(col + width)..].as_mut_ptr();
-                unsafe {
-                    // memmove
-                    ptr::copy(src, dst, (num_cols - col - width).0);
-                }
+        // Handle zero-width characters
+        if width == 0 {
+            let mut col = self.cursor.point.col.0.saturating_sub(1);
+            let line = self.cursor.point.line;
+            if self.grid[line][Column(col)].flags.contains(Flags::WIDE_CHAR_SPACER) {
+                col = col.saturating_sub(1);
             }
+            self.grid[line][Column(col)].push_extra(c);
+            return;
+        }
 
-            // Handle zero-width characters
-            if width == 0 {
-                let mut col = self.cursor.point.col.0.saturating_sub(1);
-                let line = self.cursor.point.line;
-                if self.grid[line][Column(col)].flags.contains(Flags::WIDE_CHAR_SPACER) {
-                    col = col.saturating_sub(1);
-                }
-                self.grid[line][Column(col)].push_extra(c);
-                return;
-            }
+        // Move cursor to next line
+        if self.input_needs_wrap {
+            self.wrapline();
+        }
 
-            let cell = &mut self.grid[&self.cursor.point];
-            *cell = self.cursor.template;
-            cell.c = self.cursor.charsets[self.active_charset].map(c);
+        let num_cols = self.grid.num_cols();
 
-            // Handle wide chars
-            if width == 2 {
-                cell.flags.insert(Flags::WIDE_CHAR);
+        // If in insert mode, first shift cells to the right
+        if self.mode.contains(TermMode::INSERT) && self.cursor.point.col + width < num_cols {
+            let line = self.cursor.point.line;
+            let col = self.cursor.point.col;
+            let line = &mut self.grid[line];
 
-                if self.cursor.point.col + 1 < num_cols {
-                    self.cursor.point.col += 1;
-                    let spacer = &mut self.grid[&self.cursor.point];
-                    *spacer = self.cursor.template;
-                    spacer.flags.insert(Flags::WIDE_CHAR_SPACER);
-                }
+            let src = line[col..].as_ptr();
+            let dst = line[(col + width)..].as_mut_ptr();
+            unsafe {
+                ptr::copy(src, dst, (num_cols - col - width).0);
             }
         }
 
-        if (self.cursor.point.col + 1) < self.grid.num_cols() {
+        if width == 1 {
+            self.write_at_cursor(c);
+        } else {
+            // Insert extra placeholder before wide char if glyph doesn't fit in this row anymore
+            if self.cursor.point.col + 1 >= num_cols {
+                self.write_at_cursor(' ').flags.insert(Flags::WIDE_CHAR_SPACER);
+                self.wrapline();
+            }
+
+            // Write full width glyph to current cursor cell
+            self.write_at_cursor(c).flags.insert(Flags::WIDE_CHAR);
+
+            // Write spacer to cell following the wide glyph
+            self.cursor.point.col += 1;
+            self.write_at_cursor(' ').flags.insert(Flags::WIDE_CHAR_SPACER);
+        }
+
+        if self.cursor.point.col + 1 < num_cols {
             self.cursor.point.col += 1;
         } else {
             self.input_needs_wrap = true;
@@ -1407,11 +1455,10 @@ impl<T: EventListener> ansi::Handler for Term<T> {
     }
 
     #[inline]
-    fn dectest(&mut self) {
-        trace!("Dectesting");
-        let mut template = self.cursor.template;
-        template.c = 'E';
+    fn decaln(&mut self) {
+        trace!("Decalnning");
 
+        let template = Cell { c: 'E', ..Cell::default() };
         self.grid.region_mut(..).each(|c| c.reset(&template));
     }
 
@@ -1462,9 +1509,8 @@ impl<T: EventListener> ansi::Handler for Term<T> {
 
         // Cells were just moved out towards the end of the line; fill in
         // between source and dest with blanks.
-        let template = self.cursor.template;
         for c in &mut line[source..destination] {
-            c.reset(&template);
+            c.reset(&self.cursor.template);
         }
     }
 
@@ -1498,6 +1544,7 @@ impl<T: EventListener> ansi::Handler for Term<T> {
 
     #[inline]
     fn identify_terminal<W: io::Write>(&mut self, writer: &mut W) {
+        trace!("Reporting terminal identity");
         let _ = writer.write_all(b"\x1b[?6c");
     }
 
@@ -1682,9 +1729,9 @@ impl<T: EventListener> ansi::Handler for Term<T> {
         let end = min(start + count, self.grid.num_cols());
 
         let row = &mut self.grid[self.cursor.point.line];
-        let template = self.cursor.template; // Cleared cells have current background color set
+        // Cleared cells have current background color set
         for c in &mut row[start..end] {
-            c.reset(&template);
+            c.reset(&self.cursor.template);
         }
     }
 
@@ -1710,10 +1757,9 @@ impl<T: EventListener> ansi::Handler for Term<T> {
 
         // Clear last `count` cells in line. If deleting 1 char, need to delete
         // 1 cell.
-        let template = self.cursor.template;
         let end = cols - count;
         for c in &mut line[end..] {
-            c.reset(&template);
+            c.reset(&self.cursor.template);
         }
     }
 
@@ -1759,7 +1805,6 @@ impl<T: EventListener> ansi::Handler for Term<T> {
     #[inline]
     fn clear_line(&mut self, mode: ansi::LineClearMode) {
         trace!("Clearing line: {:?}", mode);
-        let template = Cell { bg: self.cursor.template.bg, ..Cell::default() };
 
         let col = self.cursor.point.col;
 
@@ -1767,19 +1812,19 @@ impl<T: EventListener> ansi::Handler for Term<T> {
             ansi::LineClearMode::Right => {
                 let row = &mut self.grid[self.cursor.point.line];
                 for cell in &mut row[col..] {
-                    cell.reset(&template);
+                    cell.reset(&self.cursor.template);
                 }
             },
             ansi::LineClearMode::Left => {
                 let row = &mut self.grid[self.cursor.point.line];
                 for cell in &mut row[..=col] {
-                    cell.reset(&template);
+                    cell.reset(&self.cursor.template);
                 }
             },
             ansi::LineClearMode::All => {
                 let row = &mut self.grid[self.cursor.point.line];
                 for cell in &mut row[..] {
-                    cell.reset(&template);
+                    cell.reset(&self.cursor.template);
                 }
             },
         }
@@ -1847,23 +1892,12 @@ impl<T: EventListener> ansi::Handler for Term<T> {
     #[inline]
     fn clear_screen(&mut self, mode: ansi::ClearMode) {
         trace!("Clearing screen: {:?}", mode);
-        let template = Cell { bg: self.cursor.template.bg, ..Cell::default() };
+        let template = self.cursor.template;
 
         // Remove active selections
         self.grid.selection = None;
 
         match mode {
-            ansi::ClearMode::Below => {
-                for cell in &mut self.grid[self.cursor.point.line][self.cursor.point.col..] {
-                    cell.reset(&template);
-                }
-                if self.cursor.point.line < self.grid.num_lines() - 1 {
-                    self.grid
-                        .region_mut((self.cursor.point.line + 1)..)
-                        .each(|cell| cell.reset(&template));
-                }
-            },
-            ansi::ClearMode::All => self.grid.region_mut(..).each(|c| c.reset(&template)),
             ansi::ClearMode::Above => {
                 // If clearing more than one line
                 if self.cursor.point.line > Line(1) {
@@ -1876,6 +1910,24 @@ impl<T: EventListener> ansi::Handler for Term<T> {
                 let end = min(self.cursor.point.col + 1, self.grid.num_cols());
                 for cell in &mut self.grid[self.cursor.point.line][..end] {
                     cell.reset(&template);
+                }
+            },
+            ansi::ClearMode::Below => {
+                for cell in &mut self.grid[self.cursor.point.line][self.cursor.point.col..] {
+                    cell.reset(&template);
+                }
+                if self.cursor.point.line < self.grid.num_lines() - 1 {
+                    self.grid
+                        .region_mut((self.cursor.point.line + 1)..)
+                        .each(|cell| cell.reset(&template));
+                }
+            },
+            ansi::ClearMode::All => {
+                if self.mode.contains(TermMode::ALT_SCREEN) {
+                    self.grid.region_mut(..).each(|c| c.reset(&template));
+                } else {
+                    let template = Cell { bg: template.bg, ..Cell::default() };
+                    self.grid.clear_viewport(&template);
                 }
             },
             ansi::ClearMode::Saved => self.grid.clear_history(),
@@ -2387,6 +2439,11 @@ mod tests {
         // Make sure that scrolling does not change the grid
         let mut scrolled_grid = term.grid.clone();
         scrolled_grid.scroll_display(Scroll::Top);
+
+        // Truncate grids for comparison
+        scrolled_grid.truncate();
+        term.grid.truncate();
+
         assert_eq!(term.grid, scrolled_grid);
     }
 

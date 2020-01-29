@@ -16,12 +16,19 @@ use std::cmp::max;
 use std::path::PathBuf;
 
 use clap::{crate_authors, crate_description, crate_name, crate_version, App, Arg};
-use log::{self, LevelFilter};
+use log::{self, error, LevelFilter};
 
 use alacritty_terminal::config::{Delta, Dimensions, Shell, DEFAULT_NAME};
 use alacritty_terminal::index::{Column, Line};
 
 use crate::config::Config;
+
+#[cfg(not(any(target_os = "macos", windows)))]
+const CONFIG_PATH: &str = "$XDG_CONFIG_HOME/alacritty/alacritty.yml";
+#[cfg(windows)]
+const CONFIG_PATH: &str = "%APPDATA%\\alacritty\\alacritty.yml";
+#[cfg(target_os = "macos")]
+const CONFIG_PATH: &str = "$HOME/.config/alacritty/alacritty.yml";
 
 /// Options specified on the command line
 pub struct Options {
@@ -158,8 +165,7 @@ impl Options {
                     .help("Start the shell in the specified working directory"),
             )
             .arg(Arg::with_name("config-file").long("config-file").takes_value(true).help(
-                "Specify alternative configuration file [default: \
-                 $XDG_CONFIG_HOME/alacritty/alacritty.yml]",
+                &format!("Specify alternative configuration file [default: {}]", CONFIG_PATH),
             ))
             .arg(
                 Arg::with_name("command")
@@ -213,16 +219,16 @@ impl Options {
         options.embed = matches.value_of("embed").map(ToOwned::to_owned);
 
         match matches.occurrences_of("q") {
-            0 => {},
+            0 => (),
             1 => options.log_level = LevelFilter::Error,
-            2 | _ => options.log_level = LevelFilter::Off,
+            _ => options.log_level = LevelFilter::Off,
         }
 
         match matches.occurrences_of("v") {
             0 if !options.print_events => options.log_level = LevelFilter::Warn,
             0 | 1 => options.log_level = LevelFilter::Info,
             2 => options.log_level = LevelFilter::Debug,
-            3 | _ => options.log_level = LevelFilter::Trace,
+            _ => options.log_level = LevelFilter::Trace,
         }
 
         if let Some(dir) = matches.value_of("working-directory") {
@@ -254,12 +260,14 @@ impl Options {
     }
 
     pub fn into_config(self, mut config: Config) -> Config {
-        config.set_live_config_reload(
-            self.live_config_reload.unwrap_or_else(|| config.live_config_reload()),
-        );
-        config.set_working_directory(
-            self.working_dir.or_else(|| config.working_directory().to_owned()),
-        );
+        match self.working_dir.or_else(|| config.working_directory.take()) {
+            Some(ref wd) if !wd.is_dir() => error!("Unable to set working directory to {:?}", wd),
+            wd => config.working_directory = wd,
+        }
+
+        if let Some(lcr) = self.live_config_reload {
+            config.set_live_config_reload(lcr);
+        }
         config.shell = self.command.or(config.shell);
 
         config.hold = self.hold;
@@ -294,7 +302,7 @@ impl Options {
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use crate::cli::Options;
     use crate::config::Config;
 

@@ -14,13 +14,11 @@
 use std::convert::From;
 #[cfg(not(any(target_os = "macos", windows)))]
 use std::ffi::c_void;
-use std::fmt;
+use std::fmt::{self, Display, Formatter};
 #[cfg(not(any(target_os = "macos", windows)))]
 use std::os::raw::c_ulong;
 
-#[cfg(not(windows))]
-use glutin::dpi::PhysicalPosition;
-use glutin::dpi::{LogicalPosition, LogicalSize, PhysicalSize};
+use glutin::dpi::{PhysicalPosition, PhysicalSize};
 use glutin::event_loop::EventLoop;
 #[cfg(target_os = "macos")]
 use glutin::platform::macos::{RequestUserAttentionType, WindowBuilderExtMacOS, WindowExtMacOS};
@@ -37,11 +35,11 @@ use x11_dl::xlib::{Display as XDisplay, PropModeReplace, XErrorEvent, Xlib};
 
 use alacritty_terminal::config::{Decorations, StartupMode, WindowConfig};
 use alacritty_terminal::event::Event;
-use alacritty_terminal::gl;
 #[cfg(not(windows))]
 use alacritty_terminal::term::{SizeInfo, Term};
 
 use crate::config::Config;
+use crate::gl;
 
 // It's required to be in this directory due to the `windows.rc` file
 #[cfg(not(target_os = "macos"))]
@@ -61,50 +59,42 @@ pub enum Error {
 }
 
 /// Result of fallible operations concerning a Window.
-type Result<T> = ::std::result::Result<T, Error>;
+type Result<T> = std::result::Result<T, Error>;
 
-impl ::std::error::Error for Error {
-    fn cause(&self) -> Option<&dyn (::std::error::Error)> {
-        match *self {
-            Error::ContextCreation(ref err) => Some(err),
-            Error::Context(ref err) => Some(err),
-            Error::Font(ref err) => Some(err),
-        }
-    }
-
-    fn description(&self) -> &str {
-        match *self {
-            Error::ContextCreation(ref _err) => "Error creating gl context",
-            Error::Context(ref _err) => "Error operating on render context",
-            Error::Font(ref err) => err.description(),
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Error::ContextCreation(err) => err.source(),
+            Error::Context(err) => err.source(),
+            Error::Font(err) => err.source(),
         }
     }
 }
 
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match *self {
-            Error::ContextCreation(ref err) => write!(f, "Error creating GL context; {}", err),
-            Error::Context(ref err) => write!(f, "Error operating on render context; {}", err),
-            Error::Font(ref err) => err.fmt(f),
+impl Display for Error {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Error::ContextCreation(err) => write!(f, "Error creating GL context; {}", err),
+            Error::Context(err) => write!(f, "Error operating on render context; {}", err),
+            Error::Font(err) => err.fmt(f),
         }
     }
 }
 
 impl From<glutin::CreationError> for Error {
-    fn from(val: glutin::CreationError) -> Error {
+    fn from(val: glutin::CreationError) -> Self {
         Error::ContextCreation(val)
     }
 }
 
 impl From<glutin::ContextError> for Error {
-    fn from(val: glutin::ContextError) -> Error {
+    fn from(val: glutin::ContextError) -> Self {
         Error::Context(val)
     }
 }
 
 impl From<font::Error> for Error {
-    fn from(val: font::Error) -> Error {
+    fn from(val: font::Error) -> Self {
         Error::Font(val)
     }
 }
@@ -113,7 +103,7 @@ fn create_gl_window(
     mut window: WindowBuilder,
     event_loop: &EventLoop<Event>,
     srgb: bool,
-    dimensions: Option<LogicalSize>,
+    dimensions: Option<PhysicalSize<u32>>,
 ) -> Result<WindowedContext<PossiblyCurrent>> {
     if let Some(dimensions) = dimensions {
         window = window.with_inner_size(dimensions);
@@ -126,7 +116,7 @@ fn create_gl_window(
         .build_windowed(window, event_loop)?;
 
     // Make the context current so OpenGL operations can run
-    let windowed_context = unsafe { windowed_context.make_current().map_err(|(_, e)| e)? };
+    let windowed_context = unsafe { windowed_context.make_current().map_err(|(_, err)| err)? };
 
     Ok(windowed_context)
 }
@@ -147,12 +137,12 @@ impl Window {
     pub fn new(
         event_loop: &EventLoop<Event>,
         config: &Config,
-        logical: Option<LogicalSize>,
+        size: Option<PhysicalSize<u32>>,
     ) -> Result<Window> {
         let window_builder = Window::get_platform_window(&config.window.title, &config.window);
         let windowed_context =
-            create_gl_window(window_builder.clone(), &event_loop, false, logical)
-                .or_else(|_| create_gl_window(window_builder, &event_loop, true, logical))?;
+            create_gl_window(window_builder.clone(), &event_loop, false, size)
+                .or_else(|_| create_gl_window(window_builder, &event_loop, true, size))?;
 
         // Text cursor
         let current_mouse_cursor = CursorIcon::Text;
@@ -171,19 +161,19 @@ impl Window {
             }
         }
 
-        Ok(Window { current_mouse_cursor, mouse_visible: true, windowed_context })
+        Ok(Self { current_mouse_cursor, mouse_visible: true, windowed_context })
     }
 
-    pub fn set_inner_size(&mut self, size: LogicalSize) {
+    pub fn set_inner_size(&mut self, size: PhysicalSize<u32>) {
         self.window().set_inner_size(size);
     }
 
-    pub fn inner_size(&self) -> LogicalSize {
+    pub fn inner_size(&self) -> PhysicalSize<u32> {
         self.window().inner_size()
     }
 
-    pub fn hidpi_factor(&self) -> f64 {
-        self.window().hidpi_factor()
+    pub fn scale_factor(&self) -> f64 {
+        self.window().scale_factor()
     }
 
     #[inline]
@@ -309,7 +299,7 @@ impl Window {
     #[cfg(windows)]
     pub fn set_urgent(&self, _is_urgent: bool) {}
 
-    pub fn set_outer_position(&self, pos: LogicalPosition) {
+    pub fn set_outer_position(&self, pos: PhysicalPosition<u32>) {
         self.window().set_outer_position(pos);
     }
 
@@ -325,6 +315,10 @@ impl Window {
     #[cfg(not(any(target_os = "macos", windows)))]
     pub fn set_maximized(&self, maximized: bool) {
         self.window().set_maximized(maximized);
+    }
+
+    pub fn set_minimized(&self, minimized: bool) {
+        self.window().set_minimized(minimized);
     }
 
     /// Toggle the window's fullscreen state
@@ -371,20 +365,19 @@ impl Window {
     #[cfg(not(windows))]
     pub fn update_ime_position<T>(&mut self, terminal: &Term<T>, size_info: &SizeInfo) {
         let point = terminal.cursor().point;
-        let SizeInfo { cell_width: cw, cell_height: ch, padding_x: px, padding_y: py, dpr, .. } =
-            size_info;
+        let SizeInfo { cell_width, cell_height, padding_x, padding_y, .. } = size_info;
 
-        let nspot_x = f64::from(px + point.col.0 as f32 * cw);
-        let nspot_y = f64::from(py + (point.line.0 + 1) as f32 * ch);
+        let nspot_x = f64::from(padding_x + point.col.0 as f32 * cell_width);
+        let nspot_y = f64::from(padding_y + (point.line.0 + 1) as f32 * cell_height);
 
-        self.window().set_ime_position(PhysicalPosition::from((nspot_x, nspot_y)).to_logical(*dpr));
+        self.window().set_ime_position(PhysicalPosition::new(nspot_x, nspot_y));
     }
 
     pub fn swap_buffers(&self) {
         self.windowed_context.swap_buffers().expect("swap buffers");
     }
 
-    pub fn resize(&self, size: PhysicalSize) {
+    pub fn resize(&self, size: PhysicalSize<u32>) {
         self.windowed_context.resize(size);
     }
 

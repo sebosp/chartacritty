@@ -12,97 +12,43 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Pty, HANDLE};
-
 use std::fs::OpenOptions;
-use std::io;
 use std::os::windows::fs::OpenOptionsExt;
 use std::os::windows::io::{FromRawHandle, IntoRawHandle};
-use std::sync::Arc;
 use std::u16;
 
-use dunce::canonicalize;
 use log::info;
 use mio_named_pipes::NamedPipe;
 use winapi::um::winbase::FILE_FLAG_OVERLAPPED;
 use winpty::{Config as WinptyConfig, ConfigFlags, MouseMode, SpawnConfig, SpawnFlags, Winpty};
 
-use crate::config::{Config, Shell};
+use crate::config::Config;
 use crate::event::OnResize;
 use crate::term::SizeInfo;
+use crate::tty::windows::child::ChildExitWatcher;
+use crate::tty::windows::{cmdline, Pty};
 
-// We store a raw pointer because we need mutable access to call
-// on_resize from a separate thread. Winpty internally uses a mutex
-// so this is safe, despite outwards appearance.
-pub struct Agent<'a> {
-    winpty: *mut Winpty<'a>,
-}
+pub use winpty::Winpty as Agent;
 
-/// Handle can be cloned freely and moved between threads.
-pub type WinptyHandle<'a> = Arc<Agent<'a>>;
-
-// Because Winpty has a mutex, we can do this.
-unsafe impl<'a> Send for Agent<'a> {}
-unsafe impl<'a> Sync for Agent<'a> {}
-
-impl<'a> Agent<'a> {
-    pub fn new(winpty: Winpty<'a>) -> Self {
-        Self { winpty: Box::into_raw(Box::new(winpty)) }
-    }
-
-    /// Get immutable access to Winpty.
-    pub fn winpty(&self) -> &Winpty<'a> {
-        unsafe { &*self.winpty }
-    }
-
-    pub fn resize(&self, size: &SizeInfo) {
-        // This is safe since Winpty uses a mutex internally.
-        unsafe {
-            (&mut *self.winpty).on_resize(size);
-        }
-    }
-}
-
-impl<'a> Drop for Agent<'a> {
-    fn drop(&mut self) {
-        unsafe {
-            Box::from_raw(self.winpty);
-        }
-    }
-}
-
-/// How long the winpty agent should wait for any RPC request
-/// This is a placeholder value until we see how often long responses happen
-const AGENT_TIMEOUT: u32 = 10000;
-
-pub fn new<'a, C>(config: &Config<C>, size: &SizeInfo, _window_id: Option<usize>) -> Pty<'a> {
+pub fn new<C>(config: &Config<C>, size: &SizeInfo, _window_id: Option<usize>) -> Pty {
     // Create config
     let mut wconfig = WinptyConfig::new(ConfigFlags::empty()).unwrap();
 
     wconfig.set_initial_size(size.cols().0 as i32, size.lines().0 as i32);
     wconfig.set_mouse_mode(&MouseMode::Auto);
-    wconfig.set_agent_timeout(AGENT_TIMEOUT);
 
     // Start agent
-    let mut winpty = Winpty::open(&wconfig).unwrap();
-    let (conin, conout) = (winpty.conin_name(), winpty.conout_name());
+    let mut agent = Winpty::open(&wconfig).unwrap();
+    let (conin, conout) = (agent.conin_name(), agent.conout_name());
 
-    // Get process commandline
-    let default_shell = &Shell::new("powershell");
-    let shell = config.shell.as_ref().unwrap_or(default_shell);
-    let mut cmdline = shell.args.clone();
-    cmdline.insert(0, shell.program.to_string());
-
-    // Warning, here be borrow hell
-    let cwd = config.working_directory().as_ref().map(|dir| canonicalize(dir).unwrap());
-    let cwd = cwd.as_ref().map(|dir| dir.to_str().unwrap());
+    let cmdline = cmdline(&config);
 
     // Spawn process
     let spawnconfig = SpawnConfig::new(
         SpawnFlags::AUTO_SHUTDOWN | SpawnFlags::EXIT_AFTER_SHUTDOWN,
         None, // appname
-        Some(&cmdline.join(" ")),
-        cwd,
+        Some(&cmdline),
+        config.working_directory.as_ref().map(|p| p.as_path()),
         None, // Env
     )
     .unwrap();
@@ -120,43 +66,27 @@ pub fn new<'a, C>(config: &Config<C>, size: &SizeInfo, _window_id: Option<usize>
         );
     };
 
-    if let Some(err) = conout_pipe.connect().err() {
-        if err.kind() != io::ErrorKind::WouldBlock {
-            panic!(err);
-        }
-    }
-    assert!(conout_pipe.take_error().unwrap().is_none());
+    agent.spawn(&spawnconfig).unwrap();
 
-    if let Some(err) = conin_pipe.connect().err() {
-        if err.kind() != io::ErrorKind::WouldBlock {
-            panic!(err);
-        }
-    }
-    assert!(conin_pipe.take_error().unwrap().is_none());
-
-    winpty.spawn(&spawnconfig).unwrap();
-
-    unsafe {
-        HANDLE = winpty.raw_handle();
-    }
-
-    let agent = Agent::new(winpty);
+    let child_watcher = ChildExitWatcher::new(agent.raw_handle()).unwrap();
 
     Pty {
-        handle: super::PtyHandle::Winpty(WinptyHandle::new(agent)),
+        backend: super::PtyBackend::Winpty(agent),
         conout: super::EventedReadablePipe::Named(conout_pipe),
         conin: super::EventedWritablePipe::Named(conin_pipe),
         read_token: 0.into(),
         write_token: 0.into(),
+        child_event_token: 0.into(),
+        child_watcher,
     }
 }
 
-impl<'a> OnResize for Winpty<'a> {
+impl OnResize for Agent {
     fn on_resize(&mut self, sizeinfo: &SizeInfo) {
         let (cols, lines) = (sizeinfo.cols().0, sizeinfo.lines().0);
         if cols > 0 && cols <= u16::MAX as usize && lines > 0 && lines <= u16::MAX as usize {
             self.set_size(cols as u16, lines as u16)
-                .unwrap_or_else(|_| info!("Unable to set winpty size, did it die?"));
+                .unwrap_or_else(|_| info!("Unable to set WinPTY size, did it die?"));
         }
     }
 }

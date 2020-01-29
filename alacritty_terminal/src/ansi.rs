@@ -328,8 +328,8 @@ pub trait Handler {
     /// Write clipboard data to child.
     fn write_clipboard<W: io::Write>(&mut self, _: u8, _: &mut W) {}
 
-    /// Run the dectest routine
-    fn dectest(&mut self) {}
+    /// Run the decaln routine.
+    fn decaln(&mut self) {}
 
     /// Push a title onto the stack
     fn push_title(&mut self) {}
@@ -719,15 +719,12 @@ where
             C0::SUB => self.handler.substitute(),
             C0::SI => self.handler.set_active_charset(CharsetIndex::G0),
             C0::SO => self.handler.set_active_charset(CharsetIndex::G1),
-            C1::NEL => self.handler.newline(),
-            C1::HTS => self.handler.set_horizontal_tabstop(),
-            C1::DECID => self.handler.identify_terminal(self.writer),
             _ => debug!("[unhandled] execute byte={:02x}", byte),
         }
     }
 
     #[inline]
-    fn hook(&mut self, params: &[i64], intermediates: &[u8], ignore: bool) {
+    fn hook(&mut self, params: &[i64], intermediates: &[u8], ignore: bool, _c: char) {
         debug!(
             "[unhandled hook] params={:?}, ints: {:?}, ignore: {:?}",
             params, intermediates, ignore
@@ -849,13 +846,14 @@ where
 
             // Set clipboard
             b"52" => {
-                if params.len() < 3 || params[1].is_empty() {
+                if params.len() < 3 {
                     return unhandled(params);
                 }
 
+                let clipboard = params[1].get(0).unwrap_or(&b'c');
                 match params[2] {
-                    b"?" => self.handler.write_clipboard(params[1][0], writer),
-                    base64 => self.handler.set_clipboard(params[1][0], base64),
+                    b"?" => self.handler.write_clipboard(*clipboard, writer),
+                    base64 => self.handler.set_clipboard(*clipboard, base64),
                 }
             },
 
@@ -943,7 +941,9 @@ where
             ('B', None) | ('e', None) => {
                 handler.move_down(Line(arg_or_default!(idx: 0, default: 1) as usize))
             },
-            ('c', None) => handler.identify_terminal(writer),
+            ('c', None) if arg_or_default!(idx: 0, default: 0) == 0 => {
+                handler.identify_terminal(writer)
+            },
             ('C', None) | ('a', None) => {
                 handler.move_forward(Column(arg_or_default!(idx: 0, default: 1) as usize))
             },
@@ -1104,8 +1104,8 @@ where
         }
 
         macro_rules! configure_charset {
-            ($charset:path) => {{
-                let index: CharsetIndex = match intermediates.first().cloned() {
+            ($charset:path, $intermediate:expr) => {{
+                let index: CharsetIndex = match $intermediate {
                     Some(b'(') => CharsetIndex::G0,
                     Some(b')') => CharsetIndex::G1,
                     Some(b'*') => CharsetIndex::G2,
@@ -1119,29 +1119,27 @@ where
             }};
         }
 
-        match byte {
-            b'B' => configure_charset!(StandardCharset::Ascii),
-            b'D' => self.handler.linefeed(),
-            b'E' => {
+        match (byte, intermediates.get(0)) {
+            (b'B', intermediate) => configure_charset!(StandardCharset::Ascii, intermediate),
+            (b'D', None) => self.handler.linefeed(),
+            (b'E', None) => {
                 self.handler.linefeed();
                 self.handler.carriage_return();
             },
-            b'H' => self.handler.set_horizontal_tabstop(),
-            b'M' => self.handler.reverse_index(),
-            b'Z' => self.handler.identify_terminal(self.writer),
-            b'c' => self.handler.reset_state(),
-            b'0' => configure_charset!(StandardCharset::SpecialCharacterAndLineDrawing),
-            b'7' => self.handler.save_cursor_position(),
-            b'8' => {
-                if !intermediates.is_empty() && intermediates[0] == b'#' {
-                    self.handler.dectest();
-                } else {
-                    self.handler.restore_cursor_position();
-                }
+            (b'H', None) => self.handler.set_horizontal_tabstop(),
+            (b'M', None) => self.handler.reverse_index(),
+            (b'Z', None) => self.handler.identify_terminal(self.writer),
+            (b'c', None) => self.handler.reset_state(),
+            (b'0', intermediate) => {
+                configure_charset!(StandardCharset::SpecialCharacterAndLineDrawing, intermediate)
             },
-            b'=' => self.handler.set_keypad_application_mode(),
-            b'>' => self.handler.unset_keypad_application_mode(),
-            b'\\' => (), // String terminator, do nothing (parser handles as string terminator)
+            (b'7', None) => self.handler.save_cursor_position(),
+            (b'8', Some(b'#')) => self.handler.decaln(),
+            (b'8', None) => self.handler.restore_cursor_position(),
+            (b'=', None) => self.handler.set_keypad_application_mode(),
+            (b'>', None) => self.handler.unset_keypad_application_mode(),
+            // String terminator, do nothing (parser handles as string terminator)
+            (b'\\', None) => (),
             _ => unhandled!(),
         }
     }
@@ -1360,79 +1358,6 @@ pub mod C0 {
     pub const DEL: u8 = 0x7f;
 }
 
-/// C1 set of 8-bit control characters (from ANSI X3.64-1979)
-///
-/// 0x80 (@), 0x81 (A), 0x82 (B), 0x83 (C) are reserved
-/// 0x98 (X), 0x99 (Y) are reserved
-/// 0x9a (Z) is 'reserved', but causes DEC terminals to respond with DA codes
-#[allow(non_snake_case)]
-pub mod C1 {
-    /// Reserved
-    pub const PAD: u8 = 0x80;
-    /// Reserved
-    pub const HOP: u8 = 0x81;
-    /// Reserved
-    pub const BPH: u8 = 0x82;
-    /// Reserved
-    pub const NBH: u8 = 0x83;
-    /// Index, moves down one line same column regardless of NL
-    pub const IND: u8 = 0x84;
-    /// New line, moves done one line and to first column (CR+LF)
-    pub const NEL: u8 = 0x85;
-    /// Start of Selected Area to be sent to auxiliary output device
-    pub const SSA: u8 = 0x86;
-    /// End of Selected Area to be sent to auxiliary output device
-    pub const ESA: u8 = 0x87;
-    /// Horizontal Tabulation Set at current position
-    pub const HTS: u8 = 0x88;
-    /// Hor Tab Justify, moves string to next tab position
-    pub const HTJ: u8 = 0x89;
-    /// Vertical Tabulation Set at current line
-    pub const VTS: u8 = 0x8A;
-    /// Partial Line Down (subscript)
-    pub const PLD: u8 = 0x8B;
-    /// Partial Line Up (superscript)
-    pub const PLU: u8 = 0x8C;
-    /// Reverse Index, go up one line, reverse scroll if necessary
-    pub const RI: u8 = 0x8D;
-    /// Single Shift to G2
-    pub const SS2: u8 = 0x8E;
-    /// Single Shift to G3 (VT100 uses this for sending PF keys)
-    pub const SS3: u8 = 0x8F;
-    /// Device Control String, terminated by ST (VT125 enters graphics)
-    pub const DCS: u8 = 0x90;
-    /// Private Use 1
-    pub const PU1: u8 = 0x91;
-    /// Private Use 2
-    pub const PU2: u8 = 0x92;
-    /// Set Transmit State
-    pub const STS: u8 = 0x93;
-    /// Cancel character, ignore previous character
-    pub const CCH: u8 = 0x94;
-    /// Message Waiting, turns on an indicator on the terminal
-    pub const MW: u8 = 0x95;
-    /// Start of Protected Area
-    pub const SPA: u8 = 0x96;
-    /// End of Protected Area
-    pub const EPA: u8 = 0x97;
-    /// SOS
-    pub const SOS: u8 = 0x98;
-    /// SGCI
-    pub const SGCI: u8 = 0x99;
-    /// DECID - Identify Terminal
-    pub const DECID: u8 = 0x9a;
-    /// Control Sequence Introducer
-    pub const CSI: u8 = 0x9B;
-    /// String Terminator (VT125 exits graphics)
-    pub const ST: u8 = 0x9C;
-    /// Operating System Command (reprograms intelligent terminal)
-    pub const OSC: u8 = 0x9D;
-    /// Privacy Message (password verification), terminated by ST
-    pub const PM: u8 = 0x9E;
-    /// Application Program Command (to word processor), term by ST
-    pub const APC: u8 = 0x9F;
-}
-
 // Tests for parsing escape sequences
 //
 // Byte sequences used in these tests are recording of pty stdout.
@@ -1446,66 +1371,142 @@ mod tests {
     use crate::term::color::Rgb;
     use std::io;
 
-    /// The /dev/null of `io::Write`
-    struct Void;
-
-    impl io::Write for Void {
-        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-            Ok(bytes.len())
-        }
-
-        fn flush(&mut self) -> io::Result<()> {
-            Ok(())
-        }
-    }
-
-    #[derive(Default)]
-    struct AttrHandler {
+    struct MockHandler {
+        index: CharsetIndex,
+        charset: StandardCharset,
         attr: Option<Attr>,
+        identity_reported: bool,
     }
 
-    impl Handler for AttrHandler {
+    impl Handler for MockHandler {
         fn terminal_attribute(&mut self, attr: Attr) {
             self.attr = Some(attr);
         }
+
+        fn configure_charset(&mut self, index: CharsetIndex, charset: StandardCharset) {
+            self.index = index;
+            self.charset = charset;
+        }
+
+        fn set_active_charset(&mut self, index: CharsetIndex) {
+            self.index = index;
+        }
+
+        fn identify_terminal<W: io::Write>(&mut self, _: &mut W) {
+            self.identity_reported = true;
+        }
+
+        fn reset_state(&mut self) {
+            *self = Self::default();
+        }
     }
 
-    impl TermInfo for AttrHandler {
+    impl TermInfo for MockHandler {
         fn lines(&self) -> Line {
-            Line(24)
+            Line(200)
         }
 
         fn cols(&self) -> Column {
-            Column(80)
+            Column(90)
+        }
+    }
+
+    impl Default for MockHandler {
+        fn default() -> MockHandler {
+            MockHandler {
+                index: CharsetIndex::G0,
+                charset: StandardCharset::Ascii,
+                attr: None,
+                identity_reported: false,
+            }
         }
     }
 
     #[test]
     fn parse_control_attribute() {
-        static BYTES: &[u8] = &[0x1b, 0x5b, 0x31, 0x6d];
+        static BYTES: &[u8] = &[0x1b, b'[', b'1', b'm'];
 
         let mut parser = Processor::new();
-        let mut handler = AttrHandler::default();
+        let mut handler = MockHandler::default();
 
         for byte in &BYTES[..] {
-            parser.advance(&mut handler, *byte, &mut Void);
+            parser.advance(&mut handler, *byte, &mut io::sink());
         }
 
         assert_eq!(handler.attr, Some(Attr::Bold));
     }
 
     #[test]
+    fn parse_terminal_identity_csi() {
+        let bytes: &[u8] = &[0x1b, b'[', b'1', b'c'];
+
+        let mut parser = Processor::new();
+        let mut handler = MockHandler::default();
+
+        for byte in &bytes[..] {
+            parser.advance(&mut handler, *byte, &mut io::sink());
+        }
+
+        assert!(!handler.identity_reported);
+        handler.reset_state();
+
+        let bytes: &[u8] = &[0x1b, b'[', b'c'];
+
+        for byte in &bytes[..] {
+            parser.advance(&mut handler, *byte, &mut io::sink());
+        }
+
+        assert!(handler.identity_reported);
+        handler.reset_state();
+
+        let bytes: &[u8] = &[0x1b, b'[', b'0', b'c'];
+
+        for byte in &bytes[..] {
+            parser.advance(&mut handler, *byte, &mut io::sink());
+        }
+
+        assert!(handler.identity_reported);
+    }
+
+    #[test]
+    fn parse_terminal_identity_esc() {
+        let bytes: &[u8] = &[0x1b, b'Z'];
+
+        let mut parser = Processor::new();
+        let mut handler = MockHandler::default();
+
+        for byte in &bytes[..] {
+            parser.advance(&mut handler, *byte, &mut io::sink());
+        }
+
+        assert!(handler.identity_reported);
+        handler.reset_state();
+
+        let bytes: &[u8] = &[0x1b, b'#', b'Z'];
+
+        let mut parser = Processor::new();
+        let mut handler = MockHandler::default();
+
+        for byte in &bytes[..] {
+            parser.advance(&mut handler, *byte, &mut io::sink());
+        }
+
+        assert!(!handler.identity_reported);
+        handler.reset_state();
+    }
+
+    #[test]
     fn parse_truecolor_attr() {
         static BYTES: &[u8] = &[
-            0x1b, 0x5b, 0x33, 0x38, 0x3b, 0x32, 0x3b, 0x31, 0x32, 0x38, 0x3b, 0x36, 0x36, 0x3b,
-            0x32, 0x35, 0x35, 0x6d,
+            0x1b, b'[', b'3', b'8', b';', b'2', b';', b'1', b'2', b'8', b';', b'6', b'6', b';',
+            b'2', b'5', b'5', b'm',
         ];
 
         let mut parser = Processor::new();
-        let mut handler = AttrHandler::default();
+        let mut handler = MockHandler::default();
 
         for byte in &BYTES[..] {
-            parser.advance(&mut handler, *byte, &mut Void);
+            parser.advance(&mut handler, *byte, &mut io::sink());
         }
 
         let spec = Rgb { r: 128, g: 66, b: 255 };
@@ -1517,58 +1518,26 @@ mod tests {
     #[test]
     fn parse_zsh_startup() {
         static BYTES: &[u8] = &[
-            0x1b, 0x5b, 0x31, 0x6d, 0x1b, 0x5b, 0x37, 0x6d, 0x25, 0x1b, 0x5b, 0x32, 0x37, 0x6d,
-            0x1b, 0x5b, 0x31, 0x6d, 0x1b, 0x5b, 0x30, 0x6d, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20,
-            0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20,
-            0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20,
-            0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20,
-            0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20,
-            0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20,
-            0x20, 0x20, 0x20, 0x0d, 0x20, 0x0d, 0x0d, 0x1b, 0x5b, 0x30, 0x6d, 0x1b, 0x5b, 0x32,
-            0x37, 0x6d, 0x1b, 0x5b, 0x32, 0x34, 0x6d, 0x1b, 0x5b, 0x4a, 0x6a, 0x77, 0x69, 0x6c,
-            0x6d, 0x40, 0x6a, 0x77, 0x69, 0x6c, 0x6d, 0x2d, 0x64, 0x65, 0x73, 0x6b, 0x20, 0x1b,
-            0x5b, 0x30, 0x31, 0x3b, 0x33, 0x32, 0x6d, 0xe2, 0x9e, 0x9c, 0x20, 0x1b, 0x5b, 0x30,
-            0x31, 0x3b, 0x33, 0x32, 0x6d, 0x20, 0x1b, 0x5b, 0x33, 0x36, 0x6d, 0x7e, 0x2f, 0x63,
-            0x6f, 0x64, 0x65,
+            0x1b, b'[', b'1', b'm', 0x1b, b'[', b'7', b'm', b'%', 0x1b, b'[', b'2', b'7', b'm',
+            0x1b, b'[', b'1', b'm', 0x1b, b'[', b'0', b'm', b' ', b' ', b' ', b' ', b' ', b' ',
+            b' ', b' ', b' ', b' ', b' ', b' ', b' ', b' ', b' ', b' ', b' ', b' ', b' ', b' ',
+            b' ', b' ', b' ', b' ', b' ', b' ', b' ', b' ', b' ', b' ', b' ', b' ', b' ', b' ',
+            b' ', b' ', b' ', b' ', b' ', b' ', b' ', b' ', b' ', b' ', b' ', b' ', b' ', b' ',
+            b' ', b' ', b' ', b' ', b' ', b' ', b' ', b' ', b' ', b' ', b' ', b' ', b' ', b' ',
+            b' ', b' ', b' ', b' ', b' ', b' ', b' ', b' ', b' ', b' ', b' ', b' ', b' ', b' ',
+            b' ', b' ', b' ', b'\r', b' ', b'\r', b'\r', 0x1b, b'[', b'0', b'm', 0x1b, b'[', b'2',
+            b'7', b'm', 0x1b, b'[', b'2', b'4', b'm', 0x1b, b'[', b'J', b'j', b'w', b'i', b'l',
+            b'm', b'@', b'j', b'w', b'i', b'l', b'm', b'-', b'd', b'e', b's', b'k', b' ', 0x1b,
+            b'[', b'0', b'1', b';', b'3', b'2', b'm', 0xe2, 0x9e, 0x9c, b' ', 0x1b, b'[', b'0',
+            b'1', b';', b'3', b'2', b'm', b' ', 0x1b, b'[', b'3', b'6', b'm', b'~', b'/', b'c',
+            b'o', b'd', b'e',
         ];
 
-        let mut handler = AttrHandler::default();
+        let mut handler = MockHandler::default();
         let mut parser = Processor::new();
 
         for byte in &BYTES[..] {
-            parser.advance(&mut handler, *byte, &mut Void);
-        }
-    }
-
-    struct CharsetHandler {
-        index: CharsetIndex,
-        charset: StandardCharset,
-    }
-
-    impl Default for CharsetHandler {
-        fn default() -> CharsetHandler {
-            CharsetHandler { index: CharsetIndex::G0, charset: StandardCharset::Ascii }
-        }
-    }
-
-    impl Handler for CharsetHandler {
-        fn configure_charset(&mut self, index: CharsetIndex, charset: StandardCharset) {
-            self.index = index;
-            self.charset = charset;
-        }
-
-        fn set_active_charset(&mut self, index: CharsetIndex) {
-            self.index = index;
-        }
-    }
-
-    impl TermInfo for CharsetHandler {
-        fn lines(&self) -> Line {
-            Line(200)
-        }
-
-        fn cols(&self) -> Column {
-            Column(90)
+            parser.advance(&mut handler, *byte, &mut io::sink());
         }
     }
 
@@ -1576,10 +1545,10 @@ mod tests {
     fn parse_designate_g0_as_line_drawing() {
         static BYTES: &[u8] = &[0x1b, b'(', b'0'];
         let mut parser = Processor::new();
-        let mut handler = CharsetHandler::default();
+        let mut handler = MockHandler::default();
 
         for byte in &BYTES[..] {
-            parser.advance(&mut handler, *byte, &mut Void);
+            parser.advance(&mut handler, *byte, &mut io::sink());
         }
 
         assert_eq!(handler.index, CharsetIndex::G0);
@@ -1588,19 +1557,19 @@ mod tests {
 
     #[test]
     fn parse_designate_g1_as_line_drawing_and_invoke() {
-        static BYTES: &[u8] = &[0x1b, 0x29, 0x30, 0x0e];
+        static BYTES: &[u8] = &[0x1b, b')', b'0', 0x0e];
         let mut parser = Processor::new();
-        let mut handler = CharsetHandler::default();
+        let mut handler = MockHandler::default();
 
         for byte in &BYTES[..3] {
-            parser.advance(&mut handler, *byte, &mut Void);
+            parser.advance(&mut handler, *byte, &mut io::sink());
         }
 
         assert_eq!(handler.index, CharsetIndex::G1);
         assert_eq!(handler.charset, StandardCharset::SpecialCharacterAndLineDrawing);
 
-        let mut handler = CharsetHandler::default();
-        parser.advance(&mut handler, BYTES[3], &mut Void);
+        let mut handler = MockHandler::default();
+        parser.advance(&mut handler, BYTES[3], &mut io::sink());
 
         assert_eq!(handler.index, CharsetIndex::G1);
     }
