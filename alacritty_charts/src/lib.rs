@@ -11,8 +11,8 @@
 // -- Add space for drawing the charts, right now we are decreasing 2 lines, but it breaks tmux
 // IN PROGRESS:
 // -- Group labels into separate colors (find something that does color spacing in rust)
-// TODO:
 // -- The dashboards should be toggable, some key combination
+// TODO:
 // -- When activated on toggle it could blur a portion of the screen
 // -- Create a TimeSeries inside the Term itself so that increments can be done synchronously but
 //    send/fetch the updates to the background every half a second or so?
