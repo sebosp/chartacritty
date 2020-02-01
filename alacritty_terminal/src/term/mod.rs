@@ -1222,6 +1222,11 @@ impl<T> Term<T> {
     }
 
     #[inline]
+    pub fn toggle_chart_show(&mut self) {
+        self.charts_handle.enabled = !self.charts_handle.enabled;
+    }
+
+    #[inline]
     pub fn mode(&self) -> &TermMode {
         &self.mode
     }

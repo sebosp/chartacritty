@@ -147,6 +147,7 @@ impl<T: EventListener> Execute<T> for Action {
             Action::ScrollToBottom => ctx.scroll(Scroll::Bottom),
             Action::ClearHistory => ctx.terminal_mut().clear_screen(ClearMode::Saved),
             Action::ClearLogNotice => ctx.pop_message(),
+            Action::ToggleChartShow => ctx.terminal_mut().toggle_chart_show(),
             Action::SpawnNewInstance => ctx.spawn_new_instance(),
             Action::ReceiveChar | Action::None => (),
         }
