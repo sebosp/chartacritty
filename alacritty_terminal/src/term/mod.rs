@@ -1294,6 +1294,11 @@ impl<T> Term<T> {
     }
 
     #[inline]
+    pub fn charts_enabled(&self) -> bool {
+        self.charts_handle.enabled
+    }
+
+    #[inline]
     pub fn exit(&mut self)
     where
         T: EventListener,
