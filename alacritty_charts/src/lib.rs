@@ -858,82 +858,86 @@ impl TimeSeries {
         self.stats.is_dirty = true;
     }
 
+    /// `get_last_filled_idx` returns the last index that was used in the circular buffer
+    fn get_last_filled_idx(&self) -> usize {
+        (self.first_idx + self.active_items - 1) % self.metrics.len()
+    }
+
     /// `upsert` Adds values to the circular buffer adding empty entries for
     /// missing entries, may invalidate the buffer if all data is outdated
     /// it returns the number of inserted records
     pub fn upsert(&mut self, input: (u64, Option<f64>)) -> usize {
         // maybe better to overwrite the data receiving an array.
-        if !self.metrics.is_empty() {
-            let last_idx = (self.first_idx + self.active_items - 1) % self.metrics.len();
-            if (self.metrics[last_idx].0 as i64 - input.0 as i64) >= self.metrics_capacity as i64 {
-                // The timestamp is too old and should be discarded.
-                // This means we cannot scroll back in time.
-                // i.e. if the date of the computer needs to go back in time
-                // we would need to restart the terminal to see metrics
-                // XXX: What about timezones?
-                return 0;
-            }
-            // as_vec() is 5, 6, 7, 3, 4
-            // active_items: 3
-            // input.0: 5
-            // inactive_time = -2
-            let inactive_time = input.0 as i64 - self.metrics[last_idx].0 as i64;
-            if inactive_time > self.metrics_capacity as i64 {
-                // The whole vector should be discarded
-                self.first_idx = 0;
-                self.metrics[0] = input;
-                self.active_items = 1;
-                return 1;
-            } else if inactive_time < 0 {
-                // We have a metric for an epoch in the past.
-                let current_min_epoch = self.metrics[self.first_idx].0;
-                if current_min_epoch > input.0 {
-                    // The input epoch before anything we have registered.
-                    // But still within our capacity boundaries
-                    let padding_items = (current_min_epoch - input.0) as usize;
-                    // The vector is not full, let's shift the items to the right
-                    // The array items have not been allocated at this point:
-                    self.metrics.insert(0, input);
-                    for idx in 1..padding_items {
-                        self.metrics.insert(idx, (input.0 + idx as u64, None));
-                    }
-                    self.active_items += padding_items;
-                    return padding_items;
-                } else {
-                    // The input epoch has already been inserted in our array
-                    let target_idx = ((self.metrics.len() as i64 + last_idx as i64 + inactive_time)
-                        % self.metrics.len() as i64) as usize;
-                    if self.metrics[target_idx].0 != input.0 {
-                        error!(
-                            "upsert: lost synchrony len: {}, last_idx: {}, target_idx: {}, inactive_time: {}, input: {}, target_idx data: {}",
-                            self.metrics.len(),
-                            last_idx,
-                            target_idx,
-                            inactive_time,
-                            input.0,
-                            self.metrics[target_idx].0
-                        );
-                    }
-                    self.metrics[target_idx].1 =
-                        self.resolve_metric_collision(self.metrics[target_idx].1, input.1);
-                    return 0;
+        if self.metrics.is_empty() {
+            self.circular_push((input.0, input.1));
+            return 1;
+        }
+        let last_idx = self.get_last_filled_idx();
+        if (self.metrics[last_idx].0 as i64 - input.0 as i64) >= self.metrics_capacity as i64 {
+            // The timestamp is too old and should be discarded.
+            // This means we cannot scroll back in time.
+            // i.e. if the date of the computer needs to go back in time
+            // we would need to restart the terminal to see metrics
+            // XXX: What about timezones?
+            return 0;
+        }
+        // as_vec() is 5, 6, 7, 3, 4
+        // active_items: 3
+        // input.0: 5
+        // inactive_time = -2
+        let inactive_time = input.0 as i64 - self.metrics[last_idx].0 as i64;
+        if inactive_time > self.metrics_capacity as i64 {
+            // The whole vector should be discarded
+            self.first_idx = 0;
+            self.metrics[0] = input;
+            self.active_items = 1;
+            return 1;
+        } else if inactive_time < 0 {
+            // We have a metric for an epoch in the past.
+            let current_min_epoch = self.metrics[self.first_idx].0;
+            if current_min_epoch > input.0 {
+                // The input epoch before anything we have registered.
+                // But still within our capacity boundaries
+                let padding_items = (current_min_epoch - input.0) as usize;
+                // The vector is not full, let's shift the items to the right
+                // The array items have not been allocated at this point:
+                self.metrics.insert(0, input);
+                for idx in 1..padding_items {
+                    self.metrics.insert(idx, (input.0 + idx as u64, None));
                 }
-            } else if inactive_time == 0 {
-                // We have a metric for the last indexed epoch
-                self.metrics[last_idx].1 =
-                    self.resolve_metric_collision(self.metrics[last_idx].1, input.1);
-                return 0;
+                self.active_items += padding_items;
+                return padding_items;
             } else {
-                // The input epoch is in the future
-                let max_epoch = self.metrics[last_idx].0;
-                // Fill missing entries with None
-                for fill_epoch in (max_epoch + 1)..input.0 {
-                    self.circular_push((fill_epoch, None));
+                // The input epoch has already been inserted in our array
+                let target_idx = ((self.metrics.len() as i64 + last_idx as i64 + inactive_time)
+                    % self.metrics.len() as i64) as usize;
+                if self.metrics[target_idx].0 != input.0 {
+                    error!(
+                        "upsert: lost synchrony len: {}, last_idx: {}, target_idx: {}, inactive_time: {}, input: {}, target_idx data: {}",
+                        self.metrics.len(),
+                        last_idx,
+                        target_idx,
+                        inactive_time,
+                        input.0,
+                        self.metrics[target_idx].0
+                    );
                 }
-                self.circular_push((input.0, input.1));
-                return 1;
+                self.metrics[target_idx].1 =
+                    self.resolve_metric_collision(self.metrics[target_idx].1, input.1);
+                return 0;
             }
+        } else if inactive_time == 0 {
+            // We have a metric for the last indexed epoch
+            self.metrics[last_idx].1 =
+                self.resolve_metric_collision(self.metrics[last_idx].1, input.1);
+            return 0;
         } else {
+            // The input epoch is in the future
+            let max_epoch = self.metrics[last_idx].0;
+            // Fill missing entries with None
+            for fill_epoch in (max_epoch + 1)..input.0 {
+                self.circular_push((fill_epoch, None));
+            }
             self.circular_push((input.0, input.1));
             return 1;
         }
@@ -941,7 +945,7 @@ impl TimeSeries {
 
     /// `get_last_filled` Returns the last filled entry in the circular buffer
     pub fn get_last_filled(&self) -> f64 {
-        let mut idx = (self.first_idx + self.active_items - 1) % self.metrics_capacity;
+        let mut idx = self.get_last_filled_idx();
         loop {
             if let Some(res) = self.metrics[idx].1 {
                 return res;
@@ -1078,6 +1082,25 @@ mod tests {
         );
         assert_eq!(test.first_idx, 2);
         assert_eq!(test.active_items, 4);
+        // Testing comments in circular_push
+        let mut test = TimeSeries::default().with_capacity(5);
+        test.circular_push((0, Some(0f64)));
+        assert_eq!(test.get_last_filled_idx(), 0);
+        test.circular_push((1, Some(1f64)));
+        assert_eq!(test.get_last_filled_idx(), 1);
+        test.circular_push((2, Some(2f64)));
+        assert_eq!(test.get_last_filled_idx(), 2);
+        test.circular_push((3, Some(3f64)));
+        assert_eq!(test.get_last_filled_idx(), 3);
+        test.circular_push((4, Some(4f64)));
+        assert_eq!(test.get_last_filled_idx(), 4);
+        test.circular_push((5, Some(5f64)));
+        assert_eq!(test.get_last_filled_idx(), 0);
+        test.circular_push((6, Some(6f64)));
+        assert_eq!(test.get_last_filled_idx(), 1);
+        test.circular_push((7, Some(7f64)));
+        assert_eq!(test.get_last_filled_idx(), 2);
+        assert_eq!(test.active_items, 5);
     }
 
     #[test]
@@ -1092,6 +1115,7 @@ mod tests {
         let mut test = TimeSeries::default().with_capacity(4);
         test.circular_push((11, None));
         test.upsert((12, Some(2f64)));
+        assert_eq!(test.get_last_filled(), 2f64);
     }
 
     #[test]
