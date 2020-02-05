@@ -1083,6 +1083,10 @@ mod tests {
         assert_eq!(test.first_idx, 2);
         assert_eq!(test.active_items, 4);
         // Testing comments in circular_push
+    }
+
+    #[test]
+    fn it_calculates_last_filled_idx() {
         let mut test = TimeSeries::default().with_capacity(5);
         test.circular_push((0, Some(0f64)));
         assert_eq!(test.get_last_filled_idx(), 0);
@@ -1101,6 +1105,10 @@ mod tests {
         test.circular_push((7, Some(7f64)));
         assert_eq!(test.get_last_filled_idx(), 2);
         assert_eq!(test.active_items, 5);
+        let input = (4, Some(40f64));
+        let last_idx = test.get_last_filled_idx();
+        let inactive_time = input.0 as i64 - test.metrics[last_idx].0 as i64;
+        assert_eq!(inactive_time, -3);
     }
 
     #[test]
