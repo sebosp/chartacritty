@@ -1,11 +1,11 @@
 [package]
 name = "alacritty_terminal"
-version = "0.4.1-dev"
-authors = ["Joe Wilm <joe@jwilm.com>"]
+version = "0.4.2-dev"
+authors = ["Christian Duerr <contact@christianduerr.com>", "Joe Wilm <joe@jwilm.com>"]
 license = "Apache-2.0"
 description = "Library for writing terminal emulators"
 readme = "../README.md"
-homepage = "https://github.com/jwilm/alacritty"
+homepage = "https://github.com/alacritty/alacritty"
 edition = "2018"
 
 [dependencies]
@@ -16,7 +16,7 @@ font = { path = "../font" }
 parking_lot = "0.9"
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.8"
-vte = "0.3"
+vte = { version = "0.5.0", default-features = false }
 mio = "0.6.20"
 mio-extras = "2"
 log = "0.4"
@@ -24,14 +24,14 @@ unicode-width = "0.1"
 base64 = "0.11.0"
 terminfo = "0.6.1"
 url = "2"
-copypasta = { path = "../copypasta" }
 tokio-core = "0.1.17"
 tokio = "0.1"
 futures = "0.1.26"
 alacritty_charts = { path = "../alacritty_charts" }
+copypasta = "0.6.1"
 
 [target.'cfg(unix)'.dependencies]
-nix = "0.15.0"
+nix = "0.16.1"
 signal-hook = { version = "0.1", features = ["mio-support"] }
 
 [target.'cfg(windows)'.dependencies]

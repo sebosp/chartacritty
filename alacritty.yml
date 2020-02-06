@@ -65,14 +65,14 @@
   # Window title
   #title: Alacritty
 
-  # Window class (Linux only):
+  # Window class (Linux/BSD only):
   #class:
     # Application instance name
     #instance: Alacritty
     # General application class
     #general: Alacritty
 
-  # GTK theme variant (Linux only)
+  # GTK theme variant (Linux/BSD only)
   #
   # Override the variant of the GTK theme. Commonly supported values are `dark` and `light`.
   # Set this to `None` to use the default theme variant.
@@ -86,9 +86,6 @@
   # Number of lines the viewport will move for every line scrolled when
   # scrollback is enabled (history > 0).
   #multiplier: 3
-
-  # Scroll to the bottom when new text is written to the terminal.
-  #auto_scroll: false
 
 # Spaces per Tab (changes require restart)
 #
@@ -107,7 +104,7 @@
     #
     # Default:
     #   - (macOS) Menlo
-    #   - (Linux) monospace
+    #   - (Linux/BSD) monospace
     #   - (Windows) Consolas
     #family: monospace
 
@@ -180,7 +177,7 @@
   #use_thin_strokes: true
 
 # If `true`, bold text is drawn using the bright color variants.
-#draw_bold_text_with_bright_colors: true
+#draw_bold_text_with_bright_colors: false
 
 # Colors (Tomorrow Night Bright)
 #colors:
@@ -324,7 +321,7 @@
 #
 # Default:
 #   - (macOS) /bin/bash --login
-#   - (Linux) user login shell
+#   - (Linux/BSD) user login shell
 #   - (Windows) powershell
 #shell:
 #  program: /bin/bash
@@ -396,7 +393,7 @@
     #
     # Default:
     #   - (macOS) open
-    #   - (Linux) xdg-open
+    #   - (Linux/BSD) xdg-open
     #   - (Windows) explorer
     #launcher:
     #  program: xdg-open
@@ -412,6 +409,9 @@
 #
 # Mouse bindings are specified as a list of objects, much like the key
 # bindings further below.
+#
+# To trigger mouse bindings when an application running within Alacritty captures the mouse, the
+# `Shift` modifier is automatically added as a requirement.
 #
 # Each mouse binding will specify a:
 #
@@ -482,6 +482,7 @@
 #   - ScrollToBottom
 #   - ClearHistory
 #   - Hide
+#   - Minimize
 #   - Quit
 #   - ToggleFullscreen
 #   - SpawnNewInstance
@@ -530,7 +531,7 @@
 # be mapped to the `ReceiveChar` action. Alternatively, you can use `None` for
 # a no-op if you do not wish to receive input characters for that binding.
 #key_bindings:
-  # (Windows/Linux only)
+  # (Windows, Linux, and BSD only)
   #- { key: V,        mods: Control|Shift, action: Paste            }
   #- { key: C,        mods: Control|Shift, action: Copy             }
   #- { key: Insert,   mods: Shift,         action: PasteSelection   }
@@ -539,6 +540,8 @@
   #- { key: Add,      mods: Control,       action: IncreaseFontSize }
   #- { key: Subtract, mods: Control,       action: DecreaseFontSize }
   #- { key: Minus,    mods: Control,       action: DecreaseFontSize }
+
+  # (Windows only)
   #- { key: Return,   mods: Alt,           action: ToggleFullscreen }
 
   # (macOS only)
@@ -551,6 +554,7 @@
   #- { key: V,      mods: Command,         action: Paste            }
   #- { key: C,      mods: Command,         action: Copy             }
   #- { key: H,      mods: Command,         action: Hide             }
+  #- { key: M,      mods: Command,         action: Minimize         }
   #- { key: Q,      mods: Command,         action: Quit             }
   #- { key: W,      mods: Command,         action: Quit             }
   #- { key: F,      mods: Command|Control, action: ToggleFullscreen }
@@ -562,4 +566,137 @@
   #- { key: PageDown,  mods: Shift,   action: ScrollPageDown, mode: ~Alt       }
   #- { key: Home,      mods: Shift,   action: ScrollToTop,    mode: ~Alt       }
   #- { key: End,       mods: Shift,   action: ScrollToBottom, mode: ~Alt       }
-# Visual Metrics like Load Average, Activity Lines, etc
+  #- { key: Comma,     mods: Alt,     action: ToggleChartShow                  }
+charts:
+- name: async loaded items
+  offset: x: 780
+  width: 100
+  height: 25
+  series:
+  - name: Number of input items for TimeSeries
+    type: async_items_loaded
+    refresh: 1
+    color: "0x00ff00"
+    alpha: 1.0
+- name: output newlines
+  offset:
+    x: 890
+  width: 100
+  height: 25
+  series:
+  - name: output
+    type: alacritty_output
+    color: "0x00ff00"
+    alpha: 1.0
+    missing_values_policy: last
+    collision_policy: Increment
+- name: input newlines
+  offset:
+    x: 900
+  width: 100
+  height: 25
+  series:
+  - name: input
+    type: alacritty_input
+    color: "0xff0000"
+    alpha: 1.0
+    missing_values_policy: last
+    collision_policy: Increment
+- name: load
+  offset:
+    x: 1010
+  width: 100
+  height: 25
+  decorations:
+  - type: reference
+    value: 4.0             # Show a reference point at 4 CPU marks
+    color: "0x00ff00"
+    alpha: 0.3
+    height_multiplier: 0.05
+  - type: alert
+    target: prometheus alerts # ties to below series of the same name
+    threshold: 0
+    comparator: '>'
+    color: "0xff0000"
+  series:
+  - name: load average 1 min
+    type: prometheus
+    refresh: 15
+    source: 'http://localhost:9090/api/v1/query_range?query=node_load1'
+    color: "0xbb86cf"
+    alpha: 0.9
+    missing_values_policy: avg
+    collision_policy: Overwrite
+  - name: load average 5 min
+    type: prometheus
+    refresh: 15
+    source: 'http://localhost:9090/api/v1/query_range?query=node_load5'
+    color: "0xba68c8"
+    alpha: 0.6
+    missing_values_policy: avg
+    collision_policy: Overwrite
+  - name: load average 15 min
+    type: prometheus
+    refresh: 15
+    source: 'http://localhost:9090/api/v1/query_range?query=node_load15'
+    color: "0xee98fb"
+    alpha: 0.3
+    missing_values_policy: avg
+    collision_policy: Overwrite
+  - name: prometheus alerts
+    type: prometheus
+    refresh: 15
+    source: 'http://localhost:9090/api/v1/query_range?query=ALERTS'
+    color: "0xff0000"
+    collision_policy: Overwrite
+    missing_values_policy: zero  # The ALERT type queries tend to disappear, so making them zero by default
+    alpha: 0.0                   # This is meant only for alerting, so it will be set to transparent
+- name: cpu
+  offset:
+    x: 1140
+  width: 200
+  height: 25
+  series:
+  - name: cpu
+    type: prometheus
+    refresh: 15
+    # This actually returns many CPUs, XXX: split into lines
+    source: 'http://localhost:9090/api/v1/query_range?query=100 - (avg by (instance) (irate(node_cpu_seconds_total{job="node_exporter",mode="idle"}[5m])) * 100)'
+    color: "0xc8b900"
+    alpha: 1.0
+- name: prom status
+  offset:
+    x: 1340
+  width: 100
+  height: 25
+  series:
+  - name: prometheus_up
+    type: prometheus
+    refresh: 15
+    source: 'http://localhost:9090/api/v1/query?query=up'
+    labels:
+      job: node_exporter
+    color: "0xc8b900"
+    alpha: 1.0
+- name: memory
+  offset:
+    x: 1250
+  width: 100
+  height: 25
+  series:
+  - name: memory used
+    type: prometheus
+    refresh: 15
+    source: 'http://localhost:9090/api/v1/query_range?query=node_memory_Active_bytes'
+    color: "0xcf6679"
+    alpha: 1.0
+    missing_values_policy: avg
+    collision_policy: Overwrite
+  - name: memory total
+    type: prometheus
+    refresh: 15
+    source: 'http://localhost:9090/api/v1/query_range?query=node_memory_MemTotal_bytes'
+    color: "0xe1f5fe"
+    alpha: 1.0
+    missing_values_policy: avg
+    collision_policy: Overwrite

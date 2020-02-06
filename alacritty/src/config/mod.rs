@@ -18,7 +18,7 @@ pub mod monitor;
 mod mouse;
 mod ui_config;
 
-pub use crate::config::bindings::{Action, Binding, Key, RelaxedEq};
+pub use crate::config::bindings::{Action, Binding, Key};
 #[cfg(test)]
 pub use crate::config::mouse::{ClickHandler, Mouse};
 use crate::config::ui_config::UIConfig;
@@ -150,7 +150,7 @@ fn read_config(path: &PathBuf) -> Result<Config> {
     let mut contents = fs::read_to_string(path)?;
 
     // Remove UTF-8 BOM
-    if contents.chars().nth(0) == Some('\u{FEFF}') {
+    if contents.starts_with('\u{FEFF}') {
         contents = contents.split_off(3);
     }
 
@@ -204,10 +204,18 @@ fn print_deprecation_warnings(config: &Config) {
              lines"
         );
     }
+
+    if config.scrolling.auto_scroll.is_some() {
+        warn!(
+            target: LOG_TARGET_CONFIG,
+            "Config scrolling.auto_scroll has been removed and is now always disabled, it can be \
+             safely removed from the config"
+        );
+    }
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     static DEFAULT_ALACRITTY_CONFIG: &str =
         include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../alacritty.yml"));
 

@@ -15,7 +15,7 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt::Display;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use log::error;
 use serde::{Deserialize, Deserializer};
@@ -61,7 +61,7 @@ pub struct Config<T> {
 
     /// Should draw bold text with brighter colors instead of bold font
     #[serde(default, deserialize_with = "failure_default")]
-    draw_bold_text_with_bright_colors: DefaultTrueBool,
+    draw_bold_text_with_bright_colors: bool,
 
     #[serde(default, deserialize_with = "failure_default")]
     pub colors: Colors,
@@ -120,7 +120,7 @@ pub struct Config<T> {
 
     /// Shell startup directory
     #[serde(default, deserialize_with = "option_explicit_none")]
-    working_directory: Option<PathBuf>,
+    pub working_directory: Option<PathBuf>,
 
     /// Debug options
     #[serde(default, deserialize_with = "failure_default")]
@@ -153,7 +153,7 @@ impl<T> Config<T> {
 
     #[inline]
     pub fn draw_bold_text_with_bright_colors(&self) -> bool {
-        self.draw_bold_text_with_bright_colors.0
+        self.draw_bold_text_with_bright_colors
     }
 
     /// Should show render timer
@@ -210,16 +210,6 @@ impl<T> Config<T> {
     #[inline]
     pub fn background_opacity(&self) -> f32 {
         self.background_opacity.0
-    }
-
-    #[inline]
-    pub fn working_directory(&self) -> Option<&Path> {
-        self.working_directory.as_ref().map(|path_buf| path_buf.as_path())
-    }
-
-    #[inline]
-    pub fn set_working_directory(&mut self, working_directory: Option<PathBuf>) {
-        self.working_directory = working_directory;
     }
 }
 
