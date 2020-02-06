@@ -913,13 +913,14 @@ impl TimeSeries {
                     % self.metrics.len() as i64) as usize;
                 if self.metrics[target_idx].0 != input.0 {
                     error!(
-                        "upsert: lost synchrony len: {}, last_idx: {}, target_idx: {}, inactive_time: {}, input: {}, target_idx data: {}",
+                        "upsert: lost synchrony len: {}, last_idx: {}, target_idx: {}, inactive_time: {}, input: {}, target_idx data: {} metrics: {:?}",
                         self.metrics.len(),
                         last_idx,
                         target_idx,
                         inactive_time,
                         input.0,
-                        self.metrics[target_idx].0
+                        self.metrics[target_idx].0,
+                        self.metrics
                     );
                 }
                 self.metrics[target_idx].1 =
