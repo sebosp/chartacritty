@@ -841,7 +841,7 @@ impl TimeSeries {
     }
 
     /// `circular_push` adds an item to the circular buffer
-    pub fn circular_push(&mut self, input: (u64, Option<f64>)) {
+    fn circular_push(&mut self, input: (u64, Option<f64>)) {
         if self.metrics.len() < self.metrics_capacity {
             self.metrics.push(input);
             self.active_items += 1;
@@ -1095,22 +1095,58 @@ mod tests {
     #[test]
     fn it_uses_last_idx() {
         let mut test = TimeSeries::default().with_capacity(5);
-        test.circular_push((0, Some(0f64)));
+        test.upsert((0, Some(0f64)));
         assert_eq!(test.get_last_idx(), 0);
-        test.circular_push((1, Some(1f64)));
+        test.upsert((1, Some(1f64)));
         assert_eq!(test.get_last_idx(), 1);
-        test.circular_push((2, Some(2f64)));
+        test.upsert((2, Some(2f64)));
         assert_eq!(test.get_last_idx(), 2);
-        test.circular_push((3, Some(3f64)));
+        test.upsert((3, Some(3f64)));
         assert_eq!(test.get_last_idx(), 3);
-        test.circular_push((4, Some(4f64)));
+        test.upsert((4, Some(4f64)));
         assert_eq!(test.get_last_idx(), 4);
-        test.circular_push((5, Some(5f64)));
+        assert_eq!(
+            test.metrics,
+            vec![
+                (0, Some(0f64)),
+                (1, Some(1f64)),
+                (2, Some(2f64)),
+                (3, Some(3f64)),
+                (4, Some(4f64))
+            ]
+        );
+        test.upsert((5, Some(5f64)));
         assert_eq!(test.get_last_idx(), 0);
-        test.circular_push((6, Some(6f64)));
+        assert_eq!(
+            test.metrics,
+            vec![
+                (5, Some(5f64)),
+                (1, Some(1f64)),
+                (2, Some(2f64)),
+                (3, Some(3f64)),
+                (4, Some(4f64))
+            ]
+        );
+        test.upsert((6, Some(6f64)));
         assert_eq!(test.get_last_idx(), 1);
-        test.circular_push((7, Some(7f64)));
+        test.upsert((7, Some(7f64)));
         assert_eq!(test.get_last_idx(), 2);
+        assert_eq!(test.metrics_capacity, 5);
+        let last_input = test.metrics[test.get_last_idx()];
+        let old_input = (2, Some(20f64));
+        assert_eq!(last_input.0 as i64 - old_input.0 as i64, 5i64);
+        test.upsert((2, Some(20f64)));
+        assert_eq!(
+            test.metrics,
+            vec![
+                (5, Some(5f64)),
+                (6, Some(6f64)),
+                (7, Some(7f64)),
+                (3, Some(3f64)),
+                (4, Some(4f64))
+            ]
+        );
+        // This shouldn't even be inserted because it's too old
         assert_eq!(test.active_items, 5);
         let input = (4, Some(40f64));
         let last_idx = test.get_last_idx();
@@ -1126,12 +1162,12 @@ mod tests {
         let mut test = TimeSeries::default().with_capacity(4);
         // Some values should be inserted as None
         test.upsert((10, Some(0f64)));
-        test.circular_push((11, None));
-        test.circular_push((12, None));
-        test.circular_push((13, None));
+        test.upsert((11, None));
+        test.upsert((12, None));
+        test.upsert((13, None));
         assert_eq!(test.get_last_filled(), 0f64);
         let mut test = TimeSeries::default().with_capacity(4);
-        test.circular_push((11, None));
+        test.upsert((11, None));
         test.upsert((12, Some(2f64)));
         assert_eq!(test.get_last_filled(), 2f64);
     }
@@ -1311,24 +1347,12 @@ mod tests {
         // Test with 10 items only
         // So that every item takes 0.01
         all_dups.sources[0].series_mut().metrics_capacity = 10;
-        all_dups.sources[0]
-            .series_mut()
-            .circular_push((10, Some(5f64)));
-        all_dups.sources[0]
-            .series_mut()
-            .circular_push((11, Some(5f64)));
-        all_dups.sources[0]
-            .series_mut()
-            .circular_push((12, Some(5f64)));
-        all_dups.sources[0]
-            .series_mut()
-            .circular_push((13, Some(5f64)));
-        all_dups.sources[0]
-            .series_mut()
-            .circular_push((14, Some(5f64)));
-        all_dups.sources[0]
-            .series_mut()
-            .circular_push((15, Some(5f64)));
+        all_dups.sources[0].series_mut().upsert((10, Some(5f64)));
+        all_dups.sources[0].series_mut().upsert((11, Some(5f64)));
+        all_dups.sources[0].series_mut().upsert((12, Some(5f64)));
+        all_dups.sources[0].series_mut().upsert((13, Some(5f64)));
+        all_dups.sources[0].series_mut().upsert((14, Some(5f64)));
+        all_dups.sources[0].series_mut().upsert((15, Some(5f64)));
         all_dups.update_series_opengl_vecs(0, size_test);
         // we expect a line from X -1.0 to X: -0.95
         assert_eq!(all_dups.get_deduped_opengl_vecs(0).len(), 4);
@@ -1339,24 +1363,12 @@ mod tests {
         // Test with 10 items only
         // So that every item takes 0.01
         no_dups.sources[0].series_mut().metrics_capacity = 10;
-        no_dups.sources[0]
-            .series_mut()
-            .circular_push((10, Some(5f64)));
-        no_dups.sources[0]
-            .series_mut()
-            .circular_push((11, Some(9f64)));
-        no_dups.sources[0]
-            .series_mut()
-            .circular_push((12, Some(7f64)));
-        no_dups.sources[0]
-            .series_mut()
-            .circular_push((13, Some(9f64)));
-        no_dups.sources[0]
-            .series_mut()
-            .circular_push((14, Some(5f64)));
-        no_dups.sources[0]
-            .series_mut()
-            .circular_push((15, Some(7f64)));
+        no_dups.sources[0].series_mut().upsert((10, Some(5f64)));
+        no_dups.sources[0].series_mut().upsert((11, Some(9f64)));
+        no_dups.sources[0].series_mut().upsert((12, Some(7f64)));
+        no_dups.sources[0].series_mut().upsert((13, Some(9f64)));
+        no_dups.sources[0].series_mut().upsert((14, Some(5f64)));
+        no_dups.sources[0].series_mut().upsert((15, Some(7f64)));
         no_dups.update_series_opengl_vecs(0, size_test);
         // we expect a line from 1, 1->2, 3, 4, 5, 6
         assert_eq!(no_dups.get_deduped_opengl_vecs(0).len(), 14usize);
@@ -1414,7 +1426,7 @@ mod tests {
         assert_eq!(iter_test0.pos, 0);
         // Simple test with one item
         let mut test1 = TimeSeries::default().with_capacity(4);
-        test1.circular_push((10, Some(0f64)));
+        test1.upsert((10, Some(0f64)));
         let mut iter_test1 = test1.iter();
         assert_eq!(iter_test1.next(), Some(&(10, Some(0f64))));
         assert_eq!(iter_test1.pos, 1);
@@ -1424,10 +1436,10 @@ mod tests {
         // Simple test with 3 items, rotated to start first item and 2nd
         // position and last item at 3rd position
         let mut test2 = TimeSeries::default().with_capacity(4);
-        test2.circular_push((10, Some(0f64)));
-        test2.circular_push((11, Some(1f64)));
-        test2.circular_push((12, Some(2f64)));
-        test2.circular_push((13, Some(3f64)));
+        test2.upsert((10, Some(0f64)));
+        test2.upsert((11, Some(1f64)));
+        test2.upsert((12, Some(2f64)));
+        test2.upsert((13, Some(3f64)));
         test2.first_idx = 1;
         assert_eq!(
             test2.metrics,
@@ -1445,10 +1457,10 @@ mod tests {
         assert_eq!(iter_test2.pos, 3);
         // A vec that is completely full
         let mut test3 = TimeSeries::default().with_capacity(4);
-        test3.circular_push((10, Some(0f64)));
-        test3.circular_push((11, Some(1f64)));
-        test3.circular_push((12, Some(2f64)));
-        test3.circular_push((13, Some(3f64)));
+        test3.upsert((10, Some(0f64)));
+        test3.upsert((11, Some(1f64)));
+        test3.upsert((12, Some(2f64)));
+        test3.upsert((13, Some(3f64)));
         {
             let mut iter_test3 = test3.iter();
             assert_eq!(iter_test3.next(), Some(&(10, Some(0f64))));
@@ -1460,7 +1472,7 @@ mod tests {
             assert_eq!(iter_test2.pos, 3);
         }
         // After changing the data the idx is recreatehd at 11 as expected
-        test3.circular_push((14, Some(4f64)));
+        test3.upsert((14, Some(4f64)));
         let mut iter_test3 = test3.iter();
         assert_eq!(iter_test3.next(), Some(&(11, Some(1f64))));
     }
@@ -1543,7 +1555,7 @@ mod tests {
         chart_test.sources.push(TimeSeriesSource::default());
         chart_test.width = 10.;
         chart_test.height = 10.;
-        // Test with 10 items only
+        // Test with 5 items only
         // So that every item takes 0.01
         chart_test.sources[0].series_mut().metrics_capacity = 10;
         // |             |   -
@@ -1553,26 +1565,14 @@ mod tests {
         // |XX           |   -
         //
         // |---- 200 ----|
-        chart_test.sources[0]
-            .series_mut()
-            .circular_push((10, Some(0f64)));
-        chart_test.sources[0]
-            .series_mut()
-            .circular_push((11, Some(1f64)));
-        chart_test.sources[0]
-            .series_mut()
-            .circular_push((12, Some(2f64)));
+        chart_test.sources[0].series_mut().upsert((10, Some(0f64)));
+        chart_test.sources[0].series_mut().upsert((11, Some(1f64)));
+        chart_test.sources[0].series_mut().upsert((12, Some(2f64)));
+        // A metric with None will be added for the (13, None)
         // Let's make a None value and check the MissingValuesPolicy
-        chart_test.sources[0].series_mut().circular_push((14, None));
+        chart_test.sources[0].series_mut().upsert((14, None));
         // This makes the top value 4
-        chart_test.sources[0]
-            .series_mut()
-            .circular_push((15, Some(4f64)));
-        // The current display (10% at the bottom left) should be divided
-        // between 4 and 1.
-        // metric(4) is -0.9
-        // Each metric unit (From 0 to 4) will be 0.025
-        // metric(0) is -1.0
+        chart_test.sources[0].series_mut().upsert((15, Some(4f64)));
         (size_test, chart_test)
     }
 
@@ -1612,76 +1612,76 @@ mod tests {
         let point_4_metric = 4.75f64;
         prom_test.sources[0]
             .series_mut()
-            .circular_push((1566918913, Some(point_1_metric))); // Point 1
+            .upsert((1566918913, Some(point_1_metric))); // Point 1
         prom_test.sources[0]
             .series_mut()
-            .circular_push((1566918914, Some(point_1_metric))); //  |
+            .upsert((1566918914, Some(point_1_metric))); //  |
         prom_test.sources[0]
             .series_mut()
-            .circular_push((1566918915, Some(point_1_metric))); //  |
+            .upsert((1566918915, Some(point_1_metric))); //  |
         prom_test.sources[0]
             .series_mut()
-            .circular_push((1566918916, Some(point_1_metric))); //  |
+            .upsert((1566918916, Some(point_1_metric))); //  |
         prom_test.sources[0]
             .series_mut()
-            .circular_push((1566918917, Some(point_1_metric))); //  |
+            .upsert((1566918917, Some(point_1_metric))); //  |
         prom_test.sources[0]
             .series_mut()
-            .circular_push((1566918918, Some(point_1_metric))); //  |
+            .upsert((1566918918, Some(point_1_metric))); //  |
         prom_test.sources[0]
             .series_mut()
-            .circular_push((1566918919, Some(point_2_metric))); // Point 2 -> Point 3
+            .upsert((1566918919, Some(point_2_metric))); // Point 2 -> Point 3
         prom_test.sources[0]
             .series_mut()
-            .circular_push((1566918920, Some(point_2_metric))); // |
+            .upsert((1566918920, Some(point_2_metric))); // |
         prom_test.sources[0]
             .series_mut()
-            .circular_push((1566918921, Some(point_2_metric))); // |
+            .upsert((1566918921, Some(point_2_metric))); // |
         prom_test.sources[0]
             .series_mut()
-            .circular_push((1566918922, Some(point_2_metric))); // |
+            .upsert((1566918922, Some(point_2_metric))); // |
         prom_test.sources[0]
             .series_mut()
-            .circular_push((1566918923, Some(point_2_metric))); // |
+            .upsert((1566918923, Some(point_2_metric))); // |
         prom_test.sources[0]
             .series_mut()
-            .circular_push((1566918924, Some(point_2_metric))); // |
+            .upsert((1566918924, Some(point_2_metric))); // |
         prom_test.sources[0]
             .series_mut()
-            .circular_push((1566918925, Some(point_3_metric))); // Point 4 -> Point 5
+            .upsert((1566918925, Some(point_3_metric))); // Point 4 -> Point 5
         prom_test.sources[0]
             .series_mut()
-            .circular_push((1566918926, Some(point_3_metric))); //   |
+            .upsert((1566918926, Some(point_3_metric))); //   |
         prom_test.sources[0]
             .series_mut()
-            .circular_push((1566918927, Some(point_3_metric))); //   |
+            .upsert((1566918927, Some(point_3_metric))); //   |
         prom_test.sources[0]
             .series_mut()
-            .circular_push((1566918928, Some(point_3_metric))); //   |
+            .upsert((1566918928, Some(point_3_metric))); //   |
         prom_test.sources[0]
             .series_mut()
-            .circular_push((1566918929, Some(point_3_metric))); //   |
+            .upsert((1566918929, Some(point_3_metric))); //   |
         prom_test.sources[0]
             .series_mut()
-            .circular_push((1566918930, Some(point_3_metric))); //   |
+            .upsert((1566918930, Some(point_3_metric))); //   |
         prom_test.sources[0]
             .series_mut()
-            .circular_push((1566918931, Some(point_4_metric))); // Point 6 -> Point 7
+            .upsert((1566918931, Some(point_4_metric))); // Point 6 -> Point 7
         prom_test.sources[0]
             .series_mut()
-            .circular_push((1566918932, Some(point_4_metric))); // |
+            .upsert((1566918932, Some(point_4_metric))); // |
         prom_test.sources[0]
             .series_mut()
-            .circular_push((1566918933, Some(point_4_metric))); // |
+            .upsert((1566918933, Some(point_4_metric))); // |
         prom_test.sources[0]
             .series_mut()
-            .circular_push((1566918934, Some(point_4_metric))); // |
+            .upsert((1566918934, Some(point_4_metric))); // |
         prom_test.sources[0]
             .series_mut()
-            .circular_push((1566918935, Some(point_4_metric))); // |
+            .upsert((1566918935, Some(point_4_metric))); // |
         prom_test.sources[0]
             .series_mut()
-            .circular_push((1566918936, Some(point_4_metric))); // Point 8
+            .upsert((1566918936, Some(point_4_metric))); // Point 8
         prom_test.update_all_series_opengl_vecs(size_test);
         // We expect to see these dedupped vertices:
         // |              7--8  |   -     metric value: 4.75, point 4
@@ -1831,10 +1831,12 @@ mod tests {
                 -0.975,      // Y value is 1, so 25% of the line, so 0.025
                 -0.97400004, // leftmost plus  0.01 * 2
                 -0.95,       // Y value is 2, so 50% from bottom to top
-                -0.96599996, // leftmost plus 0.01 * 3
-                -1.0,        // Top-most value, so the chart height
-                -0.958,      // leftmost plus 0.01 * 4, rightmost
-                -0.9         // Top-most value, so the chart height
+                -0.96599996, // leftmost plus 0.01 * 0.3
+                -1.0,        // A none value means MissingValuesPolicy::Zero
+                -0.958,      // leftmost plus 0.01 * 4
+                -1.0,        // A none value means MissingValuesPolicy::Zero
+                -0.95,       // leftmost plus 0.01 * 5, rightmost
+                -0.9         // A bit below the max
             ]
         );
     }
