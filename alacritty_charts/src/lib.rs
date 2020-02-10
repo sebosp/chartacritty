@@ -1593,6 +1593,8 @@ mod tests {
                 -0.97,  // leftmost plus 0.01 * 3
                 -1.0,   // Top-most value, so the chart height
                 -0.96,  // leftmost plus 0.01 * 4, rightmost
+                -1.0,   // A None value is set
+                -0.95,  // leftmost plus 0.01 * 5, rightmost
                 -0.9    // Top-most value, so the chart height
             ]
         );
