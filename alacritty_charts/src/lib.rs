@@ -918,7 +918,7 @@ impl TimeSeries {
                 // The input epoch has already been inserted in our array
                 let target_idx = self.get_tail_negative_offset_idx(inactive_time);
                 if self.metrics[target_idx].0 != input.0 {
-                    event!(Level::INFO,
+                    event!(Level::ERROR,
                         "upsert: lost synchrony len: {}, last_idx: {}, target_idx: {}, inactive_time: {}, input: {}, target_idx data: {} metrics: {:?}",
                         self.metrics.len(),
                         last_idx,
