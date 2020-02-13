@@ -1087,9 +1087,19 @@ mod tests {
                 (13, Some(3f64))
             ]
         );
+        test.circular_push((11, Some(1f64)));
+        test.circular_push((12, Some(20f64)));
+        assert_eq!(
+            test.metrics,
+            vec![
+                (14, Some(4f64)),
+                (15, Some(5f64)),
+                (12, Some(20f64)),
+                (13, Some(3f64))
+            ]
+        );
         assert_eq!(test.first_idx, 2);
         assert_eq!(test.active_items, 4);
-        // Testing comments in circular_push
     }
 
     #[test]
