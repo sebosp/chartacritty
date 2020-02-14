@@ -1087,8 +1087,51 @@ mod tests {
                 (13, Some(3f64))
             ]
         );
-        test.circular_push((11, Some(1f64)));
-        test.circular_push((12, Some(20f64)));
+    }
+
+    #[test]
+    fn it_upserts() {
+        // 12th should be overwritten.
+        let mut test = TimeSeries::default().with_capacity(4);
+        test.upsert((10, Some(0f64)));
+        test.upsert((11, Some(1f64)));
+        test.upsert((12, None));
+        test.upsert((13, Some(3f64)));
+        assert_eq!(
+            test.metrics,
+            vec![
+                (10, Some(0f64)),
+                (11, Some(1f64)),
+                (12, None),
+                (13, Some(3f64))
+            ]
+        );
+        assert_eq!(test.first_idx, 0);
+        test.upsert((15, Some(5f64)));
+        assert_eq!(
+            test.metrics,
+            vec![(14, None), (11, Some(1f64)), (12, None), (13, Some(3f64))]
+        );
+        assert_eq!(test.first_idx, 1);
+        let input = (11, Some(11f64));
+        let last_idx = test.get_last_idx();
+        assert_eq!(last_idx, 1);
+        let last_input_epoch = test.metrics[last_idx].0;
+        assert_eq!(last_input_epoch, 15);
+        let inactive_time = input.0 as i64 - last_input_epoch as i64;
+        assert_eq!(inactive_time, -4);
+        let target_idx = test.get_tail_negative_offset_idx(inactive_time);
+        assert_eq!(test.metrics.len(), 4);
+        // This is an erroneous calculation because 11th is too old for little range
+        assert_eq!(target_idx, 1);
+        // 11th should have been dropped.
+        assert_eq!(
+            (last_input_epoch as i64 - input.0 as i64) >= test.metrics_capacity as i64,
+            true
+        );
+        test.upsert(input);
+        test.upsert((14, Some(4f64)));
+        test.upsert((12, Some(20f64)));
         assert_eq!(
             test.metrics,
             vec![
