@@ -865,6 +865,7 @@ impl TimeSeries {
 
     /// `get_tail_negative_offset_idx` return a negative offset from the last index in the array
     /// useful when metrics arrive that occurred in the past of the active metrics epoch range
+    /// The value of offset should be negative
     fn get_tail_negative_offset_idx(&self, offset: i64) -> usize {
         ((self.metrics.len() as i64 + self.get_last_idx() as i64 + offset)
             % self.metrics.len() as i64) as usize
@@ -906,14 +907,30 @@ impl TimeSeries {
                 // The input epoch before anything we have registered.
                 // But still within our capacity boundaries
                 let padding_items = (current_min_epoch - input.0) as usize;
-                // The vector is not full, let's shift the items to the right
-                // The array items have not been allocated at this point:
-                self.metrics.insert(0, input);
-                for idx in 1..padding_items {
-                    self.metrics.insert(idx, (input.0 + idx as u64, None));
+                if self.metrics.len() + 1 < self.metrics_capacity {
+                    // The vector is not full, let's shift the items to the right
+                    // The array items have not been allocated at this point:
+                    self.metrics.insert(0, input);
+                    for idx in 1..padding_items {
+                        self.metrics.insert(idx, (input.0 + idx as u64, None));
+                    }
+                    self.active_items += padding_items;
+                    return padding_items;
+                } else {
+                    // The vector is full, write the new epoch at first_idx and then fill the rest
+                    // up to current_min value with None
+                    let previous_min_epoch = self.metrics[self.first_idx].0;
+                    // Find what would be the first index given the current input, in case we need
+                    // to roll back from the end of the array
+                    let target_idx = self.get_tail_negative_offset_idx(inactive_time);
+                    self.active_items += 1;
+                    self.first_idx = target_idx;
+                    self.metrics[target_idx] = input;
+                    for fill_epoch in (input.0 + 1)..previous_min_epoch {
+                        self.circular_push((fill_epoch, None));
+                    }
+                    return (previous_min_epoch - input.0) as usize;
                 }
-                self.active_items += padding_items;
-                return padding_items;
             } else {
                 // The input epoch has already been inserted in our array
                 let target_idx = self.get_tail_negative_offset_idx(inactive_time);
@@ -1091,12 +1108,13 @@ mod tests {
 
     #[test]
     fn it_upserts() {
+        init_log();
         // 12th should be overwritten.
         let mut test = TimeSeries::default().with_capacity(4);
+        test.upsert((13, Some(3f64)));
         test.upsert((10, Some(0f64)));
         test.upsert((11, Some(1f64)));
         test.upsert((12, None));
-        test.upsert((13, Some(3f64)));
         assert_eq!(
             test.metrics,
             vec![
@@ -1110,9 +1128,9 @@ mod tests {
         test.upsert((15, Some(5f64)));
         assert_eq!(
             test.metrics,
-            vec![(14, None), (11, Some(1f64)), (12, None), (13, Some(3f64))]
+            vec![(14, None), (15, Some(5f64)), (12, None), (13, Some(3f64))]
         );
-        assert_eq!(test.first_idx, 1);
+        assert_eq!(test.first_idx, 2);
         let input = (11, Some(11f64));
         let last_idx = test.get_last_idx();
         assert_eq!(last_idx, 1);
@@ -1143,6 +1161,37 @@ mod tests {
         );
         assert_eq!(test.first_idx, 2);
         assert_eq!(test.active_items, 4);
+        test.upsert((20, None));
+        assert_eq!(
+            test.metrics,
+            vec![
+                (20, None),
+                (15, Some(5f64)),
+                (12, Some(20f64)),
+                (13, Some(3f64))
+            ]
+        );
+        test.upsert((20, Some(200f64)));
+        assert_eq!(
+            test.metrics,
+            vec![
+                (20, Some(200f64)),
+                (15, Some(5f64)),
+                (12, Some(20f64)),
+                (13, Some(3f64))
+            ]
+        );
+        test.upsert((19, Some(190f64)));
+        assert_eq!(
+            test.metrics,
+            vec![
+                (20, Some(200f64)),
+                (15, Some(5f64)),
+                (12, Some(20f64)),
+                (19, Some(190f64))
+            ]
+        );
+        assert_eq!(test.as_vec(), vec![(19, Some(190f64)), (20, Some(200f64))]);
     }
 
     #[test]
