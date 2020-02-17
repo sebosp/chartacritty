@@ -1192,6 +1192,18 @@ mod tests {
             ]
         );
         assert_eq!(test.as_vec(), vec![(19, Some(190f64)), (20, Some(200f64))]);
+        test.upsert((21, Some(210f64)));
+        test.upsert((22, Some(220f64)));
+        test.upsert((25, Some(250f64)));
+        assert_eq!(
+            test.metrics,
+            vec![
+                (24, None),
+                (25, Some(250f64)),
+                (22, Some(220f64)),
+                (23, None),
+            ]
+        );
     }
 
     #[test]
