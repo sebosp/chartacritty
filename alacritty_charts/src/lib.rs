@@ -962,7 +962,7 @@ impl TimeSeries {
             for fill_epoch in (max_epoch + 1)..input.0 {
                 self.circular_push((fill_epoch, None));
             }
-            self.circular_push((input.0, input.1));
+            self.circular_push(input);
             return 1;
         }
     }
@@ -1195,15 +1195,7 @@ mod tests {
         test.upsert((21, Some(210f64)));
         test.upsert((22, Some(220f64)));
         test.upsert((25, Some(250f64)));
-        assert_eq!(
-            test.metrics,
-            vec![
-                (24, None),
-                (25, Some(250f64)),
-                (22, Some(220f64)),
-                (23, None),
-            ]
-        );
+        assert_eq!(test.as_vec(), vec![(25, Some(250f64))]);
     }
 
     #[test]
