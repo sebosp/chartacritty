@@ -850,8 +850,7 @@ impl TimeSeries {
             self.metrics[target_idx] = input;
             if self.active_items < self.metrics_capacity {
                 self.active_items += 1;
-            }
-            if self.active_items == self.metrics_capacity {
+            } else if self.active_items == self.metrics_capacity {
                 self.first_idx = (self.first_idx + 1) % self.metrics_capacity;
             }
         }
@@ -875,12 +874,9 @@ impl TimeSeries {
     /// missing entries, may invalidate the buffer if all data is outdated
     /// it returns the number of inserted records
     pub fn upsert(&mut self, input: (u64, Option<f64>)) -> usize {
-        let span = span!(Level::TRACE, "upsert");
-        let _enter = span.enter();
-        event!(Level::DEBUG, "FUT: {:?}", input);
         // maybe better to overwrite the data receiving an array.
         if self.metrics.is_empty() {
-            self.circular_push((input.0, input.1));
+            self.circular_push(input);
             return 1;
         }
         let last_idx = self.get_last_idx();
@@ -897,7 +893,6 @@ impl TimeSeries {
         // input.0: 5
         // inactive_time = -2
         let inactive_time = input.0 as i64 - self.metrics[last_idx].0 as i64;
-        event!(Level::DEBUG, "INACTIVE: {:?}", inactive_time);
         if inactive_time > self.metrics_capacity as i64 {
             // The whole vector should be discarded
             self.first_idx = 0;
@@ -964,14 +959,10 @@ impl TimeSeries {
             // The input epoch is in the future
             let max_epoch = self.metrics[last_idx].0;
             // Fill missing entries with None
-            event!(Level::DEBUG, "PRE: {:?}", self.metrics);
             for fill_epoch in (max_epoch + 1)..input.0 {
                 self.circular_push((fill_epoch, None));
-                event!(Level::DEBUG, "DUR: {:?}", self.metrics);
             }
-            event!(Level::DEBUG, "POST: {:?}", self.metrics);
             self.circular_push(input);
-            event!(Level::DEBUG, "FINAL: {:?}", self.metrics);
             return 1;
         }
     }
@@ -1202,6 +1193,7 @@ mod tests {
         );
         assert_eq!(test.first_idx, 3);
         assert_eq!(test.get_last_idx(), 0);
+        assert_eq!(test.active_items, 2);
         assert_eq!(test.as_vec(), vec![(19, Some(190f64)), (20, Some(200f64))]);
         test.upsert((21, Some(210f64)));
         assert_eq!(
@@ -1213,7 +1205,9 @@ mod tests {
                 (19, Some(190f64))
             ]
         );
+        assert_eq!(test.first_idx, 3);
         assert_eq!(test.get_last_idx(), 1);
+        assert_eq!(test.active_items, 3);
         test.upsert((22, Some(220f64)));
         assert_eq!(
             test.metrics,
@@ -1224,7 +1218,9 @@ mod tests {
                 (19, Some(190f64))
             ]
         );
+        assert_eq!(test.first_idx, 3);
         assert_eq!(test.get_last_idx(), 2);
+        assert_eq!(test.active_items, 4);
         test.upsert((24, Some(240f64)));
         assert_eq!(
             test.metrics,
