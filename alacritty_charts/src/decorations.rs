@@ -489,9 +489,11 @@ impl Decorate for ActiveAlertUnderLineDecoration {
         } else {
             0.0
         };
-        info!(
+        event!(
+            Level::DEBUG,
             "ActiveAlertUnderLineDecoration:update_opengl_vecs: Finished: alpha: {} vecs {:?}",
-            self.alpha, self.opengl_data
+            self.alpha,
+            self.opengl_data
         );
     }
 }
