@@ -4,7 +4,6 @@ members = [
     "alacritty_terminal",
     "alacritty_charts",
     "font",
-    "winpty"
 ]
 
 [profile.release]

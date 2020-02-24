@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Print an error instead of crashing, when startup working directory is invalid
 - Line selection will now expand across wrapped lines
 - The default value for `draw_bold_text_with_bright_colors` is now `false`
+- Mirror OSC query terminators instead of always using BEL
+- Increased Beam, Underline, and Hollow Block cursors' line widths
 
 ### Fixed
 
@@ -42,6 +44,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Resize of bitmap fonts
 - Crash when using bitmap font with `embeddedbitmap` set to `false`
 - Inconsistent fontconfig fallback
+- Handling of OpenType variable fonts
+- Expansion of block-selection on partially selected full-width glyphs
+- Minimize action only works with decorations on macOS
+- Window permanently vanishing after hiding on macOS
+- Modifier key combinations like `Ctrl + Q` not generating characters on macOS
+- Handling of URLs with single quotes
+- Parser reset between DCS escapes
+- Parser stopping at unknown DEC private modes/SGR character attributes
+- Block selection appending duplicate newlines when last column is selected
+- Bitmap fonts being a bit smaller than they should be in some cases
+- Config reload creating alternate screen history instead of updating scrollback
 
 ### Removed
 

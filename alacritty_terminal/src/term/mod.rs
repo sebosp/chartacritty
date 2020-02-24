@@ -285,6 +285,49 @@ impl<'a, C> RenderableCellsIter<'a, C> {
             cursor_style,
         }
     }
+
+    /// Check selection state of a cell.
+    fn is_selected(&self, point: Point) -> bool {
+        let selection = match self.selection {
+            Some(selection) => selection,
+            None => return false,
+        };
+
+        // Point itself is selected
+        if selection.contains(point.col, point.line) {
+            return true;
+        }
+
+        let num_cols = self.grid.num_cols().0;
+        let cell = self.grid[&point];
+
+        // Check if wide char's spacers are selected
+        if cell.flags.contains(Flags::WIDE_CHAR) {
+            let prevprev = point.sub(num_cols, 2);
+            let prev = point.sub(num_cols, 1);
+            let next = point.add(num_cols, 1);
+
+            // Check trailing spacer
+            selection.contains(next.col, next.line)
+                // Check line-wrapping, leading spacer
+                || (self.grid[&prev].flags.contains(Flags::WIDE_CHAR_SPACER)
+                    && !self.grid[&prevprev].flags.contains(Flags::WIDE_CHAR)
+                    && selection.contains(prev.col, prev.line))
+        } else if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+            // Check if spacer's wide char is selected
+            let prev = point.sub(num_cols, 1);
+
+            if self.grid[&prev].flags.contains(Flags::WIDE_CHAR) {
+                // Check previous cell for trailing spacer
+                self.is_selected(prev)
+            } else {
+                // Check next cell for line-wrapping, leading spacer
+                self.is_selected(point.add(num_cols, 1))
+            }
+        } else {
+            false
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -418,11 +461,7 @@ impl<'a, C> Iterator for RenderableCellsIter<'a, C> {
     fn next(&mut self) -> Option<Self::Item> {
         loop {
             if self.cursor_offset == self.inner.offset() && self.inner.column() == self.cursor.col {
-                let selected = self
-                    .selection
-                    .as_ref()
-                    .map(|range| range.contains(self.cursor.col, self.cursor.line))
-                    .unwrap_or(false);
+                let selected = self.is_selected(Point::new(self.cursor.line, self.cursor.col));
 
                 // Handle cursor
                 if let Some(cursor_key) = self.cursor_key.take() {
@@ -462,11 +501,7 @@ impl<'a, C> Iterator for RenderableCellsIter<'a, C> {
             } else {
                 let cell = self.inner.next()?;
 
-                let selected = self
-                    .selection
-                    .as_ref()
-                    .map(|range| range.contains(cell.column, cell.line))
-                    .unwrap_or(false);
+                let selected = self.is_selected(Point::new(cell.line, cell.column));
 
                 if !cell.is_empty() || selected {
                     return Some(RenderableCell::new(self.config, self.colors, cell, selected));
@@ -969,7 +1004,12 @@ impl<T> Term<T> {
         }
         self.default_cursor_style = config.cursor.style;
         self.dynamic_title = config.dynamic_title();
-        self.grid.update_history(config.scrolling.history() as usize);
+
+        if self.alt {
+            self.alt_grid.update_history(config.scrolling.history() as usize);
+        } else {
+            self.grid.update_history(config.scrolling.history() as usize);
+        }
     }
 
     /// Convert the active selection to a String.
@@ -981,9 +1021,14 @@ impl<T> Term<T> {
 
         if is_block {
             for line in (end.line + 1..=start.line).rev() {
-                res += &(self.line_to_string(line, start.col..end.col) + "\n");
+                res += &self.line_to_string(line, start.col..end.col, start.col.0 != 0);
+
+                // If the last column is included, newline is appended automatically
+                if end.col != self.cols() - 1 {
+                    res += "\n";
+                }
             }
-            res += &self.line_to_string(end.line, start.col..end.col);
+            res += &self.line_to_string(end.line, start.col..end.col, true);
         } else {
             res = self.bounds_to_string(start, end);
         }
@@ -999,23 +1044,31 @@ impl<T> Term<T> {
             let start_col = if line == start.line { start.col } else { Column(0) };
             let end_col = if line == end.line { end.col } else { self.cols() - 1 };
 
-            res += &self.line_to_string(line, start_col..end_col);
+            res += &self.line_to_string(line, start_col..end_col, line == end.line);
         }
 
         res
     }
 
     /// Convert a single line in the grid to a String.
-    fn line_to_string(&self, line: usize, cols: Range<Column>) -> String {
+    fn line_to_string(
+        &self,
+        line: usize,
+        mut cols: Range<Column>,
+        include_wrapped_wide: bool,
+    ) -> String {
         let mut text = String::new();
 
         let grid_line = &self.grid[line];
-        let line_length = grid_line.line_length();
-        let line_end = min(line_length, cols.end + 1);
+        let line_length = min(grid_line.line_length(), cols.end + 1);
+
+        // Include wide char when trailing spacer is selected
+        if grid_line[cols.start].flags.contains(Flags::WIDE_CHAR_SPACER) {
+            cols.start -= 1;
+        }
 
         let mut tab_mode = false;
-
-        for col in IndexRange::from(cols.start..line_end) {
+        for col in IndexRange::from(cols.start..line_length) {
             let cell = grid_line[col];
 
             // Skip over cells until next tab-stop once a tab was found
@@ -1043,10 +1096,20 @@ impl<T> Term<T> {
         }
 
         if cols.end >= self.cols() - 1
-            && (line_end == Column(0)
-                || !self.grid[line][line_end - 1].flags.contains(Flags::WRAPLINE))
+            && (line_length.0 == 0
+                || !self.grid[line][line_length - 1].flags.contains(Flags::WRAPLINE))
         {
             text.push('\n');
+        }
+
+        // If wide char is not part of the selection, but leading spacer is, include it
+        if line_length == self.grid.num_cols()
+            && line_length.0 >= 2
+            && grid_line[line_length - 1].flags.contains(Flags::WIDE_CHAR_SPACER)
+            && !grid_line[line_length - 2].flags.contains(Flags::WIDE_CHAR)
+            && include_wrapped_wide
+        {
+            text.push(self.grid[line - 1][Column(0)].c);
         }
 
         text
@@ -1840,12 +1903,18 @@ impl<T: EventListener> Handler for Term<T> {
 
     /// Write a foreground/background color escape sequence with the current color
     #[inline]
-    fn dynamic_color_sequence<W: io::Write>(&mut self, writer: &mut W, code: u8, index: usize) {
+    fn dynamic_color_sequence<W: io::Write>(
+        &mut self,
+        writer: &mut W,
+        code: u8,
+        index: usize,
+        terminator: &str,
+    ) {
         trace!("Writing escape sequence for dynamic color code {}: color[{}]", code, index);
         let color = self.colors[index];
         let response = format!(
-            "\x1b]{};rgb:{1:02x}{1:02x}/{2:02x}{2:02x}/{3:02x}{3:02x}\x07",
-            code, color.r, color.g, color.b
+            "\x1b]{};rgb:{1:02x}{1:02x}/{2:02x}{2:02x}/{3:02x}{3:02x}{4}",
+            code, color.r, color.g, color.b, terminator
         );
         let _ = writer.write_all(response.as_bytes());
     }
@@ -1876,7 +1945,7 @@ impl<T: EventListener> Handler for Term<T> {
 
     /// Write clipboard data to child.
     #[inline]
-    fn write_clipboard<W: io::Write>(&mut self, clipboard: u8, writer: &mut W) {
+    fn write_clipboard<W: io::Write>(&mut self, clipboard: u8, writer: &mut W, terminator: &str) {
         let clipboard_type = match clipboard {
             b'c' => ClipboardType::Clipboard,
             b'p' | b's' => ClipboardType::Selection,
@@ -1885,7 +1954,7 @@ impl<T: EventListener> Handler for Term<T> {
 
         let text = self.clipboard.load(clipboard_type);
         let base64 = base64::encode(&text);
-        let escape = format!("\x1b]52;{};{}\x07", clipboard as char, base64);
+        let escape = format!("\x1b]52;{};{}{}", clipboard as char, base64, terminator);
         let _ = writer.write_all(escape.as_bytes());
     }
 
@@ -2222,8 +2291,6 @@ impl IndexMut<Column> for TabStops {
 #[cfg(test)]
 mod tests {
     use std::mem;
-
-    use serde_json;
 
     use crate::ansi::{self, CharsetIndex, Handler, StandardCharset};
     use crate::clipboard::Clipboard;

@@ -12,7 +12,7 @@ use std::time::Instant;
 
 use glutin::dpi::PhysicalSize;
 use glutin::event::{ElementState, Event as GlutinEvent, ModifiersState, MouseButton, WindowEvent};
-use glutin::event_loop::{ControlFlow, EventLoop, EventLoopProxy};
+use glutin::event_loop::{ControlFlow, EventLoop, EventLoopProxy, EventLoopWindowTarget};
 use glutin::platform::desktop::EventLoopExtDesktop;
 use log::{debug, info, warn};
 use serde_json as json;
@@ -70,6 +70,7 @@ pub struct ActionContext<'a, N, T> {
     pub message_buffer: &'a mut MessageBuffer,
     pub display_update_pending: &'a mut DisplayUpdate,
     pub config: &'a mut Config,
+    pub event_loop: &'a EventLoopWindowTarget<Event>,
     font_size: &'a mut Size,
 }
 
@@ -252,6 +253,10 @@ impl<'a, N: Notify + 'a, T: EventListener> input::ActionContext<T> for ActionCon
     fn config(&self) -> &Config {
         self.config
     }
+
+    fn event_loop(&self) -> &EventLoopWindowTarget<Event> {
+        self.event_loop
+    }
 }
 
 pub enum ClickState {
@@ -355,7 +360,7 @@ impl<N: Notify + OnResize> Processor<N> {
     {
         let mut event_queue = Vec::new();
 
-        event_loop.run_return(|event, _event_loop, control_flow| {
+        event_loop.run_return(|event, event_loop, control_flow| {
             if self.config.debug.print_events {
                 info!("glutin event: {:?}", event);
             }
@@ -416,6 +421,7 @@ impl<N: Notify + OnResize> Processor<N> {
                 window: &mut self.display.window,
                 font_size: &mut self.font_size,
                 config: &mut self.config,
+                event_loop,
             };
             let mut processor =
                 input::Processor::new(context, &self.display.urls, &self.display.highlighted_url);
