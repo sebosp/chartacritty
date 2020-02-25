@@ -902,6 +902,8 @@ impl TimeSeries {
         } else if inactive_time < 0 {
             // We have a metric for an epoch in the past.
             let current_min_epoch = self.metrics[self.first_idx].0;
+            // input 98
+            // [ 100 ] [ ] [ ] [ ]
             if current_min_epoch > input.0 {
                 // The input epoch before anything we have registered.
                 // But still within our capacity boundaries
@@ -1233,6 +1235,20 @@ mod tests {
         );
         assert_eq!(test.first_idx, 1);
         assert_eq!(test.get_last_idx(), 0);
+        test.upsert((84, Some(840f64)));
+        test.upsert((81, Some(810f64)));
+        test.upsert((82, Some(820f64)));
+        assert_eq!(
+            test.metrics,
+            vec![
+                (84, Some(840f64)),
+                (81, Some(810f64)),
+                (82, Some(820f64)),
+                (83, None),
+            ]
+        );
+        assert_eq!(test.first_idx, 0);
+        assert_eq!(test.active_items, 4);
     }
 
     #[test]
