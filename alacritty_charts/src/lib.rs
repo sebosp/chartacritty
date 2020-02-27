@@ -874,7 +874,9 @@ impl TimeSeries {
     /// missing entries, may invalidate the buffer if all data is outdated
     /// it returns the number of inserted records
     pub fn upsert(&mut self, input: (u64, Option<f64>)) -> usize {
-        // maybe better to overwrite the data receiving an array.
+        // maybe accept a batch to overwrite the data receiving an array.
+        let span = span!(Level::TRACE, "upsert");
+        let _enter = span.enter();
         if self.metrics.is_empty() {
             self.circular_push(input);
             return 1;
@@ -908,6 +910,8 @@ impl TimeSeries {
                 // The input epoch before anything we have registered.
                 // But still within our capacity boundaries
                 let padding_items = (current_min_epoch - input.0) as usize;
+                // XXX: This is wrong, we should add as many padding_items as possible without
+                // breaking the metrics_capacity.
                 if self.metrics.len() + 1 < self.metrics_capacity {
                     // The vector is not full, let's shift the items to the right
                     // The array items have not been allocated at this point:
@@ -918,18 +922,21 @@ impl TimeSeries {
                     self.active_items += padding_items;
                     return padding_items;
                 } else {
+                    event!(Level::TRACE, "vector full");
                     // The vector is full, write the new epoch at first_idx and then fill the rest
                     // up to current_min value with None
                     let previous_min_epoch = self.metrics[self.first_idx].0;
                     // Find what would be the first index given the current input, in case we need
                     // to roll back from the end of the array
                     let target_idx = self.get_tail_negative_offset_idx(inactive_time);
-                    self.active_items += 1;
                     self.first_idx = target_idx;
                     self.metrics[target_idx] = input;
                     for fill_epoch in (input.0 + 1)..previous_min_epoch {
                         self.circular_push((fill_epoch, None));
                     }
+                    // Because we have inserted a value manually, we still need to increment the
+                    // active_items
+                    self.active_items += 1;
                     return (previous_min_epoch - input.0) as usize;
                 }
             } else {
@@ -1110,7 +1117,6 @@ mod tests {
 
     #[test]
     fn it_upserts() {
-        init_log();
         // 12th should be overwritten.
         let mut test = TimeSeries::default().with_capacity(4);
         test.upsert((13, Some(3f64)));
@@ -1247,7 +1253,7 @@ mod tests {
                 (83, None),
             ]
         );
-        assert_eq!(test.first_idx, 0);
+        assert_eq!(test.first_idx, 1);
         assert_eq!(test.active_items, 4);
     }
 
