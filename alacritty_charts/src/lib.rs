@@ -877,12 +877,21 @@ impl TimeSeries {
         // maybe accept a batch to overwrite the data receiving an array.
         let span = span!(Level::TRACE, "upsert");
         let _enter = span.enter();
+        event!(
+            Level::TRACE,
+            "upsert: len: {}, first_idx: {}, input: {:?}, metrics: {:?}",
+            self.metrics.len(),
+            self.first_idx,
+            input,
+            self.metrics
+        );
         if self.metrics.is_empty() {
             self.circular_push(input);
             return 1;
         }
         let last_idx = self.get_last_idx();
         if (self.metrics[last_idx].0 as i64 - input.0 as i64) >= self.metrics_capacity as i64 {
+            event!(Level::TRACE, "metric too old");
             // The timestamp is too old and should be discarded.
             // This means we cannot scroll back in time.
             // i.e. if the date of the computer needs to go back in time
@@ -896,23 +905,27 @@ impl TimeSeries {
         // inactive_time = -2
         let inactive_time = input.0 as i64 - self.metrics[last_idx].0 as i64;
         if inactive_time > self.metrics_capacity as i64 {
+            event!(Level::TRACE, "whole vector discarded");
             // The whole vector should be discarded
             self.first_idx = 0;
             self.metrics[0] = input;
             self.active_items = 1;
             return 1;
         } else if inactive_time < 0 {
+            event!(Level::TRACE, "metric in the past");
             // We have a metric for an epoch in the past.
             let current_min_epoch = self.metrics[self.first_idx].0;
             // input 98
             // [ 100 ] [ ] [ ] [ ]
             if current_min_epoch > input.0 {
+                event!(Level::TRACE, "metric before anything registered");
                 // The input epoch before anything we have registered.
                 // But still within our capacity boundaries
                 let padding_items = (current_min_epoch - input.0) as usize;
                 // XXX: This is wrong, we should add as many padding_items as possible without
                 // breaking the metrics_capacity.
                 if self.metrics.len() + 1 < self.metrics_capacity {
+                    event!(Level::TRACE, "vector not full");
                     // The vector is not full, let's shift the items to the right
                     // The array items have not been allocated at this point:
                     self.metrics.insert(0, input);
@@ -926,20 +939,34 @@ impl TimeSeries {
                     // The vector is full, write the new epoch at first_idx and then fill the rest
                     // up to current_min value with None
                     let previous_min_epoch = self.metrics[self.first_idx].0;
+                    event!(Level::TRACE, "previous min epoch: {}", previous_min_epoch);
                     // Find what would be the first index given the current input, in case we need
                     // to roll back from the end of the array
                     let target_idx = self.get_tail_negative_offset_idx(inactive_time);
+                    event!(Level::TRACE, "target_idx: {}", target_idx);
                     self.first_idx = target_idx;
                     self.metrics[target_idx] = input;
+                    event!(Level::TRACE, "PRE: metrics: {:?}", self.metrics);
                     for fill_epoch in (input.0 + 1)..previous_min_epoch {
+                        event!(
+                            Level::TRACE,
+                            "DU0: fill_epoch: {}, metrics: {:?}",
+                            fill_epoch,
+                            self.metrics
+                        );
                         self.circular_push((fill_epoch, None));
+                        event!(
+                            Level::TRACE,
+                            "DU1: fill_epoch: {}, metrics: {:?}",
+                            fill_epoch,
+                            self.metrics
+                        );
                     }
-                    // Because we have inserted a value manually, we still need to increment the
-                    // active_items
                     self.active_items += 1;
                     return (previous_min_epoch - input.0) as usize;
                 }
             } else {
+                event!(Level::TRACE, "epoch should exist in our vector");
                 // The input epoch has already been inserted in our array
                 let target_idx = self.get_tail_negative_offset_idx(inactive_time);
                 if self.metrics[target_idx].0 != input.0 {
@@ -960,11 +987,13 @@ impl TimeSeries {
                 return 0;
             }
         } else if inactive_time == 0 {
+            event!(Level::TRACE, "current epoch");
             // We have a metric for the last indexed epoch
             self.metrics[last_idx].1 =
                 self.resolve_metric_collision(self.metrics[last_idx].1, input.1);
             return 0;
         } else {
+            event!(Level::TRACE, "epoch is in the future");
             // The input epoch is in the future
             let max_epoch = self.metrics[last_idx].0;
             // Fill missing entries with None
@@ -1255,6 +1284,17 @@ mod tests {
         );
         assert_eq!(test.first_idx, 1);
         assert_eq!(test.active_items, 4);
+        // Let's try with broader vectors
+        let mut test = TimeSeries::default().with_capacity(10);
+        test.upsert((1, Some(1f64)));
+        test.upsert((2, Some(2f64)));
+        test.upsert((3, Some(3f64)));
+        test.upsert((4, Some(4f64)));
+        test.upsert((5, Some(5f64)));
+        test.upsert((6, Some(6f64)));
+        test.upsert((7, Some(7f64)));
+        test.upsert((8, Some(8f64)));
+        test.upsert((9, Some(9f64)));
     }
 
     #[test]
