@@ -1295,6 +1295,78 @@ mod tests {
         test.upsert((7, Some(7f64)));
         test.upsert((8, Some(8f64)));
         test.upsert((9, Some(9f64)));
+        test.upsert((10, Some(10f64)));
+        assert_eq!(test.first_idx, 0);
+        assert_eq!(test.get_last_idx(), 9);
+        assert_eq!(
+            test.metrics,
+            vec![
+                (1, Some(1f64)),
+                (2, Some(2f64)),
+                (3, Some(3f64)),
+                (4, Some(4f64)),
+                (5, Some(5f64)),
+                (6, Some(6f64)),
+                (7, Some(7f64)),
+                (8, Some(8f64)),
+                (9, Some(9f64)),
+                (10, Some(10f64)),
+            ]
+        );
+        test.upsert((11, Some(11f64)));
+        assert_eq!(test.first_idx, 1);
+        assert_eq!(test.get_last_idx(), 0);
+        assert_eq!(
+            test.metrics,
+            vec![
+                (11, Some(11f64)),
+                (2, Some(2f64)),
+                (3, Some(3f64)),
+                (4, Some(4f64)),
+                (5, Some(5f64)),
+                (6, Some(6f64)),
+                (7, Some(7f64)),
+                (8, Some(8f64)),
+                (9, Some(9f64)),
+                (10, Some(10f64)),
+            ]
+        );
+        test.upsert((84, Some(840f64)));
+        test.upsert((80, Some(800f64)));
+        assert_eq!(
+            test.metrics,
+            vec![
+                (84, Some(840f64)),
+                (2, Some(2f64)),
+                (3, Some(3f64)),
+                (4, Some(4f64)),
+                (5, Some(5f64)),
+                (6, Some(6f64)),
+                (80, Some(800f64)),
+                (81, None),
+                (82, None),
+                (83, None),
+            ]
+        );
+        test.upsert((79, Some(790f64)));
+        test.upsert((81, Some(810f64)));
+        test.upsert((85, Some(850f64)));
+        test.upsert((81, Some(811f64)));
+        assert_eq!(
+            test.metrics,
+            vec![
+                (84, Some(840f64)),
+                (85, Some(850f64)),
+                (3, Some(3f64)),
+                (4, Some(4f64)),
+                (5, Some(5f64)),
+                (79, Some(790f64)),
+                (80, Some(800f64)),
+                (81, Some(811f64)),
+                (82, None),
+                (83, None),
+            ]
+        );
     }
 
     #[test]
