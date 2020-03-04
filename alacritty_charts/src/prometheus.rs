@@ -1449,15 +1449,13 @@ mod tests {
             }
           }"#,
         );
-        // This should result in adding 15 more items
         let res1_json = parse_json(&String::from("http://test"), &test1_json);
         assert_eq!(res1_json.is_some(), true);
         let res1_load = test.load_prometheus_response(res1_json.unwrap());
-        // 5 items should have been loaded, 5 already existed.
         assert_eq!(res1_load, Ok(2usize));
         assert_eq!(test.series.active_items, 3usize);
-        assert_eq!(test.series.metrics[0], (1583092654, None));
-        assert_eq!(test.series.metrics[299], (1583092653, None));
+        assert_eq!(test.series.metrics[0], (1583092654, Some(5.0283203125)));
+        assert_eq!(test.series.metrics[299], (1583092653, Some(5.0283203125)));
         assert_eq!(test.series.metrics[298], (1583092652, Some(5.0283203125)));
         assert_eq!(test.series.first_idx, 298usize);
         assert_eq!(test.series.active_items, 3usize);
