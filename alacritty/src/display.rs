@@ -35,7 +35,6 @@ use parking_lot::MutexGuard;
 
 use font::{self, Rasterize};
 
-use alacritty_charts::decorations::Decorate;
 use alacritty_terminal::config::{Font, StartupMode};
 use alacritty_terminal::event::{Event, OnResize};
 use alacritty_terminal::index::Line;

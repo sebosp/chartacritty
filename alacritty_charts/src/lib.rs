@@ -841,7 +841,7 @@ impl TimeSeries {
     }
 
     /// `circular_push` adds an item to the circular buffer
-    pub fn circular_push(&mut self, input: (u64, Option<f64>)) {
+    fn circular_push(&mut self, input: (u64, Option<f64>)) {
         if self.metrics.len() < self.metrics_capacity {
             self.metrics.push(input);
             self.active_items += 1;
@@ -850,30 +850,48 @@ impl TimeSeries {
             self.metrics[target_idx] = input;
             if self.active_items < self.metrics_capacity {
                 self.active_items += 1;
-            }
-            if self.active_items == self.metrics_capacity {
+            } else if self.active_items == self.metrics_capacity {
                 self.first_idx = (self.first_idx + 1) % self.metrics_capacity;
             }
         }
         self.stats.is_dirty = true;
     }
 
-    /// `get_last_filled_idx` returns the last index that was used in the circular buffer
-    fn get_last_filled_idx(&self) -> usize {
+    /// `get_last_idx` returns the last index that was used in the circular buffer
+    fn get_last_idx(&self) -> usize {
         (self.first_idx + self.active_items - 1) % self.metrics.len()
+    }
+
+    /// `get_tail_negative_offset_idx` return a negative offset from the last index in the array
+    /// useful when metrics arrive that occurred in the past of the active metrics epoch range
+    /// The value of offset should be negative
+    fn get_tail_negative_offset_idx(&self, offset: i64) -> usize {
+        ((self.metrics.len() as i64 + self.get_last_idx() as i64 + offset)
+            % self.metrics.len() as i64) as usize
     }
 
     /// `upsert` Adds values to the circular buffer adding empty entries for
     /// missing entries, may invalidate the buffer if all data is outdated
     /// it returns the number of inserted records
     pub fn upsert(&mut self, input: (u64, Option<f64>)) -> usize {
-        // maybe better to overwrite the data receiving an array.
+        // maybe accept a batch to overwrite the data receiving an array.
+        let span = span!(Level::TRACE, "upsert");
+        let _enter = span.enter();
+        event!(
+            Level::TRACE,
+            "upsert: len: {}, first_idx: {}, input: {:?}, metrics: {:?}",
+            self.metrics.len(),
+            self.first_idx,
+            input,
+            self.metrics
+        );
         if self.metrics.is_empty() {
-            self.circular_push((input.0, input.1));
+            self.circular_push(input);
             return 1;
         }
-        let last_idx = self.get_last_filled_idx();
+        let last_idx = self.get_last_idx();
         if (self.metrics[last_idx].0 as i64 - input.0 as i64) >= self.metrics_capacity as i64 {
+            event!(Level::TRACE, "metric too old");
             // The timestamp is too old and should be discarded.
             // This means we cannot scroll back in time.
             // i.e. if the date of the computer needs to go back in time
@@ -887,39 +905,81 @@ impl TimeSeries {
         // inactive_time = -2
         let inactive_time = input.0 as i64 - self.metrics[last_idx].0 as i64;
         if inactive_time > self.metrics_capacity as i64 {
+            event!(Level::TRACE, "whole vector discarded");
             // The whole vector should be discarded
             self.first_idx = 0;
             self.metrics[0] = input;
             self.active_items = 1;
             return 1;
         } else if inactive_time < 0 {
+            event!(Level::TRACE, "metric in the past");
             // We have a metric for an epoch in the past.
             let current_min_epoch = self.metrics[self.first_idx].0;
+            // input 98
+            // [ 100 ] [ ] [ ] [ ]
             if current_min_epoch > input.0 {
+                event!(Level::TRACE, "metric before anything registered");
                 // The input epoch before anything we have registered.
                 // But still within our capacity boundaries
                 let padding_items = (current_min_epoch - input.0) as usize;
-                // The vector is not full, let's shift the items to the right
-                // The array items have not been allocated at this point:
-                self.metrics.insert(0, input);
-                for idx in 1..padding_items {
-                    self.metrics.insert(idx, (input.0 + idx as u64, None));
+                // XXX: This is wrong, we should add as many padding_items as possible without
+                // breaking the metrics_capacity.
+                if self.metrics.len() + 1 < self.metrics_capacity {
+                    event!(Level::TRACE, "vector not full");
+                    // The vector is not full, let's shift the items to the right
+                    // The array items have not been allocated at this point:
+                    self.metrics.insert(0, input);
+                    for idx in 1..padding_items {
+                        self.metrics.insert(idx, (input.0 + idx as u64, None));
+                    }
+                    self.active_items += padding_items;
+                    return padding_items;
+                } else {
+                    event!(Level::TRACE, "vector full");
+                    // The vector is full, write the new epoch at first_idx and then fill the rest
+                    // up to current_min value with None
+                    let previous_min_epoch = self.metrics[self.first_idx].0;
+                    event!(Level::TRACE, "previous min epoch: {}", previous_min_epoch);
+                    // Find what would be the first index given the current input, in case we need
+                    // to roll back from the end of the array
+                    let target_idx = self.get_tail_negative_offset_idx(inactive_time);
+                    event!(Level::TRACE, "target_idx: {}", target_idx);
+                    self.first_idx = target_idx;
+                    self.metrics[target_idx] = input;
+                    event!(Level::TRACE, "PRE: metrics: {:?}", self.metrics);
+                    for fill_epoch in (input.0 + 1)..previous_min_epoch {
+                        event!(
+                            Level::TRACE,
+                            "DU0: fill_epoch: {}, metrics: {:?}",
+                            fill_epoch,
+                            self.metrics
+                        );
+                        self.circular_push((fill_epoch, None));
+                        event!(
+                            Level::TRACE,
+                            "DU1: fill_epoch: {}, metrics: {:?}",
+                            fill_epoch,
+                            self.metrics
+                        );
+                    }
+                    self.active_items += 1;
+                    return (previous_min_epoch - input.0) as usize;
                 }
-                self.active_items += padding_items;
-                return padding_items;
             } else {
+                event!(Level::TRACE, "epoch should exist in our vector");
                 // The input epoch has already been inserted in our array
-                let target_idx = ((self.metrics.len() as i64 + last_idx as i64 + inactive_time)
-                    % self.metrics.len() as i64) as usize;
+                let target_idx = self.get_tail_negative_offset_idx(inactive_time);
                 if self.metrics[target_idx].0 != input.0 {
-                    error!(
-                        "upsert: lost synchrony len: {}, last_idx: {}, target_idx: {}, inactive_time: {}, input: {}, target_idx data: {}",
+                    event!(Level::ERROR,
+                        "upsert: lost synchrony len: {}, first_idx: {}, last_idx: {}, target_idx: {}, inactive_time: {}, input: {}, target_idx data: {} metrics: {:?}",
                         self.metrics.len(),
+                        self.first_idx,
                         last_idx,
                         target_idx,
                         inactive_time,
                         input.0,
-                        self.metrics[target_idx].0
+                        self.metrics[target_idx].0,
+                        self.metrics
                     );
                 }
                 self.metrics[target_idx].1 =
@@ -927,25 +987,27 @@ impl TimeSeries {
                 return 0;
             }
         } else if inactive_time == 0 {
+            event!(Level::TRACE, "current epoch");
             // We have a metric for the last indexed epoch
             self.metrics[last_idx].1 =
                 self.resolve_metric_collision(self.metrics[last_idx].1, input.1);
             return 0;
         } else {
+            event!(Level::TRACE, "epoch is in the future");
             // The input epoch is in the future
             let max_epoch = self.metrics[last_idx].0;
             // Fill missing entries with None
             for fill_epoch in (max_epoch + 1)..input.0 {
                 self.circular_push((fill_epoch, None));
             }
-            self.circular_push((input.0, input.1));
+            self.circular_push(input);
             return 1;
         }
     }
 
     /// `get_last_filled` Returns the last filled entry in the circular buffer
     pub fn get_last_filled(&self) -> f64 {
-        let mut idx = self.get_last_filled_idx();
+        let mut idx = self.get_last_idx();
         loop {
             if let Some(res) = self.metrics[idx].1 {
                 return res;
@@ -1080,35 +1142,296 @@ mod tests {
                 (13, Some(3f64))
             ]
         );
-        assert_eq!(test.first_idx, 2);
-        assert_eq!(test.active_items, 4);
-        // Testing comments in circular_push
     }
 
     #[test]
-    fn it_calculates_last_filled_idx() {
+    fn it_upserts() {
+        // 12th should be overwritten.
+        let mut test = TimeSeries::default().with_capacity(4);
+        test.upsert((13, Some(3f64)));
+        test.upsert((10, Some(0f64)));
+        test.upsert((11, Some(1f64)));
+        test.upsert((12, None));
+        assert_eq!(
+            test.metrics,
+            vec![
+                (10, Some(0f64)),
+                (11, Some(1f64)),
+                (12, None),
+                (13, Some(3f64))
+            ]
+        );
+        assert_eq!(test.first_idx, 0);
+        test.upsert((15, Some(5f64)));
+        assert_eq!(
+            test.metrics,
+            vec![(14, None), (15, Some(5f64)), (12, None), (13, Some(3f64))]
+        );
+        assert_eq!(test.first_idx, 2);
+        let input = (11, Some(11f64));
+        let last_idx = test.get_last_idx();
+        assert_eq!(last_idx, 1);
+        let last_input_epoch = test.metrics[last_idx].0;
+        assert_eq!(last_input_epoch, 15);
+        let inactive_time = input.0 as i64 - last_input_epoch as i64;
+        assert_eq!(inactive_time, -4);
+        let target_idx = test.get_tail_negative_offset_idx(inactive_time);
+        assert_eq!(test.metrics.len(), 4);
+        // This is an erroneous calculation because 11th is too old for little range
+        assert_eq!(target_idx, 1);
+        // 11th should have been dropped.
+        assert_eq!(
+            (last_input_epoch as i64 - input.0 as i64) >= test.metrics_capacity as i64,
+            true
+        );
+        test.upsert(input);
+        test.upsert((14, Some(4f64)));
+        test.upsert((12, Some(20f64)));
+        assert_eq!(
+            test.metrics,
+            vec![
+                (14, Some(4f64)),
+                (15, Some(5f64)),
+                (12, Some(20f64)),
+                (13, Some(3f64))
+            ]
+        );
+        assert_eq!(test.first_idx, 2);
+        assert_eq!(test.active_items, 4);
+        test.upsert((20, None));
+        assert_eq!(
+            test.metrics,
+            vec![
+                (20, None),
+                (15, Some(5f64)),
+                (12, Some(20f64)),
+                (13, Some(3f64))
+            ]
+        );
+        test.upsert((20, Some(200f64)));
+        assert_eq!(
+            test.metrics,
+            vec![
+                (20, Some(200f64)),
+                (15, Some(5f64)),
+                (12, Some(20f64)),
+                (13, Some(3f64))
+            ]
+        );
+        test.upsert((19, Some(190f64)));
+        assert_eq!(
+            test.metrics,
+            vec![
+                (20, Some(200f64)),
+                (15, Some(5f64)),
+                (12, Some(20f64)),
+                (19, Some(190f64))
+            ]
+        );
+        assert_eq!(test.first_idx, 3);
+        assert_eq!(test.get_last_idx(), 0);
+        assert_eq!(test.active_items, 2);
+        assert_eq!(test.as_vec(), vec![(19, Some(190f64)), (20, Some(200f64))]);
+        test.upsert((21, Some(210f64)));
+        assert_eq!(
+            test.metrics,
+            vec![
+                (20, Some(200f64)),
+                (21, Some(210f64)),
+                (12, Some(20f64)),
+                (19, Some(190f64))
+            ]
+        );
+        assert_eq!(test.first_idx, 3);
+        assert_eq!(test.get_last_idx(), 1);
+        assert_eq!(test.active_items, 3);
+        test.upsert((22, Some(220f64)));
+        assert_eq!(
+            test.metrics,
+            vec![
+                (20, Some(200f64)),
+                (21, Some(210f64)),
+                (22, Some(220f64)),
+                (19, Some(190f64))
+            ]
+        );
+        assert_eq!(test.first_idx, 3);
+        assert_eq!(test.get_last_idx(), 2);
+        assert_eq!(test.active_items, 4);
+        test.upsert((24, Some(240f64)));
+        assert_eq!(
+            test.metrics,
+            vec![
+                (24, Some(240f64)),
+                (21, Some(210f64)),
+                (22, Some(220f64)),
+                (23, None),
+            ]
+        );
+        assert_eq!(test.first_idx, 1);
+        assert_eq!(test.get_last_idx(), 0);
+        test.upsert((84, Some(840f64)));
+        test.upsert((81, Some(810f64)));
+        test.upsert((82, Some(820f64)));
+        assert_eq!(
+            test.metrics,
+            vec![
+                (84, Some(840f64)),
+                (81, Some(810f64)),
+                (82, Some(820f64)),
+                (83, None),
+            ]
+        );
+        assert_eq!(test.first_idx, 1);
+        assert_eq!(test.active_items, 4);
+        // Let's try with broader vectors
+        let mut test = TimeSeries::default().with_capacity(10);
+        test.upsert((1, Some(1f64)));
+        test.upsert((2, Some(2f64)));
+        test.upsert((3, Some(3f64)));
+        test.upsert((4, Some(4f64)));
+        test.upsert((5, Some(5f64)));
+        test.upsert((6, Some(6f64)));
+        test.upsert((7, Some(7f64)));
+        test.upsert((8, Some(8f64)));
+        test.upsert((9, Some(9f64)));
+        test.upsert((10, Some(10f64)));
+        assert_eq!(test.first_idx, 0);
+        assert_eq!(test.get_last_idx(), 9);
+        assert_eq!(
+            test.metrics,
+            vec![
+                (1, Some(1f64)),
+                (2, Some(2f64)),
+                (3, Some(3f64)),
+                (4, Some(4f64)),
+                (5, Some(5f64)),
+                (6, Some(6f64)),
+                (7, Some(7f64)),
+                (8, Some(8f64)),
+                (9, Some(9f64)),
+                (10, Some(10f64)),
+            ]
+        );
+        test.upsert((11, Some(11f64)));
+        assert_eq!(test.first_idx, 1);
+        assert_eq!(test.get_last_idx(), 0);
+        assert_eq!(
+            test.metrics,
+            vec![
+                (11, Some(11f64)),
+                (2, Some(2f64)),
+                (3, Some(3f64)),
+                (4, Some(4f64)),
+                (5, Some(5f64)),
+                (6, Some(6f64)),
+                (7, Some(7f64)),
+                (8, Some(8f64)),
+                (9, Some(9f64)),
+                (10, Some(10f64)),
+            ]
+        );
+        test.upsert((84, Some(840f64)));
+        test.upsert((80, Some(800f64)));
+        assert_eq!(
+            test.metrics,
+            vec![
+                (84, Some(840f64)),
+                (2, Some(2f64)),
+                (3, Some(3f64)),
+                (4, Some(4f64)),
+                (5, Some(5f64)),
+                (6, Some(6f64)),
+                (80, Some(800f64)),
+                (81, None),
+                (82, None),
+                (83, None),
+            ]
+        );
+        test.upsert((79, Some(790f64)));
+        test.upsert((81, Some(810f64)));
+        test.upsert((85, Some(850f64)));
+        test.upsert((81, Some(811f64)));
+        assert_eq!(
+            test.metrics,
+            vec![
+                (84, Some(840f64)),
+                (85, Some(850f64)),
+                (3, Some(3f64)),
+                (4, Some(4f64)),
+                (5, Some(5f64)),
+                (79, Some(790f64)),
+                (80, Some(800f64)),
+                (81, Some(811f64)),
+                (82, None),
+                (83, None),
+            ]
+        );
+    }
+
+    #[test]
+    fn it_uses_last_idx() {
         let mut test = TimeSeries::default().with_capacity(5);
-        test.circular_push((0, Some(0f64)));
-        assert_eq!(test.get_last_filled_idx(), 0);
-        test.circular_push((1, Some(1f64)));
-        assert_eq!(test.get_last_filled_idx(), 1);
-        test.circular_push((2, Some(2f64)));
-        assert_eq!(test.get_last_filled_idx(), 2);
-        test.circular_push((3, Some(3f64)));
-        assert_eq!(test.get_last_filled_idx(), 3);
-        test.circular_push((4, Some(4f64)));
-        assert_eq!(test.get_last_filled_idx(), 4);
-        test.circular_push((5, Some(5f64)));
-        assert_eq!(test.get_last_filled_idx(), 0);
-        test.circular_push((6, Some(6f64)));
-        assert_eq!(test.get_last_filled_idx(), 1);
-        test.circular_push((7, Some(7f64)));
-        assert_eq!(test.get_last_filled_idx(), 2);
+        test.upsert((0, Some(0f64)));
+        assert_eq!(test.get_last_idx(), 0);
+        test.upsert((1, Some(1f64)));
+        assert_eq!(test.get_last_idx(), 1);
+        test.upsert((2, Some(2f64)));
+        assert_eq!(test.get_last_idx(), 2);
+        test.upsert((3, Some(3f64)));
+        assert_eq!(test.get_last_idx(), 3);
+        test.upsert((4, Some(4f64)));
+        assert_eq!(test.get_last_idx(), 4);
+        assert_eq!(
+            test.metrics,
+            vec![
+                (0, Some(0f64)),
+                (1, Some(1f64)),
+                (2, Some(2f64)),
+                (3, Some(3f64)),
+                (4, Some(4f64))
+            ]
+        );
+        test.upsert((5, Some(5f64)));
+        assert_eq!(test.get_last_idx(), 0);
+        assert_eq!(
+            test.metrics,
+            vec![
+                (5, Some(5f64)),
+                (1, Some(1f64)),
+                (2, Some(2f64)),
+                (3, Some(3f64)),
+                (4, Some(4f64))
+            ]
+        );
+        test.upsert((6, Some(6f64)));
+        assert_eq!(test.get_last_idx(), 1);
+        test.upsert((7, Some(7f64)));
+        assert_eq!(test.get_last_idx(), 2);
+        assert_eq!(test.metrics_capacity, 5);
+        let last_input = test.metrics[test.get_last_idx()];
+        let old_input = (2, Some(20f64));
+        assert_eq!(last_input.0 as i64 - old_input.0 as i64, 5i64);
+        test.upsert((2, Some(20f64)));
+        assert_eq!(
+            test.metrics,
+            vec![
+                (5, Some(5f64)),
+                (6, Some(6f64)),
+                (7, Some(7f64)),
+                (3, Some(3f64)),
+                (4, Some(4f64))
+            ]
+        );
+        // This shouldn't even be inserted because it's too old
         assert_eq!(test.active_items, 5);
         let input = (4, Some(40f64));
-        let last_idx = test.get_last_filled_idx();
+        let last_idx = test.get_last_idx();
         let inactive_time = input.0 as i64 - test.metrics[last_idx].0 as i64;
         assert_eq!(inactive_time, -3);
+        let target_idx = test.get_tail_negative_offset_idx(inactive_time);
+        assert_eq!(target_idx, 4);
+        assert_eq!(test.metrics[target_idx].0, 4);
     }
 
     #[test]
@@ -1116,12 +1439,12 @@ mod tests {
         let mut test = TimeSeries::default().with_capacity(4);
         // Some values should be inserted as None
         test.upsert((10, Some(0f64)));
-        test.circular_push((11, None));
-        test.circular_push((12, None));
-        test.circular_push((13, None));
+        test.upsert((11, None));
+        test.upsert((12, None));
+        test.upsert((13, None));
         assert_eq!(test.get_last_filled(), 0f64);
         let mut test = TimeSeries::default().with_capacity(4);
-        test.circular_push((11, None));
+        test.upsert((11, None));
         test.upsert((12, Some(2f64)));
         assert_eq!(test.get_last_filled(), 2f64);
     }
@@ -1301,24 +1624,12 @@ mod tests {
         // Test with 10 items only
         // So that every item takes 0.01
         all_dups.sources[0].series_mut().metrics_capacity = 10;
-        all_dups.sources[0]
-            .series_mut()
-            .circular_push((10, Some(5f64)));
-        all_dups.sources[0]
-            .series_mut()
-            .circular_push((11, Some(5f64)));
-        all_dups.sources[0]
-            .series_mut()
-            .circular_push((12, Some(5f64)));
-        all_dups.sources[0]
-            .series_mut()
-            .circular_push((13, Some(5f64)));
-        all_dups.sources[0]
-            .series_mut()
-            .circular_push((14, Some(5f64)));
-        all_dups.sources[0]
-            .series_mut()
-            .circular_push((15, Some(5f64)));
+        all_dups.sources[0].series_mut().upsert((10, Some(5f64)));
+        all_dups.sources[0].series_mut().upsert((11, Some(5f64)));
+        all_dups.sources[0].series_mut().upsert((12, Some(5f64)));
+        all_dups.sources[0].series_mut().upsert((13, Some(5f64)));
+        all_dups.sources[0].series_mut().upsert((14, Some(5f64)));
+        all_dups.sources[0].series_mut().upsert((15, Some(5f64)));
         all_dups.update_series_opengl_vecs(0, size_test);
         // we expect a line from X -1.0 to X: -0.95
         assert_eq!(all_dups.get_deduped_opengl_vecs(0).len(), 4);
@@ -1329,24 +1640,12 @@ mod tests {
         // Test with 10 items only
         // So that every item takes 0.01
         no_dups.sources[0].series_mut().metrics_capacity = 10;
-        no_dups.sources[0]
-            .series_mut()
-            .circular_push((10, Some(5f64)));
-        no_dups.sources[0]
-            .series_mut()
-            .circular_push((11, Some(9f64)));
-        no_dups.sources[0]
-            .series_mut()
-            .circular_push((12, Some(7f64)));
-        no_dups.sources[0]
-            .series_mut()
-            .circular_push((13, Some(9f64)));
-        no_dups.sources[0]
-            .series_mut()
-            .circular_push((14, Some(5f64)));
-        no_dups.sources[0]
-            .series_mut()
-            .circular_push((15, Some(7f64)));
+        no_dups.sources[0].series_mut().upsert((10, Some(5f64)));
+        no_dups.sources[0].series_mut().upsert((11, Some(9f64)));
+        no_dups.sources[0].series_mut().upsert((12, Some(7f64)));
+        no_dups.sources[0].series_mut().upsert((13, Some(9f64)));
+        no_dups.sources[0].series_mut().upsert((14, Some(5f64)));
+        no_dups.sources[0].series_mut().upsert((15, Some(7f64)));
         no_dups.update_series_opengl_vecs(0, size_test);
         // we expect a line from 1, 1->2, 3, 4, 5, 6
         assert_eq!(no_dups.get_deduped_opengl_vecs(0).len(), 14usize);
@@ -1404,7 +1703,7 @@ mod tests {
         assert_eq!(iter_test0.pos, 0);
         // Simple test with one item
         let mut test1 = TimeSeries::default().with_capacity(4);
-        test1.circular_push((10, Some(0f64)));
+        test1.upsert((10, Some(0f64)));
         let mut iter_test1 = test1.iter();
         assert_eq!(iter_test1.next(), Some(&(10, Some(0f64))));
         assert_eq!(iter_test1.pos, 1);
@@ -1414,10 +1713,10 @@ mod tests {
         // Simple test with 3 items, rotated to start first item and 2nd
         // position and last item at 3rd position
         let mut test2 = TimeSeries::default().with_capacity(4);
-        test2.circular_push((10, Some(0f64)));
-        test2.circular_push((11, Some(1f64)));
-        test2.circular_push((12, Some(2f64)));
-        test2.circular_push((13, Some(3f64)));
+        test2.upsert((10, Some(0f64)));
+        test2.upsert((11, Some(1f64)));
+        test2.upsert((12, Some(2f64)));
+        test2.upsert((13, Some(3f64)));
         test2.first_idx = 1;
         assert_eq!(
             test2.metrics,
@@ -1435,10 +1734,10 @@ mod tests {
         assert_eq!(iter_test2.pos, 3);
         // A vec that is completely full
         let mut test3 = TimeSeries::default().with_capacity(4);
-        test3.circular_push((10, Some(0f64)));
-        test3.circular_push((11, Some(1f64)));
-        test3.circular_push((12, Some(2f64)));
-        test3.circular_push((13, Some(3f64)));
+        test3.upsert((10, Some(0f64)));
+        test3.upsert((11, Some(1f64)));
+        test3.upsert((12, Some(2f64)));
+        test3.upsert((13, Some(3f64)));
         {
             let mut iter_test3 = test3.iter();
             assert_eq!(iter_test3.next(), Some(&(10, Some(0f64))));
@@ -1450,7 +1749,7 @@ mod tests {
             assert_eq!(iter_test2.pos, 3);
         }
         // After changing the data the idx is recreatehd at 11 as expected
-        test3.circular_push((14, Some(4f64)));
+        test3.upsert((14, Some(4f64)));
         let mut iter_test3 = test3.iter();
         assert_eq!(iter_test3.next(), Some(&(11, Some(1f64))));
     }
@@ -1533,7 +1832,7 @@ mod tests {
         chart_test.sources.push(TimeSeriesSource::default());
         chart_test.width = 10.;
         chart_test.height = 10.;
-        // Test with 10 items only
+        // Test with 5 items only
         // So that every item takes 0.01
         chart_test.sources[0].series_mut().metrics_capacity = 10;
         // |             |   -
@@ -1543,26 +1842,14 @@ mod tests {
         // |XX           |   -
         //
         // |---- 200 ----|
-        chart_test.sources[0]
-            .series_mut()
-            .circular_push((10, Some(0f64)));
-        chart_test.sources[0]
-            .series_mut()
-            .circular_push((11, Some(1f64)));
-        chart_test.sources[0]
-            .series_mut()
-            .circular_push((12, Some(2f64)));
+        chart_test.sources[0].series_mut().upsert((10, Some(0f64)));
+        chart_test.sources[0].series_mut().upsert((11, Some(1f64)));
+        chart_test.sources[0].series_mut().upsert((12, Some(2f64)));
+        // A metric with None will be added for the (13, None)
         // Let's make a None value and check the MissingValuesPolicy
-        chart_test.sources[0].series_mut().circular_push((14, None));
+        chart_test.sources[0].series_mut().upsert((14, None));
         // This makes the top value 4
-        chart_test.sources[0]
-            .series_mut()
-            .circular_push((15, Some(4f64)));
-        // The current display (10% at the bottom left) should be divided
-        // between 4 and 1.
-        // metric(4) is -0.9
-        // Each metric unit (From 0 to 4) will be 0.025
-        // metric(0) is -1.0
+        chart_test.sources[0].series_mut().upsert((15, Some(4f64)));
         (size_test, chart_test)
     }
 
@@ -1583,6 +1870,8 @@ mod tests {
                 -0.97,  // leftmost plus 0.01 * 3
                 -1.0,   // Top-most value, so the chart height
                 -0.96,  // leftmost plus 0.01 * 4, rightmost
+                -1.0,   // A None value is set
+                -0.95,  // leftmost plus 0.01 * 5, rightmost
                 -0.9    // Top-most value, so the chart height
             ]
         );
@@ -1602,76 +1891,76 @@ mod tests {
         let point_4_metric = 4.75f64;
         prom_test.sources[0]
             .series_mut()
-            .circular_push((1566918913, Some(point_1_metric))); // Point 1
+            .upsert((1566918913, Some(point_1_metric))); // Point 1
         prom_test.sources[0]
             .series_mut()
-            .circular_push((1566918914, Some(point_1_metric))); //  |
+            .upsert((1566918914, Some(point_1_metric))); //  |
         prom_test.sources[0]
             .series_mut()
-            .circular_push((1566918915, Some(point_1_metric))); //  |
+            .upsert((1566918915, Some(point_1_metric))); //  |
         prom_test.sources[0]
             .series_mut()
-            .circular_push((1566918916, Some(point_1_metric))); //  |
+            .upsert((1566918916, Some(point_1_metric))); //  |
         prom_test.sources[0]
             .series_mut()
-            .circular_push((1566918917, Some(point_1_metric))); //  |
+            .upsert((1566918917, Some(point_1_metric))); //  |
         prom_test.sources[0]
             .series_mut()
-            .circular_push((1566918918, Some(point_1_metric))); //  |
+            .upsert((1566918918, Some(point_1_metric))); //  |
         prom_test.sources[0]
             .series_mut()
-            .circular_push((1566918919, Some(point_2_metric))); // Point 2 -> Point 3
+            .upsert((1566918919, Some(point_2_metric))); // Point 2 -> Point 3
         prom_test.sources[0]
             .series_mut()
-            .circular_push((1566918920, Some(point_2_metric))); // |
+            .upsert((1566918920, Some(point_2_metric))); // |
         prom_test.sources[0]
             .series_mut()
-            .circular_push((1566918921, Some(point_2_metric))); // |
+            .upsert((1566918921, Some(point_2_metric))); // |
         prom_test.sources[0]
             .series_mut()
-            .circular_push((1566918922, Some(point_2_metric))); // |
+            .upsert((1566918922, Some(point_2_metric))); // |
         prom_test.sources[0]
             .series_mut()
-            .circular_push((1566918923, Some(point_2_metric))); // |
+            .upsert((1566918923, Some(point_2_metric))); // |
         prom_test.sources[0]
             .series_mut()
-            .circular_push((1566918924, Some(point_2_metric))); // |
+            .upsert((1566918924, Some(point_2_metric))); // |
         prom_test.sources[0]
             .series_mut()
-            .circular_push((1566918925, Some(point_3_metric))); // Point 4 -> Point 5
+            .upsert((1566918925, Some(point_3_metric))); // Point 4 -> Point 5
         prom_test.sources[0]
             .series_mut()
-            .circular_push((1566918926, Some(point_3_metric))); //   |
+            .upsert((1566918926, Some(point_3_metric))); //   |
         prom_test.sources[0]
             .series_mut()
-            .circular_push((1566918927, Some(point_3_metric))); //   |
+            .upsert((1566918927, Some(point_3_metric))); //   |
         prom_test.sources[0]
             .series_mut()
-            .circular_push((1566918928, Some(point_3_metric))); //   |
+            .upsert((1566918928, Some(point_3_metric))); //   |
         prom_test.sources[0]
             .series_mut()
-            .circular_push((1566918929, Some(point_3_metric))); //   |
+            .upsert((1566918929, Some(point_3_metric))); //   |
         prom_test.sources[0]
             .series_mut()
-            .circular_push((1566918930, Some(point_3_metric))); //   |
+            .upsert((1566918930, Some(point_3_metric))); //   |
         prom_test.sources[0]
             .series_mut()
-            .circular_push((1566918931, Some(point_4_metric))); // Point 6 -> Point 7
+            .upsert((1566918931, Some(point_4_metric))); // Point 6 -> Point 7
         prom_test.sources[0]
             .series_mut()
-            .circular_push((1566918932, Some(point_4_metric))); // |
+            .upsert((1566918932, Some(point_4_metric))); // |
         prom_test.sources[0]
             .series_mut()
-            .circular_push((1566918933, Some(point_4_metric))); // |
+            .upsert((1566918933, Some(point_4_metric))); // |
         prom_test.sources[0]
             .series_mut()
-            .circular_push((1566918934, Some(point_4_metric))); // |
+            .upsert((1566918934, Some(point_4_metric))); // |
         prom_test.sources[0]
             .series_mut()
-            .circular_push((1566918935, Some(point_4_metric))); // |
+            .upsert((1566918935, Some(point_4_metric))); // |
         prom_test.sources[0]
             .series_mut()
-            .circular_push((1566918936, Some(point_4_metric))); // Point 8
+            .upsert((1566918936, Some(point_4_metric))); // Point 8
         prom_test.update_all_series_opengl_vecs(size_test);
         // We expect to see these dedupped vertices:
         // |              7--8  |   -     metric value: 4.75, point 4
@@ -1821,10 +2110,12 @@ mod tests {
                 -0.975,      // Y value is 1, so 25% of the line, so 0.025
                 -0.97400004, // leftmost plus  0.01 * 2
                 -0.95,       // Y value is 2, so 50% from bottom to top
-                -0.96599996, // leftmost plus 0.01 * 3
-                -1.0,        // Top-most value, so the chart height
-                -0.958,      // leftmost plus 0.01 * 4, rightmost
-                -0.9         // Top-most value, so the chart height
+                -0.96599996, // leftmost plus 0.01 * 0.3
+                -1.0,        // A none value means MissingValuesPolicy::Zero
+                -0.958,      // leftmost plus 0.01 * 4
+                -1.0,        // A none value means MissingValuesPolicy::Zero
+                -0.95,       // leftmost plus 0.01 * 5, rightmost
+                -0.9         // A bit below the max
             ]
         );
     }
