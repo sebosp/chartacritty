@@ -11,7 +11,7 @@ use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::color::Rgb;
 use alacritty_terminal::term::{RenderableCell, RenderableCellContent, SizeInfo};
 
-use crate::config::{Config, RelaxedEq};
+use crate::config::Config;
 use crate::event::Mouse;
 use crate::renderer::rects::{RenderLine, RenderRect};
 
@@ -42,7 +42,7 @@ impl Url {
     }
 
     pub fn end(&self) -> Point {
-        self.lines[self.lines.len() - 1].end.sub(self.num_cols, self.end_offset as usize)
+        self.lines[self.lines.len() - 1].end.sub(self.num_cols, self.end_offset as usize, false)
     }
 }
 
@@ -73,11 +73,6 @@ impl Urls {
 
     // Update tracked URLs
     pub fn update(&mut self, num_cols: usize, cell: RenderableCell) {
-        // Ignore double-width spacers to prevent reset
-        if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
-            return;
-        }
-
         // Convert cell to character
         let c = match cell.inner {
             RenderableCellContent::Chars(chars) => chars[0],
@@ -85,19 +80,27 @@ impl Urls {
         };
 
         let point: Point = cell.into();
-        let mut end = point;
+        let end = point;
 
         // Reset URL when empty cells have been skipped
-        if point != Point::default() && Some(point.sub(num_cols, 1)) != self.last_point {
+        if point != Point::default() && Some(point.sub(num_cols, 1, false)) != self.last_point {
             self.reset();
         }
 
-        // Extend by one cell for double-width characters
-        if cell.flags.contains(Flags::WIDE_CHAR) {
-            end.col += 1;
-        }
-
         self.last_point = Some(end);
+
+        // Extend current state if a wide char spacer is encountered
+        if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+            if let UrlLocation::Url(_, mut end_offset) = self.state {
+                if end_offset != 0 {
+                    end_offset += 1;
+                }
+
+                self.extend_url(point, end, cell.fg, end_offset);
+            }
+
+            return;
+        }
 
         // Advance parser
         let last_state = mem::replace(&mut self.state, self.locator.advance(c));
@@ -152,12 +155,17 @@ impl Urls {
         mouse_mode: bool,
         selection: bool,
     ) -> Option<Url> {
+        // Require additional shift in mouse mode
+        let mut required_mods = config.ui_config.mouse.url.mods();
+        if mouse_mode {
+            required_mods |= ModifiersState::SHIFT;
+        }
+
         // Make sure all prerequisites for highlighting are met
         if selection
-            || (mouse_mode && !mods.shift)
             || !mouse.inside_grid
             || config.ui_config.mouse.url.launcher.is_none()
-            || !config.ui_config.mouse.url.mods().relaxed_eq(mods)
+            || required_mods != mods
             || mouse.left_button_state == ElementState::Pressed
         {
             return None;
@@ -180,7 +188,7 @@ impl Urls {
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use super::*;
 
     use alacritty_terminal::index::{Column, Line};

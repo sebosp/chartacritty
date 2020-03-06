@@ -19,29 +19,29 @@ use foreign_types::{ForeignType, ForeignTypeRef};
 
 use fontconfig::fontconfig as ffi;
 
-use self::ffi::FcResultNoMatch;
-use self::ffi::{FcFontList, FcFontMatch, FcFontSort};
-use self::ffi::{FcMatchFont, FcMatchPattern, FcMatchScan};
-use self::ffi::{FcSetApplication, FcSetSystem};
-use self::ffi::{FC_SLANT_ITALIC, FC_SLANT_OBLIQUE, FC_SLANT_ROMAN};
-use self::ffi::{FC_WEIGHT_BLACK, FC_WEIGHT_BOLD, FC_WEIGHT_EXTRABLACK, FC_WEIGHT_EXTRABOLD};
-use self::ffi::{FC_WEIGHT_BOOK, FC_WEIGHT_MEDIUM, FC_WEIGHT_REGULAR, FC_WEIGHT_SEMIBOLD};
-use self::ffi::{FC_WEIGHT_EXTRALIGHT, FC_WEIGHT_LIGHT, FC_WEIGHT_THIN};
+use ffi::FcResultNoMatch;
+use ffi::{FcFontList, FcFontMatch, FcFontSort};
+use ffi::{FcMatchFont, FcMatchPattern, FcMatchScan};
+use ffi::{FcSetApplication, FcSetSystem};
+use ffi::{FC_SLANT_ITALIC, FC_SLANT_OBLIQUE, FC_SLANT_ROMAN};
+use ffi::{FC_WEIGHT_BLACK, FC_WEIGHT_BOLD, FC_WEIGHT_EXTRABLACK, FC_WEIGHT_EXTRABOLD};
+use ffi::{FC_WEIGHT_BOOK, FC_WEIGHT_MEDIUM, FC_WEIGHT_REGULAR, FC_WEIGHT_SEMIBOLD};
+use ffi::{FC_WEIGHT_EXTRALIGHT, FC_WEIGHT_LIGHT, FC_WEIGHT_THIN};
 
 pub mod config;
-pub use self::config::{Config, ConfigRef};
+pub use config::{Config, ConfigRef};
 
 pub mod font_set;
-pub use self::font_set::{FontSet, FontSetRef};
+pub use font_set::{FontSet, FontSetRef};
 
 pub mod object_set;
-pub use self::object_set::{ObjectSet, ObjectSetRef};
+pub use object_set::{ObjectSet, ObjectSetRef};
 
 pub mod char_set;
-pub use self::char_set::{CharSet, CharSetRef};
+pub use char_set::{CharSet, CharSetRef};
 
 pub mod pattern;
-pub use self::pattern::{Pattern, PatternRef};
+pub use pattern::{Pattern, PatternRef};
 
 /// Find the font closest matching the provided pattern.
 ///
@@ -75,11 +75,10 @@ pub fn font_sort(config: &ConfigRef, pattern: &mut PatternRef) -> Option<FontSet
         let mut result = FcResultNoMatch;
 
         let mut charsets: *mut _ = ptr::null_mut();
-
         let ptr = FcFontSort(
             config.as_ptr(),
             pattern.as_ptr(),
-            0, // false
+            1, // Trim font list
             &mut charsets,
             &mut result,
         );
@@ -323,7 +322,7 @@ mod tests {
         let fonts = super::font_sort(config, &mut pattern).expect("sort font monospace");
 
         for font in fonts.into_iter().take(10) {
-            let font = font.render_prepare(&config, &pattern);
+            let font = pattern.render_prepare(&config, &font);
             print!("index={:?}; ", font.index());
             print!("family={:?}; ", font.family());
             print!("style={:?}; ", font.style());
@@ -345,7 +344,7 @@ mod tests {
         let fonts = super::font_sort(config, &mut pattern).expect("font_sort");
 
         for font in fonts.into_iter().take(10) {
-            let font = font.render_prepare(&config, &pattern);
+            let font = pattern.render_prepare(&config, &font);
             print!("index={:?}; ", font.index());
             print!("family={:?}; ", font.family());
             print!("style={:?}; ", font.style());

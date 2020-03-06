@@ -4,7 +4,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## 0.4.1-dev
+## 0.4.2-dev
+
+### Packaging
+
+- Minimum Rust version has been bumped to 1.37.0
+
+### Changed
+
+- Pressing additional modifiers for mouse bindings will no longer trigger them
+- Renamed `WINIT_HIDPI_FACTOR` environment variable to `WINIT_X11_SCALE_FACTOR`
+- Print an error instead of crashing, when startup working directory is invalid
+- Line selection will now expand across wrapped lines
+- The default value for `draw_bold_text_with_bright_colors` is now `false`
+
+### Fixed
+
+- Incorrect default config path in `--help` on Windows and macOS
+- Semantic selection stopping at full-width glyphs
+- Full-width glyphs cut off in last column
+- Crash when starting on some X11 systems
+- Font size resetting when Alacritty is moved between screens
+- Limited payload length in clipboard escape (used for Tmux copy/paste)
+- Alacritty not ignoring keyboard events for changing WM focus on X11
+- Regression which added a UNC path prefix to the working directory on Windows
+- CLI parameters discarded when config is reload
+- Blurred icons in KDE task switcher (alacritty.ico is now high-res)
+- Consecutive builds failing on macOS due to preexisting `/Application` symlink
+- Block selection starting from first column after beginning leaves the scrollback
+- Incorrect selection status of the first cell when selection is off screen
+- Backwards bracket selection
+- Stack overflow when printing shader creation error
+- Underline position for bitmap fonts
+- Selection rotating outside of scrolling region
+- Throughput performance problems caused by excessive font metric queries
+- Unicode throughput performance on Linux/BSD
+- Resize of bitmap fonts
+- Crash when using bitmap font with `embeddedbitmap` set to `false`
+- Inconsistent fontconfig fallback
+
+### Removed
+
+- Config option `auto_scroll`, which is now always disabled
+
+## 0.4.1
 
 ### Packaging
 
@@ -15,6 +58,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Terminal escape bindings with combined modifiers for Delete and Insert
 - /Applications symlink into OS X DMG for easier installation
 - Colored emojis on Linux/BSD
+- Value `randr` for `WINIT_HIDPI_FACTOR`, to ignore `Xft.dpi` and scale based on screen dimensions
+- `Minimize` key binding action, bound to `cmd + m` on macOS
 
 ### Changed
 
@@ -36,6 +81,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Crash on `clear` when scrolled up in history
 - Entire screen getting underlined/stroke out when running `clear`
 - Slow startup on some Wayland compositors
+- Padding not consistently visible on macOS
+- Decorations ignoring Windows dark theme
+- Crash on macOS when starting maximized without decorations
+- Resize cursor not showing up on Wayland
+- Maximized windows spawning behind system panel on Gnome Wayland
 
 ### Removed
 
@@ -370,7 +420,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Alt modifier is no longer sent separately from the modified key
 - Various Windows issues, like color support and performance, through the new ConPTY
 - Fixed rendering non default mouse cursors in terminal mouse mode (linux)
-- Fix the `Copy` `mouse_bindings` action ([#1963](https://github.com/jwilm/alacritty/issues/1963))
+- Fix the `Copy` `mouse_bindings` action ([#1963](https://github.com/alacritty/alacritty/issues/1963))
 - URLs are only launched when left-clicking
 - Removal of extra characters (like `,`) at the end of URLs has been improved
 - Single quotes (`'`) are removed from URLs when there is no matching opening quote
