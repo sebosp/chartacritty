@@ -538,14 +538,10 @@ impl TimeSeriesChart {
             "update_series_opengl_vecs: Using tick_spacing {}",
             tick_spacing
         );
-        for (idx, metric) in self.sources[series_idx]
-            .series()
-            .as_vec()
-            .iter()
-            .enumerate()
-        {
-            // The decorations width request is on both left and right.
-            let x_value = idx as f32 * tick_spacing + (decorations_space / 2f32);
+        // The decorations width request is on both left and right sides.
+        let decoration_offset = decorations_space / 2f32;
+        for (idx, metric) in self.sources[series_idx].series().iter().enumerate() {
+            let x_value = idx as f32 * tick_spacing + decoration_offset;
             // If there is a Marker Line, it takes 10% of the initial horizontal space
             let y_value = match metric.1 {
                 Some(x) => x,
@@ -656,24 +652,28 @@ impl TimeSeriesChart {
     /// `get_deduped_opengl_vecs` returns a minimized version of the opengl_vecs, when the metric
     /// doesn't change it doesn't create a new opengl vertex but rather tries to create a wider
     /// line
-    pub fn get_deduped_opengl_vecs(&self, idx: usize) -> Vec<f32> {
-        let span = span!(Level::TRACE, "get_deduped_opengl_vecs", idx);
+    pub fn get_deduped_opengl_vecs(&self, series_idx: usize) -> Vec<f32> {
+        let span = span!(Level::TRACE, "get_deduped_opengl_vecs", series_idx);
         let _enter = span.enter();
-        if idx >= self.opengl_vecs.len() {
+        if series_idx >= self.opengl_vecs.len() {
             return vec![];
         }
-        if self.opengl_vecs[idx].len() <= 4 {
-            return self.opengl_vecs[idx].clone();
+        if self.opengl_vecs[series_idx].len() <= 4 {
+            return self.opengl_vecs[series_idx].clone();
         }
-        let mut res = Vec::with_capacity(self.opengl_vecs[idx].capacity());
+        // By default, accomodate memory for as many active items as there are in the series circular buffer.
+        let mut res = Vec::with_capacity(self.sources[series_idx].series().active_items * 2);
         // Grab the first reference point
-        let mut cur_x = self.opengl_vecs[idx][0];
-        let mut cur_y = self.opengl_vecs[idx][1];
+        let mut cur_x = self.opengl_vecs[series_idx][0];
+        let mut cur_y = self.opengl_vecs[series_idx][1];
         res.push(cur_x);
         res.push(cur_y);
         // Avoid adding the last item twice:
         let mut last_item_added = false;
-        for (idx, vertex) in self.opengl_vecs[idx].iter().enumerate() {
+        for (idx, vertex) in self.opengl_vecs[series_idx].iter().enumerate() {
+            if idx == self.sources[series_idx].series().active_items * 2 {
+                break;
+            }
             if idx % 2 == 1 {
                 // This is a Y value
                 // Let's allow this much difference and consider them equal
@@ -703,7 +703,12 @@ impl TimeSeriesChart {
             res.push(cur_x);
             res.push(cur_y);
         }
-        debug!("get_deduped_opengl_vecs[{}] result: {:?}", idx, res);
+        debug!(
+            "get_deduped_opengl_vecs[{}] len({}) result: {:?}",
+            series_idx,
+            res.len(),
+            res
+        );
         res
     }
 
