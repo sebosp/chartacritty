@@ -470,7 +470,8 @@ impl TimeSeriesChart {
         );
         let _enter = span.enter();
         if series_idx >= self.sources.len() {
-            error!(
+            event!(
+                Level::ERROR,
                 "update_series_opengl_vecs: Request for out of bound series index: {}",
                 series_idx
             );
@@ -488,14 +489,18 @@ impl TimeSeriesChart {
             let missing_capacity = opengl_vecs_capacity - self.opengl_vecs[series_idx].capacity();
             self.opengl_vecs[series_idx].reserve(missing_capacity);
         }
-        debug!(
+        event!(
+            Level::DEBUG,
             "update_series_opengl_vecs: Needed OpenGL capacity: {}, Display Size: {:?}, offset \
              {:?}",
-            opengl_vecs_capacity, display_size, self.offset,
+            opengl_vecs_capacity,
+            display_size,
+            self.offset,
         );
         for source in &mut self.sources {
             if source.series().stats.is_dirty {
-                debug!(
+                event!(
+                    Level::DEBUG,
                     "update_series_opengl_vecs: '{}' stats are dirty, needs recalculating",
                     source.name()
                 );
@@ -505,18 +510,22 @@ impl TimeSeriesChart {
         self.calculate_stats();
         let mut decorations_space = 0f32;
         for decoration in &self.decorations {
-            debug!(
+            event!(
+                Level::DEBUG,
                 "update_series_opengl_vecs: Adding width of decoration: {}",
                 decoration.width()
             );
             decorations_space += decoration.width();
         }
-        debug!(
+        event!(
+            Level::DEBUG,
             "update_series_opengl_vecs: width: {}, decorations_space: {}",
-            self.width, decorations_space
+            self.width,
+            decorations_space
         );
         let missing_values_fill = self.sources[series_idx].series().get_missing_values_fill();
-        debug!(
+        event!(
+            Level::DEBUG,
             "update_series_opengl_vecs: Using {} to fill missing values. Metrics[{}]: {:?}",
             missing_values_fill,
             self.sources[series_idx].series().metrics_capacity,
@@ -524,13 +533,15 @@ impl TimeSeriesChart {
         );
         let tick_spacing = (self.width - decorations_space)
             / self.sources[series_idx].series().metrics_capacity as f32;
-        debug!(
+        event!(
+            Level::DEBUG,
             "update_series_opengl_vecs: Using tick_spacing {}",
             tick_spacing
         );
+        // The decorations width request is on both left and right sides.
+        let decoration_offset = decorations_space / 2f32;
         for (idx, metric) in self.sources[series_idx].series().iter().enumerate() {
-            // The decorations width request is on both left and right.
-            let x_value = idx as f32 * tick_spacing + (decorations_space / 2f32);
+            let x_value = idx as f32 * tick_spacing + decoration_offset;
             // If there is a Marker Line, it takes 10% of the initial horizontal space
             let y_value = match metric.1 {
                 Some(x) => x,
@@ -550,7 +561,8 @@ impl TimeSeriesChart {
             }
         }
         for decoration in &mut self.decorations {
-            debug!(
+            event!(
+                Level::DEBUG,
                 "update_series_opengl_vecs: Updating decoration {:?} vertices",
                 decoration
             );
@@ -640,24 +652,28 @@ impl TimeSeriesChart {
     /// `get_deduped_opengl_vecs` returns a minimized version of the opengl_vecs, when the metric
     /// doesn't change it doesn't create a new opengl vertex but rather tries to create a wider
     /// line
-    pub fn get_deduped_opengl_vecs(&self, idx: usize) -> Vec<f32> {
-        let span = span!(Level::TRACE, "get_deduped_opengl_vecs", idx);
+    pub fn get_deduped_opengl_vecs(&self, series_idx: usize) -> Vec<f32> {
+        let span = span!(Level::TRACE, "get_deduped_opengl_vecs", series_idx);
         let _enter = span.enter();
-        if idx >= self.opengl_vecs.len() {
+        if series_idx >= self.opengl_vecs.len() {
             return vec![];
         }
-        if self.opengl_vecs[idx].len() <= 4 {
-            return self.opengl_vecs[idx].clone();
+        if self.opengl_vecs[series_idx].len() <= 4 {
+            return self.opengl_vecs[series_idx].clone();
         }
-        let mut res = Vec::with_capacity(self.opengl_vecs[idx].capacity());
+        // By default, accomodate memory for as many active items as there are in the series circular buffer.
+        let mut res = Vec::with_capacity(self.sources[series_idx].series().active_items * 2);
         // Grab the first reference point
-        let mut cur_x = self.opengl_vecs[idx][0];
-        let mut cur_y = self.opengl_vecs[idx][1];
+        let mut cur_x = self.opengl_vecs[series_idx][0];
+        let mut cur_y = self.opengl_vecs[series_idx][1];
         res.push(cur_x);
         res.push(cur_y);
         // Avoid adding the last item twice:
         let mut last_item_added = false;
-        for (idx, vertex) in self.opengl_vecs[idx].iter().enumerate() {
+        for (idx, vertex) in self.opengl_vecs[series_idx].iter().enumerate() {
+            if idx == self.sources[series_idx].series().active_items * 2 {
+                break;
+            }
             if idx % 2 == 1 {
                 // This is a Y value
                 // Let's allow this much difference and consider them equal
@@ -687,7 +703,12 @@ impl TimeSeriesChart {
             res.push(cur_x);
             res.push(cur_y);
         }
-        debug!("get_deduped_opengl_vecs[{}] result: {:?}", idx, res);
+        debug!(
+            "get_deduped_opengl_vecs[{}] len({}) result: {:?}",
+            series_idx,
+            res.len(),
+            res
+        );
         res
     }
 
@@ -877,21 +898,12 @@ impl TimeSeries {
         // maybe accept a batch to overwrite the data receiving an array.
         let span = span!(Level::TRACE, "upsert");
         let _enter = span.enter();
-        event!(
-            Level::TRACE,
-            "upsert: len: {}, first_idx: {}, input: {:?}, metrics: {:?}",
-            self.metrics.len(),
-            self.first_idx,
-            input,
-            self.metrics
-        );
         if self.metrics.is_empty() {
             self.circular_push(input);
             return 1;
         }
         let last_idx = self.get_last_idx();
         if (self.metrics[last_idx].0 as i64 - input.0 as i64) >= self.metrics_capacity as i64 {
-            event!(Level::TRACE, "metric too old");
             // The timestamp is too old and should be discarded.
             // This means we cannot scroll back in time.
             // i.e. if the date of the computer needs to go back in time
@@ -905,27 +917,23 @@ impl TimeSeries {
         // inactive_time = -2
         let inactive_time = input.0 as i64 - self.metrics[last_idx].0 as i64;
         if inactive_time > self.metrics_capacity as i64 {
-            event!(Level::TRACE, "whole vector discarded");
             // The whole vector should be discarded
             self.first_idx = 0;
             self.metrics[0] = input;
             self.active_items = 1;
             return 1;
         } else if inactive_time < 0 {
-            event!(Level::TRACE, "metric in the past");
             // We have a metric for an epoch in the past.
             let current_min_epoch = self.metrics[self.first_idx].0;
             // input 98
             // [ 100 ] [ ] [ ] [ ]
             if current_min_epoch > input.0 {
-                event!(Level::TRACE, "metric before anything registered");
                 // The input epoch before anything we have registered.
                 // But still within our capacity boundaries
                 let padding_items = (current_min_epoch - input.0) as usize;
                 // XXX: This is wrong, we should add as many padding_items as possible without
                 // breaking the metrics_capacity.
                 if self.metrics.len() + 1 < self.metrics_capacity {
-                    event!(Level::TRACE, "vector not full");
                     // The vector is not full, let's shift the items to the right
                     // The array items have not been allocated at this point:
                     self.metrics.insert(0, input);
@@ -935,38 +943,21 @@ impl TimeSeries {
                     self.active_items += padding_items;
                     return padding_items;
                 } else {
-                    event!(Level::TRACE, "vector full");
                     // The vector is full, write the new epoch at first_idx and then fill the rest
                     // up to current_min value with None
                     let previous_min_epoch = self.metrics[self.first_idx].0;
-                    event!(Level::TRACE, "previous min epoch: {}", previous_min_epoch);
                     // Find what would be the first index given the current input, in case we need
                     // to roll back from the end of the array
                     let target_idx = self.get_tail_negative_offset_idx(inactive_time);
-                    event!(Level::TRACE, "target_idx: {}", target_idx);
                     self.first_idx = target_idx;
                     self.metrics[target_idx] = input;
-                    event!(Level::TRACE, "PRE: metrics: {:?}", self.metrics);
                     for fill_epoch in (input.0 + 1)..previous_min_epoch {
-                        event!(
-                            Level::TRACE,
-                            "DU0: fill_epoch: {}, metrics: {:?}",
-                            fill_epoch,
-                            self.metrics
-                        );
                         self.circular_push((fill_epoch, None));
-                        event!(
-                            Level::TRACE,
-                            "DU1: fill_epoch: {}, metrics: {:?}",
-                            fill_epoch,
-                            self.metrics
-                        );
                     }
                     self.active_items += 1;
                     return (previous_min_epoch - input.0) as usize;
                 }
             } else {
-                event!(Level::TRACE, "epoch should exist in our vector");
                 // The input epoch has already been inserted in our array
                 let target_idx = self.get_tail_negative_offset_idx(inactive_time);
                 if self.metrics[target_idx].0 != input.0 {
@@ -987,13 +978,11 @@ impl TimeSeries {
                 return 0;
             }
         } else if inactive_time == 0 {
-            event!(Level::TRACE, "current epoch");
             // We have a metric for the last indexed epoch
             self.metrics[last_idx].1 =
                 self.resolve_metric_collision(self.metrics[last_idx].1, input.1);
             return 0;
         } else {
-            event!(Level::TRACE, "epoch is in the future");
             // The input epoch is in the future
             let max_epoch = self.metrics[last_idx].0;
             // Fill missing entries with None
@@ -1362,7 +1351,7 @@ mod tests {
                 (5, Some(5f64)),
                 (79, Some(790f64)),
                 (80, Some(800f64)),
-                (81, Some(811f64)),
+                (81, Some(1621f64)), // 81 has been added twice
                 (82, None),
                 (83, None),
             ]
