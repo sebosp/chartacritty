@@ -9,9 +9,10 @@
 // -- mock the prometheus server and response
 // -- When disconnected from a server, it is not easy to know which one or why.
 // -- Add space for drawing the charts, right now we are decreasing 2 lines, but it breaks tmux
+// -- The dashboards should be toggable, some key combination
 // IN PROGRESS:
 // -- Group labels into separate colors (find something that does color spacing in rust)
-// -- The dashboards should be toggable, some key combination
+// -- Create a main offset and from there space and calculate the location of the charts
 // TODO:
 // -- When activated on toggle it could blur a portion of the screen
 // -- Create a TimeSeries inside the Term itself so that increments can be done synchronously but
