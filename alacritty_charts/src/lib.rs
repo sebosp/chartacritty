@@ -440,7 +440,7 @@ pub struct TimeSeriesChart {
 
     /// The offset in which the activity line should be drawn
     #[serde(default)]
-    pub offset: Value2D,
+    pub offset: Option<Value2D>,
 
     /// The width of the activity chart/histogram
     #[serde(default)]
@@ -548,7 +548,7 @@ impl TimeSeriesChart {
                 Some(x) => x,
                 None => missing_values_fill,
             };
-            let scaled_x = display_size.scale_x(x_value + self.offset.x);
+            let scaled_x = display_size.scale_x(x_value + self.offset.unwrap_or_default().x);
             let scaled_y = display_size.scale_y(self.stats.max, y_value);
             // Adding twice to a vec, could this be made into one operation? Is this slow?
             // need to transform activity line values from varying levels into scaled [-1, 1]
@@ -567,7 +567,12 @@ impl TimeSeriesChart {
                 "update_series_opengl_vecs: Updating decoration {:?} vertices",
                 decoration
             );
-            decoration.update_opengl_vecs(display_size, self.offset, &self.stats, &self.sources);
+            decoration.update_opengl_vecs(
+                display_size,
+                self.offset.unwrap_or_default(),
+                &self.stats,
+                &self.sources,
+            );
         }
         self.last_updated = std::time::SystemTime::now()
             .duration_since(UNIX_EPOCH)
