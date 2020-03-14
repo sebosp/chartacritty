@@ -419,6 +419,15 @@ impl SizeInfo {
     }
 }
 
+/// `ChartsConfig` contains a vector of charts and basic position of the charts,
+/// allowing to use a global position instead of individually setting up the chart position
+#[derive(Default, Debug, Serialize, Deserialize, PartialEq, Clone)]
+pub struct ChartsConfig {
+    position: Option<Value2D>,
+    dimensions: Option<Value2D>,
+    charts: Vec<TimeSeriesChart>,
+}
+
 /// `TimeSeriesChart` has an array of TimeSeries to display, it contains the
 /// X, Y position and has methods to draw in opengl.
 #[derive(Default, Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -438,17 +447,14 @@ pub struct TimeSeriesChart {
     #[serde(default)]
     pub stats: TimeSeriesStats,
 
-    /// The offset in which the activity line should be drawn
+    /// The offset in which the time series should be drawn
+    /// If left unset, a position will be reserved from the ChartsConfig offset values.
     #[serde(default)]
-    pub offset: Option<Value2D>,
+    pub position: Option<Value2D>,
 
-    /// The width of the activity chart/histogram
+    /// The dimensions of the chart
     #[serde(default)]
-    pub width: f32,
-
-    /// The height of the activity line region
-    #[serde(default)]
-    pub height: f32,
+    pub position: Option<Value2D>,
 
     /// The opengl representation of the each series.
     #[serde(default)]
