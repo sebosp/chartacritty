@@ -423,8 +423,10 @@ impl SizeInfo {
 /// allowing to use a global position instead of individually setting up the chart position
 #[derive(Default, Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct ChartsConfig {
+    /// The x,y coordinates in which the time series will start
     position: Option<Value2D>,
-    dimensions: Option<Value2D>,
+    /// The default dimensions of the chart
+    default_dimensions: Option<Value2D>,
     charts: Vec<TimeSeriesChart>,
 }
 
@@ -447,14 +449,15 @@ pub struct TimeSeriesChart {
     #[serde(default)]
     pub stats: TimeSeriesStats,
 
-    /// The offset in which the time series should be drawn
-    /// If left unset, a position will be reserved from the ChartsConfig offset values.
+    /// The x,y position in which the time series should be drawn
+    /// If unspecified, a position will be reserved from the ChartsConfig offset values.
     #[serde(default)]
     pub position: Option<Value2D>,
 
-    /// The dimensions of the chart
+    /// The dimensions of the chart.
+    /// If unspecified the default_dimensions are used from ChartsConfig
     #[serde(default)]
-    pub position: Option<Value2D>,
+    pub dimensions: Option<Value2D>,
 
     /// The opengl representation of the each series.
     #[serde(default)]
