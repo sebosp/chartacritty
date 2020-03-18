@@ -492,8 +492,14 @@ impl TimeSeriesChart {
             self.opengl_vecs.push(vec![]);
         }
         let mut display_size = display_size;
-        display_size.chart_height = self.height;
-        display_size.chart_width = self.width;
+        if let Some(dimensions) = self.dimensions {
+            display_size.chart_height = dimensions.y;
+            display_size.chart_width = dimensions.x;
+        } else {
+            // TODO: When the charts are first read, they should compose the dimensions.
+            // If we hit this, then we should recalculate from the global ChartsConfig default
+            // dimensions somehow
+        }
         // Get the opengl representation of the vector
         let opengl_vecs_capacity = self.sources[series_idx].series().active_items;
         if opengl_vecs_capacity > self.opengl_vecs[series_idx].capacity() {
@@ -506,7 +512,7 @@ impl TimeSeriesChart {
              {:?}",
             opengl_vecs_capacity,
             display_size,
-            self.offset,
+            self.position,
         );
         for source in &mut self.sources {
             if source.series().stats.is_dirty {
@@ -531,7 +537,7 @@ impl TimeSeriesChart {
         event!(
             Level::DEBUG,
             "update_series_opengl_vecs: width: {}, decorations_space: {}",
-            self.width,
+            display_size.chart_width,
             decorations_space
         );
         let missing_values_fill = self.sources[series_idx].series().get_missing_values_fill();
@@ -542,7 +548,7 @@ impl TimeSeriesChart {
             self.sources[series_idx].series().metrics_capacity,
             self.sources[series_idx].series()
         );
-        let tick_spacing = (self.width - decorations_space)
+        let tick_spacing = (display_size.chart_width - decorations_space)
             / self.sources[series_idx].series().metrics_capacity as f32;
         event!(
             Level::DEBUG,
@@ -558,11 +564,11 @@ impl TimeSeriesChart {
                 Some(x) => x,
                 None => missing_values_fill,
             };
-            let scaled_x = display_size.scale_x(x_value + self.offset.unwrap_or_default().x);
+            let scaled_x = display_size.scale_x(x_value + self.position.unwrap_or_default().x);
             let scaled_y = display_size.scale_y(self.stats.max, y_value);
             // Adding twice to a vec, could this be made into one operation? Is this slow?
             // need to transform activity line values from varying levels into scaled [-1, 1]
-            // XXX: Move to Circular Buffer
+            // XXX: Move to Circular Buffer? Problem is Circular buffer is only meant for epochs
             if (idx + 1) * 2 > self.opengl_vecs[series_idx].len() {
                 self.opengl_vecs[series_idx].push(scaled_x);
                 self.opengl_vecs[series_idx].push(scaled_y);
@@ -579,7 +585,7 @@ impl TimeSeriesChart {
             );
             decoration.update_opengl_vecs(
                 display_size,
-                self.offset.unwrap_or_default(),
+                self.position.unwrap_or_default(),
                 &self.stats,
                 &self.sources,
             );
