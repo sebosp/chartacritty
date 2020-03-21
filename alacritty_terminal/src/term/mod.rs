@@ -915,7 +915,10 @@ impl<T> Term<T> {
         let scroll_region = Line(0)..grid.num_lines();
 
         let colors = color::List::from(&config.colors);
-
+        let mut charts_enabled = false;
+        if let Some(chart_config) = &config.charts {
+            charts_enabled = !chart_config.charts.is_empty();
+        }
         Term {
             dirty: false,
             visual_bell: VisualBell::new(config),
@@ -946,7 +949,7 @@ impl<T> Term<T> {
             charts_handle: TermChartsHandle {
                 tokio_handle,
                 charts_tx,
-                enabled: !config.charts.is_empty(),
+                enabled: charts_enabled,
             },
         }
     }

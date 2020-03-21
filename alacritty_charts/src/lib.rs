@@ -424,11 +424,11 @@ impl SizeInfo {
 #[derive(Default, Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct ChartsConfig {
     /// The x,y coordinates in which the time series will start
-    position: Option<Value2D>,
+    pub position: Option<Value2D>,
     /// The default dimensions of the chart
-    default_dimensions: Option<Value2D>,
+    pub default_dimensions: Option<Value2D>,
     // An array of charts to draw
-    charts: Vec<TimeSeriesChart>,
+    pub charts: Vec<TimeSeriesChart>,
 }
 
 /// `TimeSeriesChart` has an array of TimeSeries to display, it contains the
