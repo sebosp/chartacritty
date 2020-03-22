@@ -652,7 +652,7 @@ pub fn tokio_default_setup() -> (
     // Start the Async I/O runtime, this needs to run in a background thread because in OSX,
     // only the main thread can write to the graphics card.
     let (_tokio_thread, tokio_shutdown) = spawn_async_tasks(
-        vec![],
+        Some(crate::ChartsConfig::default()),
         charts_tx.clone(),
         charts_rx,
         handle_tx,
@@ -667,7 +667,7 @@ pub fn tokio_default_setup() -> (
 
 /// `spawn_async_tasks` Starts a background thread to be used for tokio for async tasks
 pub fn spawn_async_tasks(
-    charts: Vec<TimeSeriesChart>,
+    chart_config: Option<crate::ChartsConfig>,
     charts_tx: mpsc::Sender<AsyncChartTask>,
     charts_rx: mpsc::Receiver<AsyncChartTask>,
     handle_tx: std::sync::mpsc::Sender<current_thread::Handle>,
@@ -685,7 +685,11 @@ pub fn spawn_async_tasks(
             handle_tx
                 .send(tokio_runtime.handle())
                 .expect("Unable to give runtime handle to the main thread");
-            let async_charts = charts.clone();
+            let mut chart_array: Vec<TimeSeriesChart> = vec![];
+            if let Some(chart_config) = &chart_config {
+                chart_array = chart_config.charts.clone();
+            }
+            let async_charts = chart_array.clone();
             tokio_runtime.spawn(lazy(move || {
                 async_coordinator(
                     charts_rx,
@@ -698,7 +702,7 @@ pub fn spawn_async_tasks(
             }));
             let tokio_handle = tokio_runtime.handle().clone();
             tokio_runtime.spawn(lazy(move || {
-                spawn_charts_intervals(charts.clone(), charts_tx, tokio_handle);
+                spawn_charts_intervals(chart_array.clone(), charts_tx, tokio_handle);
                 Ok(())
             }));
             tokio_runtime.spawn({

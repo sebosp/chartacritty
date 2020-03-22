@@ -9,7 +9,7 @@ static DEFAULT_CHART_CONFIG: &'static str =
 /// Top-level config type
 #[derive(Debug, PartialEq, Deserialize, Clone)]
 pub struct Config {
-    pub charts: Vec<crate::TimeSeriesChart>,
+    pub charts: Option<crate::ChartsConfig>,
 }
 impl Default for Config {
     fn default() -> Self {
@@ -52,11 +52,13 @@ impl Config {
             }
             Ok(config) => {
                 info!("load_config_file: {:?}", config_location);
-                for chart in &config.charts {
+                if let Some(chart_config) = &config.charts {
+                for chart in &chart_config.charts {
                     debug!("load_config_file chart config with name: '{}'", chart.name);
                     for series in &chart.sources {
                         debug!(" - load_config_file series with name: '{}'", series.name());
                     }
+                }
                 }
                 debug!("Finished load_config_file");
                 config
