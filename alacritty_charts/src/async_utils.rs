@@ -350,7 +350,7 @@ pub fn change_display_size(
 /// be loaded or requested. XXX: Config updates are not possible yet.
 pub fn async_coordinator(
     rx: mpsc::Receiver<AsyncChartTask>,
-    mut charts: Vec<TimeSeriesChart>,
+    mut chart_config: crate::ChartsConfig,
     height: f32,
     width: f32,
     padding_y: f32,
@@ -364,7 +364,7 @@ pub fn async_coordinator(
         padding_y,
         padding_x
     );
-    for chart in &mut charts {
+    for chart in &mut chart_config.charts {
         // Update the loaded item counters
         event!(
             Level::DEBUG,
@@ -385,16 +385,23 @@ pub fn async_coordinator(
     rx.for_each(move |message| {
         event!(Level::DEBUG, "async_coordinator: message: {:?}", message);
         match message {
-            AsyncChartTask::LoadResponse(req) => load_http_response(&mut charts, req, size),
+            AsyncChartTask::LoadResponse(req) => {
+                load_http_response(&mut chart_config.charts, req, size)
+            }
             AsyncChartTask::SendMetricsOpenGLData(chart_index, data_index, channel) => {
-                send_metrics_opengl_vecs(&charts, chart_index, data_index, channel);
+                send_metrics_opengl_vecs(&chart_config.charts, chart_index, data_index, channel);
             }
             AsyncChartTask::SendDecorationsOpenGLData(chart_index, data_index, channel) => {
-                send_decorations_opengl_data(&charts, chart_index, data_index, channel);
+                send_decorations_opengl_data(
+                    &chart_config.charts,
+                    chart_index,
+                    data_index,
+                    channel,
+                );
             }
             AsyncChartTask::ChangeDisplaySize(height, width, padding_y, padding_x, channel) => {
                 change_display_size(
-                    &mut charts,
+                    &mut chart_config.charts,
                     &mut size,
                     height,
                     width,
@@ -404,19 +411,18 @@ pub fn async_coordinator(
                 );
             }
             AsyncChartTask::IncrementInputCounter(epoch, value) => {
-                increment_internal_counter(&mut charts, "input", epoch, value, size);
+                increment_internal_counter(&mut chart_config.charts, "input", epoch, value, size);
             }
             AsyncChartTask::IncrementOutputCounter(epoch, value) => {
-                increment_internal_counter(&mut charts, "output", epoch, value, size);
+                increment_internal_counter(&mut chart_config.charts, "output", epoch, value, size);
             }
             AsyncChartTask::SendLastUpdatedEpoch(channel) => {
-                send_last_updated_epoch(&mut charts, channel);
+                send_last_updated_epoch(&mut chart_config.charts, channel);
             }
         };
         Ok(())
     })
 }
-
 /// `fetch_prometheus_response` gets data from prometheus and once data is ready
 /// it sends the results to the coordinator.
 fn fetch_prometheus_response(
