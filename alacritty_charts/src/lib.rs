@@ -431,6 +431,28 @@ pub struct ChartsConfig {
     pub charts: Vec<TimeSeriesChart>,
 }
 
+impl ChartsConfig {
+    /// Goes through the charts inside the ChartConfig and if position is not set it calculates it.
+    pub fn setup_chart_spacing(&mut self) {
+        let mut current_position = self.position;
+        for chart in &mut self.charts {
+            if chart.position.is_none() {
+                if let (Some(position), Some(dimensions)) = (self.position, self.default_dimensions)
+                {
+                    chart.position = current_position;
+                    current_position = position.x + dimensions.x;
+                } else {
+                    event!(
+                        Level::ERROR,
+                        "setup_chart_spacing: default dimensions and position were not given for charts and dimensions and positions are missing for chart: {}",
+                        chart.name
+                    );
+                }
+            }
+        }
+    }
+}
+
 /// `TimeSeriesChart` has an array of TimeSeries to display, it contains the
 /// X, Y position and has methods to draw in opengl.
 #[derive(Default, Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -1630,8 +1652,7 @@ mod tests {
         };
         let mut all_dups = TimeSeriesChart::default();
         all_dups.sources.push(TimeSeriesSource::default());
-        all_dups.width = 10.;
-        all_dups.height = 10.;
+        all_dups.dimensions = Some(Value2D { x: 10., y: 10. });
         // Test with 10 items only
         // So that every item takes 0.01
         all_dups.sources[0].series_mut().metrics_capacity = 10;
@@ -1646,8 +1667,7 @@ mod tests {
         assert_eq!(all_dups.get_deduped_opengl_vecs(0).len(), 4);
         let mut no_dups = TimeSeriesChart::default();
         no_dups.sources.push(TimeSeriesSource::default());
-        no_dups.width = 10.;
-        no_dups.height = 10.;
+        no_dups.dimensions = Some(Value2D { x: 10., y: 10. });
         // Test with 10 items only
         // So that every item takes 0.01
         no_dups.sources[0].series_mut().metrics_capacity = 10;
@@ -1841,8 +1861,7 @@ mod tests {
         };
         let mut chart_test = TimeSeriesChart::default();
         chart_test.sources.push(TimeSeriesSource::default());
-        chart_test.width = 10.;
-        chart_test.height = 10.;
+        chart_test.dimensions = Some(Value2D { x: 10., y: 10. });
         // Test with 5 items only
         // So that every item takes 0.01
         chart_test.sources[0].series_mut().metrics_capacity = 10;
@@ -1893,8 +1912,7 @@ mod tests {
             .decorations
             .push(Decoration::Reference(ReferencePointDecoration::default()));
         prom_test.sources.push(TimeSeriesSource::default());
-        prom_test.width = 12.;
-        prom_test.height = 10.;
+        prom_test.dimensions = Some(Value2D { x: 12., y: 10. });
         prom_test.sources[0].series_mut().metrics_capacity = 24;
         let point_1_metric = 4.5f64;
         let point_2_metric = 4.25f64;
@@ -2128,6 +2146,62 @@ mod tests {
                 -0.95,       // leftmost plus 0.01 * 5, rightmost
                 -0.9         // A bit below the max
             ]
+        );
+    }
+
+    #[test]
+    fn it_spaces_chart_config_dimensions_and_position() {
+        init_log();
+        let chart_config = ChartsConfig {
+            default_dimensions: Some(Value2D { x: 25., y: 100. }),
+            position: Some(Value2D { x: 200., y: 0. }),
+            charts: vec![],
+        };
+        let (size_test, mut chart_test) = simple_chart_setup_with_none();
+        chart_test.position = None;
+        chart_test.dimensions = None;
+        chart_config.charts.push(chart_test.clone());
+        chart_config.charts.push(chart_test.clone());
+        chart_config.charts.push(chart_test.clone());
+        chart_config.charts.push(chart_test.clone());
+        chart_config.charts.push(chart_test.clone());
+        chart_config.charts.push(chart_test.clone());
+        chart_config.setup_chart_spacing();
+        assert_eq!(
+            chart_config.charts[0].dimensions,
+            chart_config.default_dimensions
+        );
+        assert_eq!(
+            chart_config.charts[0].position,
+            Some(Value2D { x: 200., y: 0. })
+        );
+        assert_eq!(
+            chart_config.charts[1].position,
+            Some(Value2D { x: 225., y: 0. })
+        );
+        assert_eq!(
+            chart_config.charts[2].position,
+            Some(Value2D { x: 250., y: 0. })
+        );
+        assert_eq!(
+            chart_config.charts[3].position,
+            Some(Value2D { x: 275., y: 0. })
+        );
+        assert_eq!(
+            chart_config.charts[4].position,
+            Some(Value2D { x: 300., y: 0. })
+        );
+        assert_eq!(
+            chart_config.charts[5].position,
+            Some(Value2D { x: 325., y: 0. })
+        );
+        assert_eq!(
+            chart_config.charts[6].position,
+            Some(Value2D { x: 350., y: 0. })
+        );
+        assert_eq!(
+            chart_config.charts[6].dimensions,
+            chart_config.default_dimensions
         );
     }
 }
