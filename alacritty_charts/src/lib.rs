@@ -440,7 +440,10 @@ impl ChartsConfig {
                 if let (Some(position), Some(dimensions)) = (self.position, self.default_dimensions)
                 {
                     chart.position = current_position;
-                    current_position = position.x + dimensions.x;
+                    current_position = Some(Value2D {
+                        x: position.x + dimensions.x,
+                        y: 0.,
+                    });
                 } else {
                     event!(
                         Level::ERROR,
@@ -448,6 +451,9 @@ impl ChartsConfig {
                         chart.name
                     );
                 }
+            }
+            if chart.dimensions.is_none() {
+                chart.dimensions = self.default_dimensions;
             }
         }
     }
