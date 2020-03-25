@@ -437,19 +437,21 @@ impl ChartsConfig {
         let mut current_position = self.position;
         for chart in &mut self.charts {
             if chart.position.is_none() {
-                if let (Some(position), Some(dimensions)) = (self.position, self.default_dimensions)
+                current_position = if let (Some(position), Some(dimensions)) =
+                    (current_position, self.default_dimensions)
                 {
                     chart.position = current_position;
-                    current_position = Some(Value2D {
+                    Some(Value2D {
                         x: position.x + dimensions.x,
                         y: 0.,
-                    });
+                    })
                 } else {
                     event!(
                         Level::ERROR,
                         "setup_chart_spacing: default dimensions and position were not given for charts and dimensions and positions are missing for chart: {}",
                         chart.name
                     );
+                    self.position
                 }
             }
             if chart.dimensions.is_none() {
@@ -2158,12 +2160,12 @@ mod tests {
     #[test]
     fn it_spaces_chart_config_dimensions_and_position() {
         init_log();
-        let chart_config = ChartsConfig {
+        let mut chart_config = ChartsConfig {
             default_dimensions: Some(Value2D { x: 25., y: 100. }),
             position: Some(Value2D { x: 200., y: 0. }),
             charts: vec![],
         };
-        let (size_test, mut chart_test) = simple_chart_setup_with_none();
+        let (_size_test, mut chart_test) = simple_chart_setup_with_none();
         chart_test.position = None;
         chart_test.dimensions = None;
         chart_config.charts.push(chart_test.clone());
@@ -2202,11 +2204,7 @@ mod tests {
             Some(Value2D { x: 325., y: 0. })
         );
         assert_eq!(
-            chart_config.charts[6].position,
-            Some(Value2D { x: 350., y: 0. })
-        );
-        assert_eq!(
-            chart_config.charts[6].dimensions,
+            chart_config.charts[5].dimensions,
             chart_config.default_dimensions
         );
     }
