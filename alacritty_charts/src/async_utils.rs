@@ -358,14 +358,15 @@ pub fn async_coordinator(
 ) -> impl Future<Item = (), Error = ()> {
     event!(
         Level::DEBUG,
-        "async_coordinator: Starting, height: {}, width: {}, padding_y: {}, padding_x {}",
+        "async_coordinator: Starting, terminal height: {}, width: {}, padding_y: {}, padding_x {}",
         height,
         width,
         padding_y,
         padding_x
     );
+    chart_config.setup_chart_spacing();
     for chart in &mut chart_config.charts {
-        // Update the loaded item counters
+        // Caculate the spacing between charts
         event!(
             Level::DEBUG,
             "Finishing setup for sources in chart: '{}'",
@@ -694,18 +695,18 @@ pub fn spawn_async_tasks(
             let mut chart_array: Vec<TimeSeriesChart> = vec![];
             if let Some(chart_config) = &chart_config {
                 chart_array = chart_config.charts.clone();
+                let async_chart_config = chart_config.clone();
+                tokio_runtime.spawn(lazy(move || {
+                    async_coordinator(
+                        charts_rx,
+                        async_chart_config,
+                        charts_size_info.height,
+                        charts_size_info.width,
+                        charts_size_info.padding_y,
+                        charts_size_info.padding_x,
+                    )
+                }));
             }
-            let async_charts = chart_array.clone();
-            tokio_runtime.spawn(lazy(move || {
-                async_coordinator(
-                    charts_rx,
-                    async_charts,
-                    charts_size_info.height,
-                    charts_size_info.width,
-                    charts_size_info.padding_y,
-                    charts_size_info.padding_x,
-                )
-            }));
             let tokio_handle = tokio_runtime.handle().clone();
             tokio_runtime.spawn(lazy(move || {
                 spawn_charts_intervals(chart_array.clone(), charts_tx, tokio_handle);
