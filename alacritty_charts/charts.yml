@@ -6,6 +6,7 @@ charts:
   default_dimensions:
     x: 100
     y: 25
+  spacing: 10
   charts:
   - name: async loaded items
     position:
