@@ -427,6 +427,8 @@ pub struct ChartsConfig {
     pub position: Option<Value2D>,
     /// The default dimensions of the chart
     pub default_dimensions: Option<Value2D>,
+    /// The default spacing between the charts
+    pub spacing: f32,
     // An array of charts to draw
     pub charts: Vec<TimeSeriesChart>,
 }
@@ -442,7 +444,7 @@ impl ChartsConfig {
                 {
                     chart.position = current_position;
                     Some(Value2D {
-                        x: position.x + dimensions.x,
+                        x: position.x + dimensions.x + self.spacing,
                         y: 0.,
                     })
                 } else {
