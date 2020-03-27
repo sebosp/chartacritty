@@ -350,7 +350,7 @@ pub fn change_display_size(
 /// be loaded or requested. XXX: Config updates are not possible yet.
 pub fn async_coordinator(
     rx: mpsc::Receiver<AsyncChartTask>,
-    mut charts: Vec<TimeSeriesChart>,
+    mut chart_config: crate::ChartsConfig,
     height: f32,
     width: f32,
     padding_y: f32,
@@ -358,14 +358,15 @@ pub fn async_coordinator(
 ) -> impl Future<Item = (), Error = ()> {
     event!(
         Level::DEBUG,
-        "async_coordinator: Starting, height: {}, width: {}, padding_y: {}, padding_x {}",
+        "async_coordinator: Starting, terminal height: {}, width: {}, padding_y: {}, padding_x {}",
         height,
         width,
         padding_y,
         padding_x
     );
-    for chart in &mut charts {
-        // Update the loaded item counters
+    chart_config.setup_chart_spacing();
+    for chart in &mut chart_config.charts {
+        // Caculate the spacing between charts
         event!(
             Level::DEBUG,
             "Finishing setup for sources in chart: '{}'",
@@ -385,16 +386,23 @@ pub fn async_coordinator(
     rx.for_each(move |message| {
         event!(Level::DEBUG, "async_coordinator: message: {:?}", message);
         match message {
-            AsyncChartTask::LoadResponse(req) => load_http_response(&mut charts, req, size),
+            AsyncChartTask::LoadResponse(req) => {
+                load_http_response(&mut chart_config.charts, req, size)
+            }
             AsyncChartTask::SendMetricsOpenGLData(chart_index, data_index, channel) => {
-                send_metrics_opengl_vecs(&charts, chart_index, data_index, channel);
+                send_metrics_opengl_vecs(&chart_config.charts, chart_index, data_index, channel);
             }
             AsyncChartTask::SendDecorationsOpenGLData(chart_index, data_index, channel) => {
-                send_decorations_opengl_data(&charts, chart_index, data_index, channel);
+                send_decorations_opengl_data(
+                    &chart_config.charts,
+                    chart_index,
+                    data_index,
+                    channel,
+                );
             }
             AsyncChartTask::ChangeDisplaySize(height, width, padding_y, padding_x, channel) => {
                 change_display_size(
-                    &mut charts,
+                    &mut chart_config.charts,
                     &mut size,
                     height,
                     width,
@@ -404,19 +412,18 @@ pub fn async_coordinator(
                 );
             }
             AsyncChartTask::IncrementInputCounter(epoch, value) => {
-                increment_internal_counter(&mut charts, "input", epoch, value, size);
+                increment_internal_counter(&mut chart_config.charts, "input", epoch, value, size);
             }
             AsyncChartTask::IncrementOutputCounter(epoch, value) => {
-                increment_internal_counter(&mut charts, "output", epoch, value, size);
+                increment_internal_counter(&mut chart_config.charts, "output", epoch, value, size);
             }
             AsyncChartTask::SendLastUpdatedEpoch(channel) => {
-                send_last_updated_epoch(&mut charts, channel);
+                send_last_updated_epoch(&mut chart_config.charts, channel);
             }
         };
         Ok(())
     })
 }
-
 /// `fetch_prometheus_response` gets data from prometheus and once data is ready
 /// it sends the results to the coordinator.
 fn fetch_prometheus_response(
@@ -652,7 +659,7 @@ pub fn tokio_default_setup() -> (
     // Start the Async I/O runtime, this needs to run in a background thread because in OSX,
     // only the main thread can write to the graphics card.
     let (_tokio_thread, tokio_shutdown) = spawn_async_tasks(
-        vec![],
+        Some(crate::ChartsConfig::default()),
         charts_tx.clone(),
         charts_rx,
         handle_tx,
@@ -667,7 +674,7 @@ pub fn tokio_default_setup() -> (
 
 /// `spawn_async_tasks` Starts a background thread to be used for tokio for async tasks
 pub fn spawn_async_tasks(
-    charts: Vec<TimeSeriesChart>,
+    chart_config: Option<crate::ChartsConfig>,
     charts_tx: mpsc::Sender<AsyncChartTask>,
     charts_rx: mpsc::Receiver<AsyncChartTask>,
     handle_tx: std::sync::mpsc::Sender<current_thread::Handle>,
@@ -685,20 +692,24 @@ pub fn spawn_async_tasks(
             handle_tx
                 .send(tokio_runtime.handle())
                 .expect("Unable to give runtime handle to the main thread");
-            let async_charts = charts.clone();
-            tokio_runtime.spawn(lazy(move || {
-                async_coordinator(
-                    charts_rx,
-                    async_charts,
-                    charts_size_info.height,
-                    charts_size_info.width,
-                    charts_size_info.padding_y,
-                    charts_size_info.padding_x,
-                )
-            }));
+            let mut chart_array: Vec<TimeSeriesChart> = vec![];
+            if let Some(chart_config) = &chart_config {
+                chart_array = chart_config.charts.clone();
+                let async_chart_config = chart_config.clone();
+                tokio_runtime.spawn(lazy(move || {
+                    async_coordinator(
+                        charts_rx,
+                        async_chart_config,
+                        charts_size_info.height,
+                        charts_size_info.width,
+                        charts_size_info.padding_y,
+                        charts_size_info.padding_x,
+                    )
+                }));
+            }
             let tokio_handle = tokio_runtime.handle().clone();
             tokio_runtime.spawn(lazy(move || {
-                spawn_charts_intervals(charts.clone(), charts_tx, tokio_handle);
+                spawn_charts_intervals(chart_array.clone(), charts_tx, tokio_handle);
                 Ok(())
             }));
             tokio_runtime.spawn({

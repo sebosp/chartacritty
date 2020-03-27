@@ -9,9 +9,10 @@
 // -- mock the prometheus server and response
 // -- When disconnected from a server, it is not easy to know which one or why.
 // -- Add space for drawing the charts, right now we are decreasing 2 lines, but it breaks tmux
+// -- The dashboards should be toggable, some key combination
 // IN PROGRESS:
 // -- Group labels into separate colors (find something that does color spacing in rust)
-// -- The dashboards should be toggable, some key combination
+// -- Create a main offset and from there space and calculate the location of the charts
 // TODO:
 // -- When activated on toggle it could blur a portion of the screen
 // -- Create a TimeSeries inside the Term itself so that increments can be done synchronously but
@@ -418,6 +419,50 @@ impl SizeInfo {
     }
 }
 
+/// `ChartsConfig` contains a vector of charts and basic position of the charts,
+/// allowing to use a global position instead of individually setting up the chart position
+#[derive(Default, Debug, Serialize, Deserialize, PartialEq, Clone)]
+pub struct ChartsConfig {
+    /// The x,y coordinates in which the time series will start
+    pub position: Option<Value2D>,
+    /// The default dimensions of the chart
+    pub default_dimensions: Option<Value2D>,
+    /// The default spacing between the charts
+    pub spacing: f32,
+    // An array of charts to draw
+    pub charts: Vec<TimeSeriesChart>,
+}
+
+impl ChartsConfig {
+    /// Goes through the charts inside the ChartConfig and if position is not set it calculates it.
+    pub fn setup_chart_spacing(&mut self) {
+        let mut current_position = self.position;
+        for chart in &mut self.charts {
+            if chart.position.is_none() {
+                current_position = if let (Some(position), Some(dimensions)) =
+                    (current_position, self.default_dimensions)
+                {
+                    chart.position = current_position;
+                    Some(Value2D {
+                        x: position.x + dimensions.x + self.spacing,
+                        y: 0.,
+                    })
+                } else {
+                    event!(
+                        Level::ERROR,
+                        "setup_chart_spacing: default dimensions and position were not given for charts and dimensions and positions are missing for chart: {}",
+                        chart.name
+                    );
+                    self.position
+                }
+            }
+            if chart.dimensions.is_none() {
+                chart.dimensions = self.default_dimensions;
+            }
+        }
+    }
+}
+
 /// `TimeSeriesChart` has an array of TimeSeries to display, it contains the
 /// X, Y position and has methods to draw in opengl.
 #[derive(Default, Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -437,17 +482,15 @@ pub struct TimeSeriesChart {
     #[serde(default)]
     pub stats: TimeSeriesStats,
 
-    /// The offset in which the activity line should be drawn
+    /// The x,y position in which the time series should be drawn
+    /// If unspecified, a position will be reserved from the ChartsConfig offset values.
     #[serde(default)]
-    pub offset: Value2D,
+    pub position: Option<Value2D>,
 
-    /// The width of the activity chart/histogram
+    /// The dimensions of the chart.
+    /// If unspecified the default_dimensions are used from ChartsConfig
     #[serde(default)]
-    pub width: f32,
-
-    /// The height of the activity line region
-    #[serde(default)]
-    pub height: f32,
+    pub dimensions: Option<Value2D>,
 
     /// The opengl representation of the each series.
     #[serde(default)]
@@ -481,8 +524,14 @@ impl TimeSeriesChart {
             self.opengl_vecs.push(vec![]);
         }
         let mut display_size = display_size;
-        display_size.chart_height = self.height;
-        display_size.chart_width = self.width;
+        if let Some(dimensions) = self.dimensions {
+            display_size.chart_height = dimensions.y;
+            display_size.chart_width = dimensions.x;
+        } else {
+            // TODO: When the charts are first read, they should compose the dimensions.
+            // If we hit this, then we should recalculate from the global ChartsConfig default
+            // dimensions somehow
+        }
         // Get the opengl representation of the vector
         let opengl_vecs_capacity = self.sources[series_idx].series().active_items;
         if opengl_vecs_capacity > self.opengl_vecs[series_idx].capacity() {
@@ -495,7 +544,7 @@ impl TimeSeriesChart {
              {:?}",
             opengl_vecs_capacity,
             display_size,
-            self.offset,
+            self.position,
         );
         for source in &mut self.sources {
             if source.series().stats.is_dirty {
@@ -520,7 +569,7 @@ impl TimeSeriesChart {
         event!(
             Level::DEBUG,
             "update_series_opengl_vecs: width: {}, decorations_space: {}",
-            self.width,
+            display_size.chart_width,
             decorations_space
         );
         let missing_values_fill = self.sources[series_idx].series().get_missing_values_fill();
@@ -531,7 +580,7 @@ impl TimeSeriesChart {
             self.sources[series_idx].series().metrics_capacity,
             self.sources[series_idx].series()
         );
-        let tick_spacing = (self.width - decorations_space)
+        let tick_spacing = (display_size.chart_width - decorations_space)
             / self.sources[series_idx].series().metrics_capacity as f32;
         event!(
             Level::DEBUG,
@@ -547,11 +596,11 @@ impl TimeSeriesChart {
                 Some(x) => x,
                 None => missing_values_fill,
             };
-            let scaled_x = display_size.scale_x(x_value + self.offset.x);
+            let scaled_x = display_size.scale_x(x_value + self.position.unwrap_or_default().x);
             let scaled_y = display_size.scale_y(self.stats.max, y_value);
             // Adding twice to a vec, could this be made into one operation? Is this slow?
             // need to transform activity line values from varying levels into scaled [-1, 1]
-            // XXX: Move to Circular Buffer
+            // XXX: Move to Circular Buffer? Problem is Circular buffer is only meant for epochs
             if (idx + 1) * 2 > self.opengl_vecs[series_idx].len() {
                 self.opengl_vecs[series_idx].push(scaled_x);
                 self.opengl_vecs[series_idx].push(scaled_y);
@@ -566,7 +615,12 @@ impl TimeSeriesChart {
                 "update_series_opengl_vecs: Updating decoration {:?} vertices",
                 decoration
             );
-            decoration.update_opengl_vecs(display_size, self.offset, &self.stats, &self.sources);
+            decoration.update_opengl_vecs(
+                display_size,
+                self.position.unwrap_or_default(),
+                &self.stats,
+                &self.sources,
+            );
         }
         self.last_updated = std::time::SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -1608,8 +1662,7 @@ mod tests {
         };
         let mut all_dups = TimeSeriesChart::default();
         all_dups.sources.push(TimeSeriesSource::default());
-        all_dups.width = 10.;
-        all_dups.height = 10.;
+        all_dups.dimensions = Some(Value2D { x: 10., y: 10. });
         // Test with 10 items only
         // So that every item takes 0.01
         all_dups.sources[0].series_mut().metrics_capacity = 10;
@@ -1624,8 +1677,7 @@ mod tests {
         assert_eq!(all_dups.get_deduped_opengl_vecs(0).len(), 4);
         let mut no_dups = TimeSeriesChart::default();
         no_dups.sources.push(TimeSeriesSource::default());
-        no_dups.width = 10.;
-        no_dups.height = 10.;
+        no_dups.dimensions = Some(Value2D { x: 10., y: 10. });
         // Test with 10 items only
         // So that every item takes 0.01
         no_dups.sources[0].series_mut().metrics_capacity = 10;
@@ -1819,8 +1871,7 @@ mod tests {
         };
         let mut chart_test = TimeSeriesChart::default();
         chart_test.sources.push(TimeSeriesSource::default());
-        chart_test.width = 10.;
-        chart_test.height = 10.;
+        chart_test.dimensions = Some(Value2D { x: 10., y: 10. });
         // Test with 5 items only
         // So that every item takes 0.01
         chart_test.sources[0].series_mut().metrics_capacity = 10;
@@ -1871,8 +1922,7 @@ mod tests {
             .decorations
             .push(Decoration::Reference(ReferencePointDecoration::default()));
         prom_test.sources.push(TimeSeriesSource::default());
-        prom_test.width = 12.;
-        prom_test.height = 10.;
+        prom_test.dimensions = Some(Value2D { x: 12., y: 10. });
         prom_test.sources[0].series_mut().metrics_capacity = 24;
         let point_1_metric = 4.5f64;
         let point_2_metric = 4.25f64;
@@ -2106,6 +2156,58 @@ mod tests {
                 -0.95,       // leftmost plus 0.01 * 5, rightmost
                 -0.9         // A bit below the max
             ]
+        );
+    }
+
+    #[test]
+    fn it_spaces_chart_config_dimensions_and_position() {
+        init_log();
+        let mut chart_config = ChartsConfig {
+            default_dimensions: Some(Value2D { x: 25., y: 100. }),
+            position: Some(Value2D { x: 200., y: 0. }),
+            charts: vec![],
+        };
+        let (_size_test, mut chart_test) = simple_chart_setup_with_none();
+        chart_test.position = None;
+        chart_test.dimensions = None;
+        chart_config.charts.push(chart_test.clone());
+        chart_config.charts.push(chart_test.clone());
+        chart_config.charts.push(chart_test.clone());
+        chart_config.charts.push(chart_test.clone());
+        chart_config.charts.push(chart_test.clone());
+        chart_config.charts.push(chart_test.clone());
+        chart_config.setup_chart_spacing();
+        assert_eq!(
+            chart_config.charts[0].dimensions,
+            chart_config.default_dimensions
+        );
+        assert_eq!(
+            chart_config.charts[0].position,
+            Some(Value2D { x: 200., y: 0. })
+        );
+        assert_eq!(
+            chart_config.charts[1].position,
+            Some(Value2D { x: 225., y: 0. })
+        );
+        assert_eq!(
+            chart_config.charts[2].position,
+            Some(Value2D { x: 250., y: 0. })
+        );
+        assert_eq!(
+            chart_config.charts[3].position,
+            Some(Value2D { x: 275., y: 0. })
+        );
+        assert_eq!(
+            chart_config.charts[4].position,
+            Some(Value2D { x: 300., y: 0. })
+        );
+        assert_eq!(
+            chart_config.charts[5].position,
+            Some(Value2D { x: 325., y: 0. })
+        );
+        assert_eq!(
+            chart_config.charts[5].dimensions,
+            chart_config.default_dimensions
         );
     }
 }

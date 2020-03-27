@@ -126,8 +126,8 @@ pub struct Config<T> {
     #[serde(default, deserialize_with = "failure_default")]
     pub debug: Debug,
 
-    #[serde(default, deserialize_with = "failure_default")]
-    pub charts: Vec<crate::alacritty_charts::TimeSeriesChart>,
+    #[serde(default, deserialize_with = "option_explicit_none")]
+    pub charts: Option<crate::alacritty_charts::ChartsConfig>,
 
     /// Additional configuration options not directly required by the terminal
     #[serde(flatten)]
