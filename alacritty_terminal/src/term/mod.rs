@@ -935,16 +935,10 @@ impl<T> Term<T> {
         charts_tx: futures_mpsc::Sender<alacritty_charts::async_utils::AsyncChartTask>,
     ) -> Term<T> {
         // TODO: On Update, we should refresh this.
-        // TODO: Implement key combination to enabled/disable charts
-        let charts_enabled = !config.charts.is_empty();
 
         let num_cols = size.cols();
-        let num_lines = if charts_enabled {
-            // Remove 2 lines from display to draw the Charts
-            size.lines() - 2
-        } else {
-            size.lines()
-        };
+
+        let num_lines = size.lines();
 
         let history_size = config.scrolling.history() as usize;
         let grid = Grid::new(num_lines, num_cols, history_size, Cell::default());
@@ -956,7 +950,10 @@ impl<T> Term<T> {
         let scroll_region = Line(0)..grid.num_lines();
 
         let colors = color::List::from(&config.colors);
-
+        let mut charts_enabled = false;
+        if let Some(chart_config) = &config.charts {
+            charts_enabled = !chart_config.charts.is_empty();
+        }
         Term {
             dirty: false,
             visual_bell: VisualBell::new(config),
@@ -984,7 +981,11 @@ impl<T> Term<T> {
             is_focused: true,
             title: config.window.title.clone(),
             title_stack: Vec::new(),
-            charts_handle: TermChartsHandle { tokio_handle, charts_tx, enabled: charts_enabled },
+            charts_handle: TermChartsHandle {
+                tokio_handle,
+                charts_tx,
+                enabled: charts_enabled,
+            },
         }
     }
 
@@ -1179,10 +1180,6 @@ impl<T> Term<T> {
             num_lines = Line(2);
         }
 
-        if self.charts_handle.enabled {
-            num_lines -= 1;
-        }
-
         // Scroll up to keep cursor in terminal
         if self.cursor.point.line >= num_lines {
             let lines = self.cursor.point.line - num_lines + 1;
@@ -1291,6 +1288,11 @@ impl<T> Term<T> {
     }
 
     #[inline]
+    pub fn toggle_chart_show(&mut self) {
+        self.charts_handle.enabled = !self.charts_handle.enabled;
+    }
+
+    #[inline]
     pub fn mode(&self) -> &TermMode {
         &self.mode
     }
@@ -1355,6 +1357,11 @@ impl<T> Term<T> {
     #[inline]
     pub fn background_color(&self) -> Rgb {
         self.colors[NamedColor::Background]
+    }
+
+    #[inline]
+    pub fn charts_enabled(&self) -> bool {
+        self.charts_handle.enabled
     }
 
     #[inline]
@@ -1685,6 +1692,8 @@ impl<T: EventListener> Handler for Term<T> {
         trace!("Carriage return");
         self.cursor.point.col = Column(0);
         self.input_needs_wrap = false;
+        // Send the line drawn increment to the tokio background thread
+        self.increment_chart_output_counter(1f64);
     }
 
     /// Linefeed
@@ -1741,8 +1750,6 @@ impl<T: EventListener> Handler for Term<T> {
         if self.mode.contains(TermMode::LINE_FEED_NEW_LINE) {
             self.carriage_return();
         }
-        // Send the line drawn increment to the tokio background thread
-        self.increment_chart_output_counter(1f64);
     }
 
     #[inline]

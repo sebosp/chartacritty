@@ -213,8 +213,9 @@ alerting:
   - static_configs:
     - targets:
     # - alertmanager:9093
+# Load rules once and periodically evaluate them according to the global 'evaluation_interval'.
 rule_files:
-# - "first_rules.yml"
+  - "file_system.yml" # Contents are below in the Alerts within prometheus section
 # - "second_rules.yml"
 scrape_configs:
 - job_name: 'prometheus'
@@ -231,4 +232,21 @@ If you want to start prometheus and node_exporter manually, run:
 ```shell
 $ node_exporter &
 $ prometheus --log.level=warn --config.file ~/prometheus.yml &
+```
+
+### Alerts within prometheus
+An example of an alert in prometheus, using node_exporter, checking for file-systems with less than 1 GB
+Contents of `/etc/prometheus/file_system.yml`
+
+```yaml
+groups:
+- name: low filesystem free
+  rules:
+  - alert: LowFilesystemFree
+    expr: node_filesystem_free_bytes{} < 1000000000
+    for: 10m
+    labels:
+      severity: page
+    annotations:
+      summary: Low Filesystem space
 ```

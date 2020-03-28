@@ -187,6 +187,9 @@ pub enum Action {
 
     /// No action.
     None,
+
+    /// Toggles viewing or not Alacritty Charts
+    ToggleChartShow,
 }
 
 impl Default for Action {
@@ -680,7 +683,7 @@ impl<'a> Deserialize<'a> for RawBinding {
                 let mut mouse: Option<MouseButton> = None;
                 let mut command: Option<CommandWrapper> = None;
 
-                use ::serde::de::Error;
+                use serde::de::Error;
 
                 while let Some(struct_key) = map.next_key::<Field>()? {
                     match struct_key {
