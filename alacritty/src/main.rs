@@ -247,6 +247,8 @@ fn run(window_event_loop: GlutinEventLoop<Event>, config: Config) -> Result<(), 
     let message_buffer = MessageBuffer::new();
 
     // Event processor
+    //
+    // Need the Rc<RefCell<_>> here since a ref is shared in the resize callback
     let mut processor = Processor::new(
         event_loop::Notifier(loop_tx.clone()),
         message_buffer,
