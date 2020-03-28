@@ -12,7 +12,7 @@ use std::time::Instant;
 
 use glutin::dpi::PhysicalSize;
 use glutin::event::{ElementState, Event as GlutinEvent, ModifiersState, MouseButton, WindowEvent};
-use glutin::event_loop::{ControlFlow, EventLoop, EventLoopProxy};
+use glutin::event_loop::{ControlFlow, EventLoop, EventLoopProxy, EventLoopWindowTarget};
 use glutin::platform::desktop::EventLoopExtDesktop;
 use log::{debug, info, warn};
 use serde_json as json;
@@ -27,10 +27,10 @@ use alacritty_terminal::event::{Event, EventListener, Notify};
 use alacritty_terminal::grid::Scroll;
 use alacritty_terminal::index::{Column, Line, Point, Side};
 use alacritty_terminal::message_bar::{Message, MessageBuffer};
-use alacritty_terminal::selection::Selection;
+use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::cell::Cell;
-use alacritty_terminal::term::{SizeInfo, Term};
+use alacritty_terminal::term::{SizeInfo, Term, TermMode};
 #[cfg(not(windows))]
 use alacritty_terminal::tty;
 use alacritty_terminal::util::{limit, start_daemon};
@@ -40,6 +40,7 @@ use crate::config;
 use crate::config::Config;
 use crate::display::Display;
 use crate::input::{self, ActionContext as _, FONT_SIZE_STEP};
+use crate::url::{Url, Urls};
 use crate::window::Window;
 
 use futures::sync::mpsc as futures_mpsc;
@@ -70,6 +71,8 @@ pub struct ActionContext<'a, N, T> {
     pub message_buffer: &'a mut MessageBuffer,
     pub display_update_pending: &'a mut DisplayUpdate,
     pub config: &'a mut Config,
+    pub event_loop: &'a EventLoopWindowTarget<Event>,
+    pub urls: &'a Urls,
     font_size: &'a mut Size,
 }
 
@@ -85,7 +88,12 @@ impl<'a, N: Notify + 'a, T: EventListener> input::ActionContext<T> for ActionCon
     fn scroll(&mut self, scroll: Scroll) {
         self.terminal.scroll_display(scroll);
 
-        if let ElementState::Pressed = self.mouse().left_button_state {
+        // Update selection
+        if self.terminal.mode().contains(TermMode::VI)
+            && self.terminal.selection().as_ref().map(|s| s.is_empty()) != Some(true)
+        {
+            self.update_selection(self.terminal.vi_mode_cursor.point, Side::Right);
+        } else if ElementState::Pressed == self.mouse().left_button_state {
             let (x, y) = (self.mouse().x, self.mouse().y);
             let size_info = self.size_info();
             let point = size_info.pixels_to_coords(x, y);
@@ -115,35 +123,35 @@ impl<'a, N: Notify + 'a, T: EventListener> input::ActionContext<T> for ActionCon
         let point = self.terminal.visible_to_buffer(point);
 
         // Update selection if one exists
-        if let Some(ref mut selection) = self.terminal.selection_mut() {
+        let vi_mode = self.terminal.mode().contains(TermMode::VI);
+        if let Some(selection) = self.terminal.selection_mut() {
             selection.update(point, side);
+
+            if vi_mode {
+                selection.include_all();
+            }
+
+            self.terminal.dirty = true;
         }
+    }
 
+    fn start_selection(&mut self, ty: SelectionType, point: Point, side: Side) {
+        let point = self.terminal.visible_to_buffer(point);
+        *self.terminal.selection_mut() = Some(Selection::new(ty, point, side));
         self.terminal.dirty = true;
     }
 
-    fn simple_selection(&mut self, point: Point, side: Side) {
-        let point = self.terminal.visible_to_buffer(point);
-        *self.terminal.selection_mut() = Some(Selection::simple(point, side));
-        self.terminal.dirty = true;
-    }
-
-    fn block_selection(&mut self, point: Point, side: Side) {
-        let point = self.terminal.visible_to_buffer(point);
-        *self.terminal.selection_mut() = Some(Selection::block(point, side));
-        self.terminal.dirty = true;
-    }
-
-    fn semantic_selection(&mut self, point: Point) {
-        let point = self.terminal.visible_to_buffer(point);
-        *self.terminal.selection_mut() = Some(Selection::semantic(point));
-        self.terminal.dirty = true;
-    }
-
-    fn line_selection(&mut self, point: Point) {
-        let point = self.terminal.visible_to_buffer(point);
-        *self.terminal.selection_mut() = Some(Selection::lines(point));
-        self.terminal.dirty = true;
+    fn toggle_selection(&mut self, ty: SelectionType, point: Point, side: Side) {
+        match self.terminal.selection_mut() {
+            Some(selection) if selection.ty == ty && !selection.is_empty() => {
+                self.clear_selection();
+            },
+            Some(selection) if !selection.is_empty() => {
+                selection.ty = ty;
+                self.terminal.dirty = true;
+            },
+            _ => self.start_selection(ty, point, side),
+        }
     }
 
     fn mouse_coords(&self) -> Option<Point> {
@@ -155,6 +163,12 @@ impl<'a, N: Notify + 'a, T: EventListener> input::ActionContext<T> for ActionCon
         } else {
             None
         }
+    }
+
+    #[inline]
+    fn mouse_mode(&self) -> bool {
+        self.terminal.mode().intersects(TermMode::MOUSE_MODE)
+            && !self.terminal.mode().contains(TermMode::VI)
     }
 
     #[inline]
@@ -252,8 +266,36 @@ impl<'a, N: Notify + 'a, T: EventListener> input::ActionContext<T> for ActionCon
     fn config(&self) -> &Config {
         self.config
     }
+
+    fn event_loop(&self) -> &EventLoopWindowTarget<Event> {
+        self.event_loop
+    }
+
+    fn urls(&self) -> &Urls {
+        self.urls
+    }
+
+    /// Spawn URL launcher when clicking on URLs.
+    fn launch_url(&self, url: Url) {
+        if self.mouse.block_url_launcher {
+            return;
+        }
+
+        if let Some(ref launcher) = self.config.ui_config.mouse.url.launcher {
+            let mut args = launcher.args().to_vec();
+            let start = self.terminal.visible_to_buffer(url.start());
+            let end = self.terminal.visible_to_buffer(url.end());
+            args.push(self.terminal.bounds_to_string(start, end));
+
+            match start_daemon(launcher.program(), &args) {
+                Ok(_) => debug!("Launched {} with args {:?}", launcher.program(), args),
+                Err(_) => warn!("Unable to launch {} with args {:?}", launcher.program(), args),
+            }
+        }
+    }
 }
 
+#[derive(Debug)]
 pub enum ClickState {
     None,
     Click,
@@ -262,6 +304,7 @@ pub enum ClickState {
 }
 
 /// State of the mouse
+#[derive(Debug)]
 pub struct Mouse {
     pub x: usize,
     pub y: usize,
@@ -270,7 +313,7 @@ pub struct Mouse {
     pub right_button_state: ElementState,
     pub last_click_timestamp: Instant,
     pub click_state: ClickState,
-    pub scroll_px: i32,
+    pub scroll_px: f64,
     pub line: Line,
     pub column: Column,
     pub cell_side: Side,
@@ -290,11 +333,11 @@ impl Default for Mouse {
             middle_button_state: ElementState::Released,
             right_button_state: ElementState::Released,
             click_state: ClickState::None,
-            scroll_px: 0,
+            scroll_px: 0.,
             line: Line(0),
             column: Column(0),
             cell_side: Side::Left,
-            lines_scrolled: 0.0,
+            lines_scrolled: 0.,
             block_url_launcher: false,
             last_button: MouseButton::Other(0),
             inside_grid: false,
@@ -355,7 +398,7 @@ impl<N: Notify + OnResize> Processor<N> {
     {
         let mut event_queue = Vec::new();
 
-        event_loop.run_return(|event, _event_loop, control_flow| {
+        event_loop.run_return(|event, event_loop, control_flow| {
             if self.config.debug.print_events {
                 info!("glutin event: {:?}", event);
             }
@@ -416,9 +459,10 @@ impl<N: Notify + OnResize> Processor<N> {
                 window: &mut self.display.window,
                 font_size: &mut self.font_size,
                 config: &mut self.config,
+                urls: &self.display.urls,
+                event_loop,
             };
-            let mut processor =
-                input::Processor::new(context, &self.display.urls, &self.display.highlighted_url);
+            let mut processor = input::Processor::new(context, &self.display.highlighted_url);
 
             for event in event_queue.drain(..) {
                 Processor::handle_event(event, &mut processor);
@@ -526,10 +570,9 @@ impl<N: Notify + OnResize> Processor<N> {
             },
             GlutinEvent::RedrawRequested(_) => processor.ctx.terminal.dirty = true,
             GlutinEvent::WindowEvent { event, window_id, .. } => {
-                use glutin::event::WindowEvent::*;
                 match event {
-                    CloseRequested => processor.ctx.terminal.exit(),
-                    Resized(size) => {
+                    WindowEvent::CloseRequested => processor.ctx.terminal.exit(),
+                    WindowEvent::Resized(size) => {
                         #[cfg(windows)]
                         {
                             // Minimizing the window sends a Resize event with zero width and
@@ -544,7 +587,7 @@ impl<N: Notify + OnResize> Processor<N> {
                         processor.ctx.display_update_pending.dimensions = Some(size);
                         processor.ctx.terminal.dirty = true;
                     },
-                    KeyboardInput { input, is_synthetic: false, .. } => {
+                    WindowEvent::KeyboardInput { input, is_synthetic: false, .. } => {
                         processor.key_input(input);
                         if input.state == ElementState::Pressed {
                             // Hide cursor while typing
@@ -553,15 +596,16 @@ impl<N: Notify + OnResize> Processor<N> {
                             }
                         }
                     },
-                    ReceivedCharacter(c) => processor.received_char(c),
-                    MouseInput { state, button, .. } => {
-                        if !cfg!(target_os = "macos") || processor.ctx.terminal.is_focused {
-                            processor.ctx.window.set_mouse_visible(true);
-                            processor.mouse_input(state, button);
-                            processor.ctx.terminal.dirty = true;
-                        }
+                    WindowEvent::ReceivedCharacter(c) => processor.received_char(c),
+                    WindowEvent::MouseInput { state, button, .. } => {
+                        processor.ctx.window.set_mouse_visible(true);
+                        processor.mouse_input(state, button);
+                        processor.ctx.terminal.dirty = true;
                     },
-                    CursorMoved { position, .. } => {
+                    WindowEvent::ModifiersChanged(modifiers) => {
+                        processor.modifiers_input(modifiers)
+                    },
+                    WindowEvent::CursorMoved { position, .. } => {
                         let (x, y) = position.into();
                         let x = limit(x, 0, processor.ctx.size_info.width as i32);
                         let y = limit(y, 0, processor.ctx.size_info.height as i32);
@@ -569,11 +613,11 @@ impl<N: Notify + OnResize> Processor<N> {
                         processor.ctx.window.set_mouse_visible(true);
                         processor.mouse_moved(x as usize, y as usize);
                     },
-                    MouseWheel { delta, phase, .. } => {
+                    WindowEvent::MouseWheel { delta, phase, .. } => {
                         processor.ctx.window.set_mouse_visible(true);
                         processor.mouse_wheel_input(delta, phase);
                     },
-                    Focused(is_focused) => {
+                    WindowEvent::Focused(is_focused) => {
                         if window_id == processor.ctx.window.window_id() {
                             processor.ctx.terminal.is_focused = is_focused;
                             processor.ctx.terminal.dirty = true;
@@ -587,38 +631,33 @@ impl<N: Notify + OnResize> Processor<N> {
                             processor.on_focus_change(is_focused);
                         }
                     },
-                    DroppedFile(path) => {
+                    WindowEvent::DroppedFile(path) => {
                         let path: String = path.to_string_lossy().into();
                         processor.ctx.write_to_pty(path.into_bytes());
                     },
-                    CursorLeft { .. } => {
+                    WindowEvent::CursorLeft { .. } => {
                         processor.ctx.mouse.inside_grid = false;
 
                         if processor.highlighted_url.is_some() {
                             processor.ctx.terminal.dirty = true;
                         }
                     },
-                    KeyboardInput { is_synthetic: true, .. }
-                    | TouchpadPressure { .. }
-                    | ScaleFactorChanged { .. }
-                    | CursorEntered { .. }
-                    | AxisMotion { .. }
-                    | HoveredFileCancelled
-                    | Destroyed
-                    | ThemeChanged(_)
-                    | HoveredFile(_)
-                    | Touch(_)
-                    | Moved(_) => (),
-                }
-            },
-            GlutinEvent::DeviceEvent { event, .. } => {
-                use glutin::event::DeviceEvent::*;
-                if let ModifiersChanged(modifiers) = event {
-                    processor.modifiers_input(modifiers);
+                    WindowEvent::KeyboardInput { is_synthetic: true, .. }
+                    | WindowEvent::TouchpadPressure { .. }
+                    | WindowEvent::ScaleFactorChanged { .. }
+                    | WindowEvent::CursorEntered { .. }
+                    | WindowEvent::AxisMotion { .. }
+                    | WindowEvent::HoveredFileCancelled
+                    | WindowEvent::Destroyed
+                    | WindowEvent::ThemeChanged(_)
+                    | WindowEvent::HoveredFile(_)
+                    | WindowEvent::Touch(_)
+                    | WindowEvent::Moved(_) => (),
                 }
             },
             GlutinEvent::Suspended { .. }
             | GlutinEvent::NewEvents { .. }
+            | GlutinEvent::DeviceEvent { .. }
             | GlutinEvent::MainEventsCleared
             | GlutinEvent::RedrawEventsCleared
             | GlutinEvent::Resumed
@@ -629,20 +668,17 @@ impl<N: Notify + OnResize> Processor<N> {
     /// Check if an event is irrelevant and can be skipped
     fn skip_event(event: &GlutinEvent<Event>) -> bool {
         match event {
-            GlutinEvent::WindowEvent { event, .. } => {
-                use glutin::event::WindowEvent::*;
-                match event {
-                    KeyboardInput { is_synthetic: true, .. }
-                    | TouchpadPressure { .. }
-                    | CursorEntered { .. }
-                    | AxisMotion { .. }
-                    | HoveredFileCancelled
-                    | Destroyed
-                    | HoveredFile(_)
-                    | Touch(_)
-                    | Moved(_) => true,
-                    _ => false,
-                }
+            GlutinEvent::WindowEvent { event, .. } => match event {
+                WindowEvent::KeyboardInput { is_synthetic: true, .. }
+                | WindowEvent::TouchpadPressure { .. }
+                | WindowEvent::CursorEntered { .. }
+                | WindowEvent::AxisMotion { .. }
+                | WindowEvent::HoveredFileCancelled
+                | WindowEvent::Destroyed
+                | WindowEvent::HoveredFile(_)
+                | WindowEvent::Touch(_)
+                | WindowEvent::Moved(_) => true,
+                _ => false,
             },
             GlutinEvent::Suspended { .. }
             | GlutinEvent::NewEvents { .. }

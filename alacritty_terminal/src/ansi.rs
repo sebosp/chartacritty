@@ -19,8 +19,6 @@ use std::str;
 use log::{debug, trace};
 use serde::{Deserialize, Serialize};
 
-use vte;
-
 use crate::index::{Column, Line};
 use crate::term::color::Rgb;
 
@@ -156,7 +154,7 @@ pub trait TermInfo {
 /// writing specific handler impls for tests far easier.
 pub trait Handler {
     /// OSC to set window title
-    fn set_title(&mut self, _: &str) {}
+    fn set_title(&mut self, _: Option<String>) {}
 
     /// Set the cursor style
     fn set_cursor_style(&mut self, _: Option<CursorStyle>) {}
@@ -317,7 +315,7 @@ pub trait Handler {
     fn set_color(&mut self, _: usize, _: Rgb) {}
 
     /// Write a foreground/background color escape sequence with the current color
-    fn dynamic_color_sequence<W: io::Write>(&mut self, _: &mut W, _: u8, _: usize) {}
+    fn dynamic_color_sequence<W: io::Write>(&mut self, _: &mut W, _: u8, _: usize, _: &str) {}
 
     /// Reset an indexed color to original value
     fn reset_color(&mut self, _: usize) {}
@@ -326,7 +324,7 @@ pub trait Handler {
     fn set_clipboard(&mut self, _: u8, _: &[u8]) {}
 
     /// Write clipboard data to child.
-    fn write_clipboard<W: io::Write>(&mut self, _: u8, _: &mut W) {}
+    fn write_clipboard<W: io::Write>(&mut self, _: u8, _: &mut W, _: &str) {}
 
     /// Run the decaln routine.
     fn decaln(&mut self) {}
@@ -351,9 +349,11 @@ pub enum CursorStyle {
     Beam,
 
     /// Cursor is a box like `☐`
+    #[serde(skip)]
     HollowBlock,
 
     /// Invisible cursor
+    #[serde(skip)]
     Hidden,
 }
 
@@ -743,8 +743,9 @@ where
 
     // TODO replace OSC parsing with parser combinators
     #[inline]
-    fn osc_dispatch(&mut self, params: &[&[u8]]) {
+    fn osc_dispatch(&mut self, params: &[&[u8]], bell_terminated: bool) {
         let writer = &mut self.writer;
+        let terminator = if bell_terminated { "\x07" } else { "\x1b\\" };
 
         fn unhandled(params: &[&[u8]]) {
             let mut buf = String::new();
@@ -770,8 +771,10 @@ where
                         .iter()
                         .flat_map(|x| str::from_utf8(x))
                         .collect::<Vec<&str>>()
-                        .join(";");
-                    self.handler.set_title(&title);
+                        .join(";")
+                        .trim()
+                        .to_owned();
+                    self.handler.set_title(Some(title));
                     return;
                 }
                 unhandled(params);
@@ -814,7 +817,12 @@ where
                             if let Some(color) = xparse_color(param) {
                                 self.handler.set_color(index, color);
                             } else if param == b"?" {
-                                self.handler.dynamic_color_sequence(writer, dynamic_code, index);
+                                self.handler.dynamic_color_sequence(
+                                    writer,
+                                    dynamic_code,
+                                    index,
+                                    terminator,
+                                );
                             } else {
                                 unhandled(params);
                             }
@@ -852,7 +860,7 @@ where
 
                 let clipboard = params[1].get(0).unwrap_or(&b'c');
                 match params[2] {
-                    b"?" => self.handler.write_clipboard(*clipboard, writer),
+                    b"?" => self.handler.write_clipboard(*clipboard, writer, terminator),
                     base64 => self.handler.set_clipboard(*clipboard, base64),
                 }
             },
@@ -889,6 +897,7 @@ where
         }
     }
 
+    #[allow(clippy::cognitive_complexity)]
     #[inline]
     fn csi_dispatch(
         &mut self,
@@ -1018,10 +1027,7 @@ where
                 for arg in args {
                     match Mode::from_primitive(intermediate, *arg) {
                         Some(mode) => handler.unset_mode(mode),
-                        None => {
-                            unhandled!();
-                            return;
-                        },
+                        None => unhandled!(),
                     }
                 }
             },
@@ -1040,10 +1046,7 @@ where
                 for arg in args {
                     match Mode::from_primitive(intermediate, *arg) {
                         Some(mode) => handler.set_mode(mode),
-                        None => {
-                            unhandled!();
-                            return;
-                        },
+                        None => unhandled!(),
                     }
                 }
             },
@@ -1054,10 +1057,7 @@ where
                     for attr in attrs_from_sgr_parameters(args) {
                         match attr {
                             Some(attr) => handler.terminal_attribute(attr),
-                            None => {
-                                unhandled!();
-                                return;
-                            },
+                            None => unhandled!(),
                         }
                     }
                 }
@@ -1093,12 +1093,12 @@ where
     }
 
     #[inline]
-    fn esc_dispatch(&mut self, params: &[i64], intermediates: &[u8], _ignore: bool, byte: u8) {
+    fn esc_dispatch(&mut self, intermediates: &[u8], _ignore: bool, byte: u8) {
         macro_rules! unhandled {
             () => {{
                 debug!(
-                    "[unhandled] esc_dispatch params={:?}, ints={:?}, byte={:?} ({:02x})",
-                    params, intermediates, byte as char, byte
+                    "[unhandled] esc_dispatch ints={:?}, byte={:?} ({:02x})",
+                    intermediates, byte as char, byte
                 );
             }};
         }

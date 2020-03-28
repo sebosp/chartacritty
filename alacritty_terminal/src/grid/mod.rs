@@ -145,24 +145,21 @@ impl<T: GridCell + PartialEq + Copy> Grid<T> {
         Grid { raw, cols, lines, display_offset: 0, selection: None, max_scroll_limit: scrollback }
     }
 
-    pub fn buffer_to_visible(&self, point: impl Into<Point<usize>>) -> Option<Point<usize>> {
-        let mut point = point.into();
-
-        if point.line < self.display_offset || point.line >= self.display_offset + self.lines.0 {
-            return None;
+    /// Clamp a buffer point to the visible region.
+    pub fn clamp_buffer_to_visible(&self, point: Point<usize>) -> Point {
+        if point.line < self.display_offset {
+            Point::new(self.lines - 1, self.cols - 1)
+        } else if point.line >= self.display_offset + self.lines.0 {
+            Point::new(Line(0), Column(0))
+        } else {
+            // Since edgecases are handled, conversion is identical as visible to buffer
+            self.visible_to_buffer(point.into()).into()
         }
-
-        point.line = self.lines.0 + self.display_offset - point.line - 1;
-
-        Some(point)
     }
 
+    /// Convert viewport relative point to global buffer indexing.
     pub fn visible_to_buffer(&self, point: Point) -> Point<usize> {
-        Point { line: self.visible_line_to_buffer(point.line), col: point.col }
-    }
-
-    fn visible_line_to_buffer(&self, line: Line) -> usize {
-        self.line_to_offset(line) + self.display_offset
+        Point { line: self.lines.0 + self.display_offset - point.line.0 - 1, col: point.col }
     }
 
     /// Update the size of the scrollback history
@@ -208,8 +205,8 @@ impl<T: GridCell + PartialEq + Copy> Grid<T> {
         }
 
         match self.lines.cmp(&lines) {
-            Ordering::Less => self.grow_lines(lines, template),
-            Ordering::Greater => self.shrink_lines(lines),
+            Ordering::Less => self.grow_lines(lines, cursor_pos, template),
+            Ordering::Greater => self.shrink_lines(lines, cursor_pos, template),
             Ordering::Equal => (),
         }
 
@@ -239,17 +236,22 @@ impl<T: GridCell + PartialEq + Copy> Grid<T> {
     /// Alacritty keeps the cursor at the bottom of the terminal as long as there
     /// is scrollback available. Once scrollback is exhausted, new lines are
     /// simply added to the bottom of the screen.
-    fn grow_lines(&mut self, new_line_count: Line, template: &T) {
+    fn grow_lines(&mut self, new_line_count: Line, cursor_pos: &mut Point, template: &T) {
         let lines_added = new_line_count - self.lines;
 
         // Need to "resize" before updating buffer
         self.raw.grow_visible_lines(new_line_count, Row::new(self.cols, template));
         self.lines = new_line_count;
 
-        // Move existing lines up if there is no scrollback to fill new lines
         let history_size = self.history_size();
-        if lines_added.0 > history_size {
-            self.scroll_up(&(Line(0)..new_line_count), lines_added - history_size, template);
+        let from_history = min(history_size, lines_added.0);
+
+        // Move cursor down for all lines pulled from history
+        cursor_pos.line += from_history;
+
+        if from_history != lines_added.0 {
+            // Move existing lines up for every line that couldn't be pulled from history
+            self.scroll_up(&(Line(0)..new_line_count), lines_added - from_history, template);
         }
 
         self.decrease_scroll_limit(*lines_added);
@@ -267,11 +269,9 @@ impl<T: GridCell + PartialEq + Copy> Grid<T> {
         let mut new_empty_lines = 0;
         let mut reversed: Vec<Row<T>> = Vec::with_capacity(self.raw.len());
         for (i, mut row) in self.raw.drain().enumerate().rev() {
-            // FIXME: Rust 1.39.0+ allows moving in pattern guard here
             // Check if reflowing shoud be performed
-            let mut last_row = reversed.last_mut();
-            let last_row = match last_row {
-                Some(ref mut last_row) if should_reflow(last_row) => last_row,
+            let last_row = match reversed.last_mut() {
+                Some(last_row) if should_reflow(last_row) => last_row,
                 _ => {
                     reversed.push(row);
                     continue;
@@ -359,11 +359,9 @@ impl<T: GridCell + PartialEq + Copy> Grid<T> {
             }
 
             loop {
-                // FIXME: Rust 1.39.0+ allows moving in pattern guard here
                 // Check if reflowing shoud be performed
-                let wrapped = row.shrink(cols);
-                let mut wrapped = match wrapped {
-                    Some(_) if reflow => wrapped.unwrap(),
+                let mut wrapped = match row.shrink(cols) {
+                    Some(wrapped) if reflow => wrapped,
                     _ => {
                         new_raw.push(row);
                         break;
@@ -444,24 +442,17 @@ impl<T: GridCell + PartialEq + Copy> Grid<T> {
     /// of the terminal window.
     ///
     /// Alacritty takes the same approach.
-    fn shrink_lines(&mut self, target: Line) {
-        let prev = self.lines;
+    fn shrink_lines(&mut self, target: Line, cursor_pos: &mut Point, template: &T) {
+        // Scroll up to keep cursor inside the window
+        let required_scrolling = (cursor_pos.line + 1).saturating_sub(target.0);
+        if required_scrolling > 0 {
+            self.scroll_up(&(Line(0)..self.lines), Line(required_scrolling), template);
+        }
 
         self.selection = None;
-        self.raw.rotate(*prev as isize - *target as isize);
+        self.raw.rotate((self.lines - target).0 as isize);
         self.raw.shrink_visible_lines(target);
         self.lines = target;
-    }
-
-    /// Convert a Line index (active region) to a buffer offset
-    ///
-    /// # Panics
-    ///
-    /// This method will panic if `Line` is larger than the grid dimensions
-    pub fn line_to_offset(&self, line: Line) -> usize {
-        assert!(line < self.num_lines());
-
-        *(self.num_lines() - line - 1)
     }
 
     #[inline]
@@ -523,7 +514,7 @@ impl<T: GridCell + PartialEq + Copy> Grid<T> {
         if region.start == Line(0) {
             // Update display offset when not pinned to active area
             if self.display_offset != 0 {
-                self.display_offset = min(self.display_offset + *positions, self.len() - num_lines);
+                self.display_offset = min(self.display_offset + *positions, self.max_scroll_limit);
             }
 
             self.increase_scroll_limit(*positions, template);
@@ -666,11 +657,6 @@ impl<T> Grid<T> {
     #[inline]
     pub fn iter_from(&self, point: Point<usize>) -> GridIterator<'_, T> {
         GridIterator { grid: self, cur: point }
-    }
-
-    #[inline]
-    pub fn contains(&self, point: &Point) -> bool {
-        self.lines > point.line && self.cols > point.col
     }
 
     #[inline]
