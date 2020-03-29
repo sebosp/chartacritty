@@ -343,9 +343,9 @@ impl Display {
 
         // Subtract some space for the charts
         if let Some(chart_config) = &config.charts {
-        if !chart_config.charts.is_empty() {
-            pty_size.height -= pty_size.cell_height * 1f32;
-        }
+            if !chart_config.charts.is_empty() {
+                pty_size.height -= pty_size.cell_height * 1f32;
+            }
         }
 
         // Resize PTY
@@ -416,6 +416,12 @@ impl Display {
         let selection = !terminal.selection().as_ref().map(Selection::is_empty).unwrap_or(true);
         let mouse_mode = terminal.mode().intersects(TermMode::MOUSE_MODE);
 
+        let vi_mode_cursor = if terminal.mode().contains(TermMode::VI) {
+            Some(terminal.vi_mode_cursor)
+        } else {
+            None
+        };
+
         // Update IME position
         #[cfg(not(windows))]
         self.window.update_ime_position(&terminal, &self.size_info);
@@ -469,6 +475,13 @@ impl Display {
             }
         }
 
+        // Highlight URLs at the vi mode cursor position
+        if let Some(vi_mode_cursor) = vi_mode_cursor {
+            if let Some(url) = self.urls.find_at(vi_mode_cursor.point) {
+                rects.append(&mut url.rects(&metrics, &size_info));
+            }
+        }
+
         // Push visual bell after url/underline/strikeout rects
         if visual_bell_intensity != 0. {
             let visual_bell_rect = RenderRect::new(
@@ -517,51 +530,57 @@ impl Display {
         // Draw the charts
         if charts_enabled {
             if let Some(chart_config) = &config.charts {
-            for chart_idx in 0..chart_config.charts.len() {
-                debug!("draw: Drawing chart: {}", chart_config.charts[chart_idx].name);
-                for decoration_idx in 0..chart_config.charts[chart_idx].decorations.len() {
-                    // TODO: Change this to return a ChartOpenglData that contains:
-                    // (ves: Vec<f32>, alpha: f32)
-                    let opengl_data = alacritty_charts::async_utils::get_metric_opengl_data(
-                        charts_tx.clone(),
-                        chart_idx,
-                        decoration_idx,
-                        "decoration",
-                        tokio_handle.clone(),
-                    );
-                    self.renderer.draw_charts_line(
-                        &size_info,
-                        &opengl_data.0,
-                        Rgb {
-                            r: chart_config.charts[chart_idx].decorations[decoration_idx].color().r,
-                            g: chart_config.charts[chart_idx].decorations[decoration_idx].color().g,
-                            b: chart_config.charts[chart_idx].decorations[decoration_idx].color().b,
-                        },
-                        opengl_data.1,
-                    );
+                for chart_idx in 0..chart_config.charts.len() {
+                    debug!("draw: Drawing chart: {}", chart_config.charts[chart_idx].name);
+                    for decoration_idx in 0..chart_config.charts[chart_idx].decorations.len() {
+                        // TODO: Change this to return a ChartOpenglData that contains:
+                        // (ves: Vec<f32>, alpha: f32)
+                        let opengl_data = alacritty_charts::async_utils::get_metric_opengl_data(
+                            charts_tx.clone(),
+                            chart_idx,
+                            decoration_idx,
+                            "decoration",
+                            tokio_handle.clone(),
+                        );
+                        self.renderer.draw_charts_line(
+                            &size_info,
+                            &opengl_data.0,
+                            Rgb {
+                                r: chart_config.charts[chart_idx].decorations[decoration_idx]
+                                    .color()
+                                    .r,
+                                g: chart_config.charts[chart_idx].decorations[decoration_idx]
+                                    .color()
+                                    .g,
+                                b: chart_config.charts[chart_idx].decorations[decoration_idx]
+                                    .color()
+                                    .b,
+                            },
+                            opengl_data.1,
+                        );
+                    }
+                    for series_idx in 0..chart_config.charts[chart_idx].sources.len() {
+                        let opengl_data = alacritty_charts::async_utils::get_metric_opengl_data(
+                            charts_tx.clone(),
+                            chart_idx,
+                            series_idx,
+                            "metric_data",
+                            tokio_handle.clone(),
+                        );
+                        self.renderer.draw_charts_line(
+                            &size_info,
+                            &opengl_data.0,
+                            Rgb {
+                                r: chart_config.charts[chart_idx].sources[series_idx].color().r,
+                                g: chart_config.charts[chart_idx].sources[series_idx].color().g,
+                                b: chart_config.charts[chart_idx].sources[series_idx].color().b,
+                            },
+                            opengl_data.1,
+                        );
+                    }
+                    let chart_last_drawn =
+                        std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
                 }
-                for series_idx in 0..chart_config.charts[chart_idx].sources.len() {
-                    let opengl_data = alacritty_charts::async_utils::get_metric_opengl_data(
-                        charts_tx.clone(),
-                        chart_idx,
-                        series_idx,
-                        "metric_data",
-                        tokio_handle.clone(),
-                    );
-                    self.renderer.draw_charts_line(
-                        &size_info,
-                        &opengl_data.0,
-                        Rgb {
-                            r: chart_config.charts[chart_idx].sources[series_idx].color().r,
-                            g: chart_config.charts[chart_idx].sources[series_idx].color().g,
-                            b: chart_config.charts[chart_idx].sources[series_idx].color().b,
-                        },
-                        opengl_data.1,
-                    );
-                }
-                let chart_last_drawn =
-                    std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-            }
             }
         } else {
             debug!("Charts are not enabled");

@@ -4,11 +4,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.5.0-dev
+
+### Packaging
+
+- Minimum Rust version has been bumped to 1.39.0
+
+### Added
+
+- Default Command+N keybinding for SpawnNewInstance on macOS
+- Vi mode for copying text and opening links
+- `CopySelection` action which copies into selection buffer on Linux/BSD
+
+### Changed
+
+- Block cursor is no longer inverted at the start/end of a selection
+- Preserve selection on non-LMB or mouse mode clicks
+
 ## 0.4.2-dev
 
 ### Packaging
 
 - Minimum Rust version has been bumped to 1.37.0
+- Added Rust features `x11` and `wayland` to pick backends, with both enabled by default
+- Capitalized the Alacritty.desktop file
+
+### Added
+
+- Live config reload for `window.title`
 
 ### Changed
 
@@ -19,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The default value for `draw_bold_text_with_bright_colors` is now `false`
 - Mirror OSC query terminators instead of always using BEL
 - Increased Beam, Underline, and Hollow Block cursors' line widths
+- Dynamic title is not disabled anymore when `window.title` is set in config
 
 ### Fixed
 
@@ -48,17 +72,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Expansion of block-selection on partially selected full-width glyphs
 - Minimize action only works with decorations on macOS
 - Window permanently vanishing after hiding on macOS
-- Modifier key combinations like `Ctrl + Q` not generating characters on macOS
 - Handling of URLs with single quotes
 - Parser reset between DCS escapes
 - Parser stopping at unknown DEC private modes/SGR character attributes
 - Block selection appending duplicate newlines when last column is selected
 - Bitmap fonts being a bit smaller than they should be in some cases
 - Config reload creating alternate screen history instead of updating scrollback
+- Crash on Wayland compositors supporting `wl_seat` version 7+
+- Message bar not hiding after fixing wrong color value in config
+- Tabstops cleared on resize
+- Tabstops not breaking across lines
+- Crash when parsing DCS escape with more than 16 parameters
+- Ignoring of slow touchpad scrolling
+- Selection invisible when starting above viewport and ending below it
+- Clipboard not working after TTY switch on Wayland
+- Crash when pasting non UTF-8 string advertised as UTF-8 string on Wayland
+- Incorrect modifiers tracking on X11 and macOS, leading to 'sticky' modifiers
+- Crash when starting on Windows with missing dark mode support
+- Variables `XCURSOR_THEME` and `XCURSOR_SIZE` ignored on Wayland
+- Low resolution mouse cursor and decorations on HiDPI Wayland outputs
+- Decorations visible when in fullscreen on Wayland
+- Window size not persisted correctly after fullscreening on macOS
+- Crash on startup with some locales on X11
+- Shrinking terminal height in alt screen deleting primary screen content
 
 ### Removed
 
 - Config option `auto_scroll`, which is now always disabled
+- Config option `tabspaces`, which is now fixed at `8`
 
 ## 0.4.1
 

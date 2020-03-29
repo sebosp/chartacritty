@@ -183,6 +183,15 @@ please open an issue.
 emerge --onlydeps x11-terms/alacritty
 ```
 
+#### GNU Guix
+
+The following command can be used to get a shell with all development
+dependencies on [GNU Guix](https://guix.gnu.org/).
+
+```sh
+guix environment alacritty
+```
+
 #### Windows
 
 On windows you will need to have the `{architecture}-pc-windows-msvc` toolchain
@@ -224,7 +233,7 @@ system menus. To install the desktop entry for Alacritty, run
 ```sh
 sudo cp target/release/alacritty /usr/local/bin # or anywhere else in $PATH
 sudo cp extra/logo/alacritty-term.svg /usr/share/pixmaps/Alacritty.svg
-sudo desktop-file-install extra/linux/alacritty.desktop
+sudo desktop-file-install extra/linux/Alacritty.desktop
 sudo update-desktop-database
 ```
 

@@ -27,7 +27,7 @@ use crate::term::{Search, Term};
 
 /// A Point and side within that point.
 #[derive(Debug, Copy, Clone, PartialEq)]
-pub struct Anchor {
+struct Anchor {
     point: Point<usize>,
     side: Side,
 }
@@ -67,7 +67,7 @@ impl<L> SelectionRange<L> {
 
 /// Different kinds of selection.
 #[derive(Debug, Copy, Clone, PartialEq)]
-enum SelectionType {
+pub enum SelectionType {
     Simple,
     Block,
     Semantic,
@@ -94,48 +94,20 @@ enum SelectionType {
 /// [`update`]: enum.Selection.html#method.update
 #[derive(Debug, Clone, PartialEq)]
 pub struct Selection {
+    pub ty: SelectionType,
     region: Range<Anchor>,
-    ty: SelectionType,
 }
 
 impl Selection {
-    pub fn simple(location: Point<usize>, side: Side) -> Selection {
+    pub fn new(ty: SelectionType, location: Point<usize>, side: Side) -> Selection {
         Self {
             region: Range { start: Anchor::new(location, side), end: Anchor::new(location, side) },
-            ty: SelectionType::Simple,
+            ty,
         }
     }
 
-    pub fn block(location: Point<usize>, side: Side) -> Selection {
-        Self {
-            region: Range { start: Anchor::new(location, side), end: Anchor::new(location, side) },
-            ty: SelectionType::Block,
-        }
-    }
-
-    pub fn semantic(location: Point<usize>) -> Selection {
-        Self {
-            region: Range {
-                start: Anchor::new(location, Side::Left),
-                end: Anchor::new(location, Side::Right),
-            },
-            ty: SelectionType::Semantic,
-        }
-    }
-
-    pub fn lines(location: Point<usize>) -> Selection {
-        Self {
-            region: Range {
-                start: Anchor::new(location, Side::Left),
-                end: Anchor::new(location, Side::Right),
-            },
-            ty: SelectionType::Lines,
-        }
-    }
-
-    pub fn update(&mut self, location: Point<usize>, side: Side) {
-        self.region.end.point = location;
-        self.region.end.side = side;
+    pub fn update(&mut self, point: Point<usize>, side: Side) {
+        self.region.end = Anchor::new(point, side);
     }
 
     pub fn rotate(
@@ -231,6 +203,24 @@ impl Selection {
             },
             SelectionType::Semantic | SelectionType::Lines => false,
         }
+    }
+
+    /// Expand selection sides to include all cells.
+    pub fn include_all(&mut self) {
+        let (start, end) = (self.region.start.point, self.region.end.point);
+        let (start_side, end_side) = match self.ty {
+            SelectionType::Block
+                if start.col > end.col || (start.col == end.col && start.line < end.line) =>
+            {
+                (Side::Right, Side::Left)
+            },
+            SelectionType::Block => (Side::Left, Side::Right),
+            _ if Self::points_need_swap(start, end) => (Side::Right, Side::Left),
+            _ => (Side::Left, Side::Right),
+        };
+
+        self.region.start.side = start_side;
+        self.region.end.side = end_side;
     }
 
     /// Convert selection to grid coordinates.
@@ -346,6 +336,11 @@ impl Selection {
         // Remove first cell if selection starts at the right of a cell
         if start.side == Side::Right && start.point != end.point {
             start.point.col += 1;
+
+            // Wrap to next line when selection starts to the right of last column
+            if start.point.col == num_cols {
+                start.point = Point::new(start.point.line.saturating_sub(1), Column(0));
+            }
         }
 
         Some(SelectionRange { start: start.point, end: end.point, is_block: false })
@@ -387,7 +382,8 @@ impl Selection {
 /// look like [ B] and [E ].
 #[cfg(test)]
 mod tests {
-    use super::{Selection, SelectionRange};
+    use super::*;
+
     use crate::clipboard::Clipboard;
     use crate::config::MockConfig;
     use crate::event::{Event, EventListener};
@@ -429,7 +425,7 @@ mod tests {
     #[test]
     fn single_cell_left_to_right() {
         let location = Point { line: 0, col: Column(0) };
-        let mut selection = Selection::simple(location, Side::Left);
+        let mut selection = Selection::new(SelectionType::Simple, location, Side::Left);
         selection.update(location, Side::Right);
 
         assert_eq!(selection.to_range(&term(1, 1)).unwrap(), SelectionRange {
@@ -447,7 +443,7 @@ mod tests {
     #[test]
     fn single_cell_right_to_left() {
         let location = Point { line: 0, col: Column(0) };
-        let mut selection = Selection::simple(location, Side::Right);
+        let mut selection = Selection::new(SelectionType::Simple, location, Side::Right);
         selection.update(location, Side::Left);
 
         assert_eq!(selection.to_range(&term(1, 1)).unwrap(), SelectionRange {
@@ -464,7 +460,8 @@ mod tests {
     /// 3. [ B][E ]
     #[test]
     fn between_adjacent_cells_left_to_right() {
-        let mut selection = Selection::simple(Point::new(0, Column(0)), Side::Right);
+        let mut selection =
+            Selection::new(SelectionType::Simple, Point::new(0, Column(0)), Side::Right);
         selection.update(Point::new(0, Column(1)), Side::Left);
 
         assert_eq!(selection.to_range(&term(2, 1)), None);
@@ -477,7 +474,8 @@ mod tests {
     /// 3. [ E][B ]
     #[test]
     fn between_adjacent_cells_right_to_left() {
-        let mut selection = Selection::simple(Point::new(0, Column(1)), Side::Left);
+        let mut selection =
+            Selection::new(SelectionType::Simple, Point::new(0, Column(1)), Side::Left);
         selection.update(Point::new(0, Column(0)), Side::Right);
 
         assert_eq!(selection.to_range(&term(2, 1)), None);
@@ -493,7 +491,8 @@ mod tests {
     ///     [XX][XE][  ][  ][  ]
     #[test]
     fn across_adjacent_lines_upward_final_cell_exclusive() {
-        let mut selection = Selection::simple(Point::new(1, Column(1)), Side::Right);
+        let mut selection =
+            Selection::new(SelectionType::Simple, Point::new(1, Column(1)), Side::Right);
         selection.update(Point::new(0, Column(1)), Side::Right);
 
         assert_eq!(selection.to_range(&term(5, 2)).unwrap(), SelectionRange {
@@ -515,7 +514,8 @@ mod tests {
     ///     [XX][XB][  ][  ][  ]
     #[test]
     fn selection_bigger_then_smaller() {
-        let mut selection = Selection::simple(Point::new(0, Column(1)), Side::Right);
+        let mut selection =
+            Selection::new(SelectionType::Simple, Point::new(0, Column(1)), Side::Right);
         selection.update(Point::new(1, Column(1)), Side::Right);
         selection.update(Point::new(1, Column(0)), Side::Right);
 
@@ -530,7 +530,8 @@ mod tests {
     fn line_selection() {
         let num_lines = 10;
         let num_cols = 5;
-        let mut selection = Selection::lines(Point::new(0, Column(1)));
+        let mut selection =
+            Selection::new(SelectionType::Lines, Point::new(0, Column(1)), Side::Left);
         selection.update(Point::new(5, Column(1)), Side::Right);
         selection = selection.rotate(num_lines, num_cols, &(Line(0)..Line(num_lines)), 7).unwrap();
 
@@ -545,7 +546,8 @@ mod tests {
     fn semantic_selection() {
         let num_lines = 10;
         let num_cols = 5;
-        let mut selection = Selection::semantic(Point::new(0, Column(3)));
+        let mut selection =
+            Selection::new(SelectionType::Semantic, Point::new(0, Column(3)), Side::Left);
         selection.update(Point::new(5, Column(1)), Side::Right);
         selection = selection.rotate(num_lines, num_cols, &(Line(0)..Line(num_lines)), 7).unwrap();
 
@@ -560,7 +562,8 @@ mod tests {
     fn simple_selection() {
         let num_lines = 10;
         let num_cols = 5;
-        let mut selection = Selection::simple(Point::new(0, Column(3)), Side::Right);
+        let mut selection =
+            Selection::new(SelectionType::Simple, Point::new(0, Column(3)), Side::Right);
         selection.update(Point::new(5, Column(1)), Side::Right);
         selection = selection.rotate(num_lines, num_cols, &(Line(0)..Line(num_lines)), 7).unwrap();
 
@@ -575,7 +578,8 @@ mod tests {
     fn block_selection() {
         let num_lines = 10;
         let num_cols = 5;
-        let mut selection = Selection::block(Point::new(0, Column(3)), Side::Right);
+        let mut selection =
+            Selection::new(SelectionType::Block, Point::new(0, Column(3)), Side::Right);
         selection.update(Point::new(5, Column(1)), Side::Right);
         selection = selection.rotate(num_lines, num_cols, &(Line(0)..Line(num_lines)), 7).unwrap();
 
@@ -588,7 +592,8 @@ mod tests {
 
     #[test]
     fn simple_is_empty() {
-        let mut selection = Selection::simple(Point::new(0, Column(0)), Side::Right);
+        let mut selection =
+            Selection::new(SelectionType::Simple, Point::new(0, Column(0)), Side::Right);
         assert!(selection.is_empty());
         selection.update(Point::new(0, Column(1)), Side::Left);
         assert!(selection.is_empty());
@@ -598,7 +603,8 @@ mod tests {
 
     #[test]
     fn block_is_empty() {
-        let mut selection = Selection::block(Point::new(0, Column(0)), Side::Right);
+        let mut selection =
+            Selection::new(SelectionType::Block, Point::new(0, Column(0)), Side::Right);
         assert!(selection.is_empty());
         selection.update(Point::new(0, Column(1)), Side::Left);
         assert!(selection.is_empty());
@@ -616,7 +622,8 @@ mod tests {
     fn rotate_in_region_up() {
         let num_lines = 10;
         let num_cols = 5;
-        let mut selection = Selection::simple(Point::new(2, Column(3)), Side::Right);
+        let mut selection =
+            Selection::new(SelectionType::Simple, Point::new(2, Column(3)), Side::Right);
         selection.update(Point::new(5, Column(1)), Side::Right);
         selection =
             selection.rotate(num_lines, num_cols, &(Line(1)..Line(num_lines - 1)), 4).unwrap();
@@ -632,7 +639,8 @@ mod tests {
     fn rotate_in_region_down() {
         let num_lines = 10;
         let num_cols = 5;
-        let mut selection = Selection::simple(Point::new(5, Column(3)), Side::Right);
+        let mut selection =
+            Selection::new(SelectionType::Simple, Point::new(5, Column(3)), Side::Right);
         selection.update(Point::new(8, Column(1)), Side::Left);
         selection =
             selection.rotate(num_lines, num_cols, &(Line(1)..Line(num_lines - 1)), -5).unwrap();
@@ -648,7 +656,8 @@ mod tests {
     fn rotate_in_region_up_block() {
         let num_lines = 10;
         let num_cols = 5;
-        let mut selection = Selection::block(Point::new(2, Column(3)), Side::Right);
+        let mut selection =
+            Selection::new(SelectionType::Block, Point::new(2, Column(3)), Side::Right);
         selection.update(Point::new(5, Column(1)), Side::Right);
         selection =
             selection.rotate(num_lines, num_cols, &(Line(1)..Line(num_lines - 1)), 4).unwrap();
