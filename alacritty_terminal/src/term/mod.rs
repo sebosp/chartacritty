@@ -1209,32 +1209,6 @@ impl<T> Term<T> {
         self.tabs.resize(self.grid.num_cols());
     }
 
-    //    #[inline]
-    // pub fn get_input_activity_levels(&self) -> &ActivityLevels<u64> {
-    // &self.input_activity_levels
-    // }
-    //
-    // #[inline]
-    // pub fn get_output_activity_levels(&self) -> &ActivityLevels<u64> {
-    // &self.output_activity_levels
-    // }
-    //
-    // pub fn get_system_load(&self, granularity: &'static str) -> &ActivityLevels<f32> {
-    // match granularity {
-    // "1_min" => &self.load_avg_1_min,
-    // "5_min" => &self.load_avg_5_min,
-    // "10_min" => &self.load_avg_10_min,
-    // _ => &self.load_avg_1_min, // Unused default
-    // }
-    // }
-    // pub fn get_system_task_status(&self, status_type: &'static str) -> &ActivityLevels<u32> {
-    // match status_type {
-    // "total" => &self.tasks_total,
-    // "runnable" => &self.tasks_runnable,
-    // _ => &self.tasks_total, // Unused default
-    // }
-    // }
-
     pub fn increment_counter(&mut self, counter_type: &'static str, increment: f64) {
         let now = std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
         let send_increment_input_counter = self
