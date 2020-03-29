@@ -30,6 +30,15 @@ pub enum Side {
     Right,
 }
 
+impl Side {
+    pub fn opposite(self) -> Self {
+        match self {
+            Side::Right => Side::Left,
+            Side::Left => Side::Right,
+        }
+    }
+}
+
 /// Index in the grid using row, column notation
 #[derive(Debug, Clone, Copy, Default, Eq, PartialEq, Serialize, Deserialize, PartialOrd)]
 pub struct Point<L = Line> {
@@ -44,45 +53,68 @@ impl<L> Point<L> {
 
     #[inline]
     #[must_use = "this returns the result of the operation, without modifying the original"]
-    pub fn sub(mut self, num_cols: usize, length: usize, absolute_indexing: bool) -> Point<L>
+    pub fn sub(mut self, num_cols: usize, rhs: usize) -> Point<L>
     where
-        L: Copy + Add<usize, Output = L> + Sub<usize, Output = L>,
+        L: Copy + Default + Into<Line> + Add<usize, Output = L> + Sub<usize, Output = L>,
     {
-        let line_changes = f32::ceil(length.saturating_sub(self.col.0) as f32 / num_cols as f32);
-        if absolute_indexing {
-            self.line = self.line + line_changes as usize;
+        let line_changes =
+            (rhs.saturating_sub(self.col.0) as f32 / num_cols as f32).ceil() as usize;
+        if self.line.into() > Line(line_changes) {
+            self.line = self.line - line_changes;
         } else {
-            self.line = self.line - line_changes as usize;
+            self.line = Default::default();
         }
-        self.col = Column((num_cols + self.col.0 - length % num_cols) % num_cols);
+        self.col = Column((num_cols + self.col.0 - rhs % num_cols) % num_cols);
         self
     }
 
     #[inline]
     #[must_use = "this returns the result of the operation, without modifying the original"]
-    pub fn add(mut self, num_cols: usize, length: usize, absolute_indexing: bool) -> Point<L>
+    pub fn add(mut self, num_cols: usize, rhs: usize) -> Point<L>
     where
-        L: Copy + Add<usize, Output = L> + Sub<usize, Output = L>,
+        L: Copy + Default + Into<Line> + Add<usize, Output = L> + Sub<usize, Output = L>,
     {
-        let line_changes = (length + self.col.0) / num_cols;
-        if absolute_indexing {
+        self.line = self.line + (rhs + self.col.0) / num_cols;
+        self.col = Column((self.col.0 + rhs) % num_cols);
+        self
+    }
+
+    #[inline]
+    #[must_use = "this returns the result of the operation, without modifying the original"]
+    pub fn sub_absolute(mut self, num_cols: usize, rhs: usize) -> Point<L>
+    where
+        L: Copy + Default + Into<Line> + Add<usize, Output = L> + Sub<usize, Output = L>,
+    {
+        self.line =
+            self.line + (rhs.saturating_sub(self.col.0) as f32 / num_cols as f32).ceil() as usize;
+        self.col = Column((num_cols + self.col.0 - rhs % num_cols) % num_cols);
+        self
+    }
+
+    #[inline]
+    #[must_use = "this returns the result of the operation, without modifying the original"]
+    pub fn add_absolute(mut self, num_cols: usize, rhs: usize) -> Point<L>
+    where
+        L: Copy + Default + Into<Line> + Add<usize, Output = L> + Sub<usize, Output = L>,
+    {
+        let line_changes = (rhs + self.col.0) / num_cols;
+        if self.line.into() > Line(line_changes) {
             self.line = self.line - line_changes;
         } else {
-            self.line = self.line + line_changes;
+            self.line = Default::default();
         }
-        self.col = Column((self.col.0 + length) % num_cols);
+        self.col = Column((self.col.0 + rhs) % num_cols);
         self
     }
 }
 
 impl Ord for Point {
     fn cmp(&self, other: &Point) -> Ordering {
-        use std::cmp::Ordering::*;
         match (self.line.cmp(&other.line), self.col.cmp(&other.col)) {
-            (Equal, Equal) => Equal,
-            (Equal, ord) | (ord, Equal) => ord,
-            (Less, _) => Less,
-            (Greater, _) => Greater,
+            (Ordering::Equal, Ordering::Equal) => Ordering::Equal,
+            (Ordering::Equal, ord) | (ord, Ordering::Equal) => ord,
+            (Ordering::Less, _) => Ordering::Less,
+            (Ordering::Greater, _) => Ordering::Greater,
         }
     }
 }

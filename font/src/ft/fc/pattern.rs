@@ -23,7 +23,7 @@ use libc::{c_char, c_double, c_int};
 
 use super::ffi::FcResultMatch;
 use super::ffi::{FcBool, FcFontRenderPrepare, FcPatternGetBool, FcPatternGetDouble};
-use super::ffi::{FcChar8, FcConfigSubstitute, FcDefaultSubstitute, FcPattern};
+use super::ffi::{FcChar8, FcConfigSubstitute, FcDefaultSubstitute, FcPattern, FcPatternHash};
 use super::ffi::{FcPatternAddCharSet, FcPatternDestroy, FcPatternDuplicate, FcPatternGetCharSet};
 use super::ffi::{FcPatternAddDouble, FcPatternAddString, FcPatternCreate, FcPatternGetString};
 use super::ffi::{FcPatternAddInteger, FcPatternGetInteger, FcPatternPrint};
@@ -353,6 +353,21 @@ macro_rules! string_accessor {
     }
 }
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+pub struct PatternHash(pub u32);
+
+#[derive(Hash, Eq, PartialEq, Debug)]
+pub struct FTFaceLocation {
+    pub path: PathBuf,
+    pub index: isize,
+}
+
+impl FTFaceLocation {
+    pub fn new(path: PathBuf, index: isize) -> Self {
+        Self { path, index }
+    }
+}
+
 impl Pattern {
     pub fn new() -> Self {
         Self::default()
@@ -537,6 +552,10 @@ impl PatternRef {
         }
     }
 
+    pub fn hash(&self) -> PatternHash {
+        unsafe { PatternHash(FcPatternHash(self.as_ptr())) }
+    }
+
     /// Add charset to the pattern
     ///
     /// The referenced charset is copied by fontconfig internally using
@@ -574,6 +593,13 @@ impl PatternRef {
 
     pub fn file(&self, index: usize) -> Option<PathBuf> {
         unsafe { self.get_string(b"file\0").nth(index) }.map(From::from)
+    }
+
+    pub fn ft_face_location(&self, index: usize) -> Option<FTFaceLocation> {
+        match (self.file(index), self.index().next()) {
+            (Some(path), Some(index)) => Some(FTFaceLocation::new(path, index)),
+            _ => None,
+        }
     }
 
     pub fn config_substitute(&mut self, config: &ConfigRef, kind: MatchKind) {

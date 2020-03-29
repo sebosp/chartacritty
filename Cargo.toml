@@ -4,13 +4,9 @@ members = [
     "alacritty_terminal",
     "alacritty_charts",
     "font",
-    "winpty"
 ]
 
 [profile.release]
 lto = true
 debug = 1
 incremental = false
-
-[patch.crates-io]
-servo-freetype-sys = { path = "servo-freetype-proxy" }

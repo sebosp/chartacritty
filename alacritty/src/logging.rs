@@ -27,7 +27,6 @@ use std::sync::{Arc, Mutex};
 
 use glutin::event_loop::EventLoopProxy;
 use log::{self, Level};
-use time;
 
 use alacritty_terminal::event::Event;
 use alacritty_terminal::message_bar::Message;
@@ -86,7 +85,7 @@ impl log::Log for Logger {
 
     fn log(&self, record: &log::Record<'_>) {
         if self.enabled(record.metadata()) && record.target().starts_with("alacritty") {
-            let now = time::strftime("%F %R", &time::now()).unwrap();
+            let now = time::strftime("%F %T.%f", &time::now()).unwrap();
 
             let msg = if record.level() >= Level::Trace {
                 format!(

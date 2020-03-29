@@ -28,7 +28,7 @@ mod scrolling;
 mod visual_bell;
 mod window;
 
-use crate::ansi::{Color, CursorStyle, NamedColor};
+use crate::ansi::{CursorStyle, NamedColor};
 
 pub use crate::alacritty_charts;
 pub use crate::config::colors::Colors;
@@ -97,10 +97,6 @@ pub struct Config<T> {
     #[serde(default, deserialize_with = "failure_default")]
     live_config_reload: DefaultTrueBool,
 
-    /// Number of spaces in one tab
-    #[serde(default, deserialize_with = "failure_default")]
-    tabspaces: Tabspaces,
-
     /// How much scrolling history to keep
     #[serde(default, deserialize_with = "failure_default")]
     pub scrolling: Scrolling,
@@ -137,6 +133,10 @@ pub struct Config<T> {
     #[serde(skip)]
     pub hold: bool,
 
+    // TODO: REMOVED
+    #[serde(default, deserialize_with = "failure_default")]
+    pub tabspaces: Option<usize>,
+
     // TODO: DEPRECATED
     #[serde(default, deserialize_with = "failure_default")]
     pub render_timer: Option<bool>,
@@ -147,10 +147,6 @@ pub struct Config<T> {
 }
 
 impl<T> Config<T> {
-    pub fn tabspaces(&self) -> usize {
-        self.tabspaces.0
-    }
-
     #[inline]
     pub fn draw_bold_text_with_bright_colors(&self) -> bool {
         self.draw_bold_text_with_bright_colors
@@ -178,16 +174,28 @@ impl<T> Config<T> {
         self.dynamic_title.0
     }
 
-    /// Cursor foreground color
+    /// Cursor foreground color.
     #[inline]
     pub fn cursor_text_color(&self) -> Option<Rgb> {
         self.colors.cursor.text
     }
 
-    /// Cursor background color
+    /// Cursor background color.
     #[inline]
-    pub fn cursor_cursor_color(&self) -> Option<Color> {
-        self.colors.cursor.cursor.map(|_| Color::Named(NamedColor::Cursor))
+    pub fn cursor_cursor_color(&self) -> Option<NamedColor> {
+        self.colors.cursor.cursor.map(|_| NamedColor::Cursor)
+    }
+
+    /// Vi mode cursor foreground color.
+    #[inline]
+    pub fn vi_mode_cursor_text_color(&self) -> Option<Rgb> {
+        self.colors.vi_mode_cursor.text
+    }
+
+    /// Vi mode cursor background color.
+    #[inline]
+    pub fn vi_mode_cursor_cursor_color(&self) -> Option<Rgb> {
+        self.colors.vi_mode_cursor.cursor
     }
 
     #[inline]
@@ -238,18 +246,14 @@ impl Default for EscapeChars {
 }
 
 #[serde(default)]
-#[derive(Copy, Clone, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Deserialize, Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct Cursor {
     #[serde(deserialize_with = "failure_default")]
     pub style: CursorStyle,
+    #[serde(deserialize_with = "option_explicit_none")]
+    pub vi_mode_style: Option<CursorStyle>,
     #[serde(deserialize_with = "failure_default")]
     unfocused_hollow: DefaultTrueBool,
-}
-
-impl Default for Cursor {
-    fn default() -> Self {
-        Self { style: Default::default(), unfocused_hollow: Default::default() }
-    }
 }
 
 impl Cursor {
@@ -328,15 +332,6 @@ impl<'a> Deserialize<'a> for Alpha {
         D: Deserializer<'a>,
     {
         Ok(Alpha::new(f32::deserialize(deserializer)?))
-    }
-}
-
-#[derive(Deserialize, Copy, Clone, Debug, PartialEq, Eq)]
-struct Tabspaces(usize);
-
-impl Default for Tabspaces {
-    fn default() -> Self {
-        Tabspaces(8)
     }
 }
 

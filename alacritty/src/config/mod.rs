@@ -7,9 +7,6 @@ use std::path::PathBuf;
 #[cfg(windows)]
 use dirs;
 use log::{error, warn};
-use serde_yaml;
-#[cfg(not(windows))]
-use xdg;
 
 use alacritty_terminal::config::{Config as TermConfig, LOG_TARGET_CONFIG};
 
@@ -18,7 +15,7 @@ pub mod monitor;
 mod mouse;
 mod ui_config;
 
-pub use crate::config::bindings::{Action, Binding, Key};
+pub use crate::config::bindings::{Action, Binding, Key, ViAction};
 #[cfg(test)]
 pub use crate::config::mouse::{ClickHandler, Mouse};
 use crate::config::ui_config::UIConfig;
@@ -210,6 +207,14 @@ fn print_deprecation_warnings(config: &Config) {
             target: LOG_TARGET_CONFIG,
             "Config scrolling.auto_scroll has been removed and is now always disabled, it can be \
              safely removed from the config"
+        );
+    }
+
+    if config.tabspaces.is_some() {
+        warn!(
+            target: LOG_TARGET_CONFIG,
+            "Config tabspaces has been removed and is now always 8, it can be safely removed from \
+             the config"
         );
     }
 }

@@ -42,7 +42,7 @@ impl Url {
     }
 
     pub fn end(&self) -> Point {
-        self.lines[self.lines.len() - 1].end.sub(self.num_cols, self.end_offset as usize, false)
+        self.lines[self.lines.len() - 1].end.sub(self.num_cols, self.end_offset as usize)
     }
 }
 
@@ -83,7 +83,7 @@ impl Urls {
         let end = point;
 
         // Reset URL when empty cells have been skipped
-        if point != Point::default() && Some(point.sub(num_cols, 1, false)) != self.last_point {
+        if point != Point::default() && Some(point.sub(num_cols, 1)) != self.last_point {
             self.reset();
         }
 
@@ -147,6 +147,7 @@ impl Urls {
         url.end_offset = end_offset;
     }
 
+    /// Find URL below the mouse cursor.
     pub fn highlighted(
         &self,
         config: &Config,
@@ -171,12 +172,16 @@ impl Urls {
             return None;
         }
 
+        self.find_at(Point::new(mouse.line, mouse.column))
+    }
+
+    /// Find URL at location.
+    pub fn find_at(&self, point: Point) -> Option<Url> {
         for url in &self.urls {
-            if (url.start()..=url.end()).contains(&Point::new(mouse.line, mouse.column)) {
+            if (url.start()..=url.end()).contains(&point) {
                 return Some(url.clone());
             }
         }
-
         None
     }
 
