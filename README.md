@@ -15,6 +15,9 @@ A background thread is started for tokio, it is in charge of:
 - using timers to load data in intervals
 - maintaining a representation of the loaded data in OpenGL and serving it to clients
 
+## Last merge date from upstream/master (real alacritty)
+- 2020-03-26 (fde2424)
+
 ## License
 
 Alacritty is released under the [Apache License, Version 2.0].
