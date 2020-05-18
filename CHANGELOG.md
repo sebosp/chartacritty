@@ -8,20 +8,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Packaging
 
-- Minimum Rust version has been bumped to 1.39.0
+- Minimum Rust version has been bumped to 1.41.0
+- Prebuilt Linux binaries have been removed
 
 ### Added
 
 - Default Command+N keybinding for SpawnNewInstance on macOS
 - Vi mode for copying text and opening links
 - `CopySelection` action which copies into selection buffer on Linux/BSD
+- Option `cursor.thickness` to set terminal cursor thickness
+- Font fallback on Windows
+- Support for Fontconfig embolden and matrix options
 
 ### Changed
 
 - Block cursor is no longer inverted at the start/end of a selection
 - Preserve selection on non-LMB or mouse mode clicks
+- Wayland client side decorations are now based on config colorscheme
+- Low resolution window decoration icon on Windows
+- Mouse bindings for additional buttons need to be specified as a number not a string
+- Don't hide cursor on modifier press with `mouse.hide_when_typing` enabled
+- `Shift + Backspace` now sends `^?` instead of `^H`
+- Default color scheme is now `Tomorrow Night` with the bright colors of `Tomorrow Night Bright`
 
-## 0.4.2-dev
+### Fixed
+
+- Tabstops not being reset with `reset`
+- Selection not cleared when switching between main and alt grid
+- Fallback to `LC_CTYPE=UTF-8` on macOS without valid system locale
+- Resize lag on launch under some X11 wms
+- Increased input latency due to vsync behavior on X11
+- Freeze when application is invisible on Wayland
+- Emoji colors blending with terminal background
+- Fix escapes prematurely terminated by terminators in unicode glyphs
+- Incorrect location when clicking inside an unfocused window on macOS
+- Startup mode `Maximized` on Windows
+- Crash when writing a fullwidth character in the last column with auto-wrap mode disabled
+
+## 0.4.2
 
 ### Packaging
 

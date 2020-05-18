@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
-//! Handle input from glutin
+//! Handle input from glutin.
 //!
-//! Certain key combinations should send some escape sequence back to the pty.
+//! Certain key combinations should send some escape sequence back to the PTY.
 //! In order to figure that out, state about which modifier keys are pressed
 //! needs to be tracked. Additionally, we need a bit of a state machine to
 //! determine what to do when a non-modifier key is pressed.
@@ -50,7 +50,7 @@ use crate::event::{ClickState, Mouse};
 use crate::url::{Url, Urls};
 use crate::window::Window;
 
-/// Font size change interval
+/// Font size change interval.
 pub const FONT_SIZE_STEP: f32 = 0.5;
 
 /// Processes input from glutin.
@@ -100,7 +100,7 @@ trait Execute<T: EventListener> {
 }
 
 impl<T, U: EventListener> Execute<U> for Binding<T> {
-    /// Execute the action associate with this binding
+    /// Execute the action associate with this binding.
     #[inline]
     fn execute<A: ActionContext<U>>(&self, ctx: &mut A) {
         self.action.execute(ctx)
@@ -116,7 +116,7 @@ impl Action {
         let cursor_point = ctx.terminal().vi_mode_cursor.point;
         ctx.toggle_selection(ty, cursor_point, Side::Left);
 
-        // Make sure initial selection is not empty
+        // Make sure initial selection is not empty.
         if let Some(selection) = ctx.terminal_mut().selection_mut() {
             selection.include_all();
         }
@@ -128,6 +128,10 @@ impl<T: EventListener> Execute<T> for Action {
     fn execute<A: ActionContext<T>>(&self, ctx: &mut A) {
         match *self {
             Action::Esc(ref s) => {
+                if ctx.config().ui_config.mouse.hide_when_typing {
+                    ctx.window_mut().set_mouse_visible(false);
+                }
+
                 ctx.clear_selection();
                 ctx.scroll(Scroll::Bottom);
                 ctx.write_to_pty(s.clone().into_bytes())
@@ -171,7 +175,13 @@ impl<T: EventListener> Execute<T> for Action {
                     ctx.launch_url(url);
                 }
             },
-            Action::ViMotion(motion) => ctx.terminal_mut().vi_motion(motion),
+            Action::ViMotion(motion) => {
+                if ctx.config().ui_config.mouse.hide_when_typing {
+                    ctx.window_mut().set_mouse_visible(false);
+                }
+
+                ctx.terminal_mut().vi_motion(motion)
+            },
             Action::ToggleFullscreen => ctx.window_mut().toggle_fullscreen(),
             #[cfg(target_os = "macos")]
             Action::ToggleSimpleFullscreen => ctx.window_mut().toggle_simple_fullscreen(),
@@ -185,7 +195,7 @@ impl<T: EventListener> Execute<T> for Action {
             Action::DecreaseFontSize => ctx.change_font_size(FONT_SIZE_STEP * -1.),
             Action::ResetFontSize => ctx.reset_font_size(),
             Action::ScrollPageUp => {
-                // Move vi mode cursor
+                // Move vi mode cursor.
                 let term = ctx.terminal_mut();
                 let scroll_lines = term.grid().num_lines().0 as isize;
                 term.vi_mode_cursor = term.vi_mode_cursor.scroll(term, scroll_lines);
@@ -193,7 +203,7 @@ impl<T: EventListener> Execute<T> for Action {
                 ctx.scroll(Scroll::PageUp);
             },
             Action::ScrollPageDown => {
-                // Move vi mode cursor
+                // Move vi mode cursor.
                 let term = ctx.terminal_mut();
                 let scroll_lines = -(term.grid().num_lines().0 as isize);
                 term.vi_mode_cursor = term.vi_mode_cursor.scroll(term, scroll_lines);
@@ -201,7 +211,7 @@ impl<T: EventListener> Execute<T> for Action {
                 ctx.scroll(Scroll::PageDown);
             },
             Action::ScrollHalfPageUp => {
-                // Move vi mode cursor
+                // Move vi mode cursor.
                 let term = ctx.terminal_mut();
                 let scroll_lines = term.grid().num_lines().0 as isize / 2;
                 term.vi_mode_cursor = term.vi_mode_cursor.scroll(term, scroll_lines);
@@ -209,7 +219,7 @@ impl<T: EventListener> Execute<T> for Action {
                 ctx.scroll(Scroll::Lines(scroll_lines));
             },
             Action::ScrollHalfPageDown => {
-                // Move vi mode cursor
+                // Move vi mode cursor.
                 let term = ctx.terminal_mut();
                 let scroll_lines = -(term.grid().num_lines().0 as isize / 2);
                 term.vi_mode_cursor = term.vi_mode_cursor.scroll(term, scroll_lines);
@@ -217,7 +227,7 @@ impl<T: EventListener> Execute<T> for Action {
                 ctx.scroll(Scroll::Lines(scroll_lines));
             },
             Action::ScrollLineUp => {
-                // Move vi mode cursor
+                // Move vi mode cursor.
                 let term = ctx.terminal();
                 if term.grid().display_offset() != term.grid().history_size()
                     && term.vi_mode_cursor.point.line + 1 != term.grid().num_lines()
@@ -228,7 +238,7 @@ impl<T: EventListener> Execute<T> for Action {
                 ctx.scroll(Scroll::Lines(1));
             },
             Action::ScrollLineDown => {
-                // Move vi mode cursor
+                // Move vi mode cursor.
                 if ctx.terminal().grid().display_offset() != 0
                     && ctx.terminal().vi_mode_cursor.point.line.0 != 0
                 {
@@ -240,16 +250,19 @@ impl<T: EventListener> Execute<T> for Action {
             Action::ScrollToTop => {
                 ctx.scroll(Scroll::Top);
 
-                // Move vi mode cursor
+                // Move vi mode cursor.
                 ctx.terminal_mut().vi_mode_cursor.point.line = Line(0);
                 ctx.terminal_mut().vi_motion(ViMotion::FirstOccupied);
             },
             Action::ScrollToBottom => {
                 ctx.scroll(Scroll::Bottom);
 
-                // Move vi mode cursor
+                // Move vi mode cursor.
                 let term = ctx.terminal_mut();
                 term.vi_mode_cursor.point.line = term.grid().num_lines() - 1;
+
+                // Move to beginning twice, to always jump across linewraps.
+                term.vi_motion(ViMotion::FirstOccupied);
                 term.vi_motion(ViMotion::FirstOccupied);
             },
             Action::ClearHistory => ctx.terminal_mut().clear_screen(ClearMode::Saved),
@@ -315,7 +328,7 @@ impl<'a, T: EventListener, A: ActionContext<T>> Processor<'a, T, A> {
         let cell_changed =
             point.line != self.ctx.mouse().line || point.col != self.ctx.mouse().column;
 
-        // If the mouse hasn't changed cells, do nothing
+        // If the mouse hasn't changed cells, do nothing.
         if !cell_changed
             && self.ctx.mouse().cell_side == cell_side
             && self.ctx.mouse().inside_grid == inside_grid
@@ -328,10 +341,10 @@ impl<'a, T: EventListener, A: ActionContext<T>> Processor<'a, T, A> {
         self.ctx.mouse_mut().line = point.line;
         self.ctx.mouse_mut().column = point.col;
 
-        // Don't launch URLs if mouse has moved
+        // Don't launch URLs if mouse has moved.
         self.ctx.mouse_mut().block_url_launcher = true;
 
-        // Update mouse state and check for URL change
+        // Update mouse state and check for URL change.
         let mouse_state = self.mouse_state();
         self.update_url_state(&mouse_state);
         self.ctx.window_mut().set_mouse_cursor(mouse_state.into());
@@ -340,10 +353,10 @@ impl<'a, T: EventListener, A: ActionContext<T>> Processor<'a, T, A> {
         if self.ctx.mouse().left_button_state == ElementState::Pressed
             && (self.ctx.modifiers().shift() || !self.ctx.mouse_mode())
         {
-            // Treat motion over message bar like motion over the last line
+            // Treat motion over message bar like motion over the last line.
             let line = min(point.line, last_term_line);
 
-            // Move vi mode cursor to mouse cursor position
+            // Move vi mode cursor to mouse cursor position.
             if self.ctx.terminal().mode().contains(TermMode::VI) {
                 self.ctx.terminal_mut().vi_mode_cursor.point = point;
             }
@@ -378,7 +391,7 @@ impl<'a, T: EventListener, A: ActionContext<T>> Processor<'a, T, A> {
         let end_of_grid = size_info.width - size_info.padding_x - additional_padding;
 
         if cell_x > half_cell_width
-            // Edge case when mouse leaves the window
+            // Edge case when mouse leaves the window.
             || x as f32 >= end_of_grid
         {
             Side::Right
@@ -433,7 +446,7 @@ impl<'a, T: EventListener, A: ActionContext<T>> Processor<'a, T, A> {
     }
 
     fn mouse_report(&mut self, button: u8, state: ElementState) {
-        // Calculate modifiers value
+        // Calculate modifiers value.
         let mut mods = 0;
         let modifiers = self.ctx.modifiers();
         if modifiers.shift() {
@@ -446,7 +459,7 @@ impl<'a, T: EventListener, A: ActionContext<T>> Processor<'a, T, A> {
             mods += 16;
         }
 
-        // Report mouse events
+        // Report mouse events.
         if self.ctx.terminal().mode().contains(TermMode::SGR_MOUSE) {
             self.sgr_mouse_report(button + mods, state);
         } else if let ElementState::Released = state {
@@ -456,89 +469,79 @@ impl<'a, T: EventListener, A: ActionContext<T>> Processor<'a, T, A> {
         }
     }
 
-    fn on_mouse_double_click(&mut self, button: MouseButton, point: Point) {
-        if button == MouseButton::Left {
-            let side = self.ctx.mouse().cell_side;
-            self.ctx.start_selection(SelectionType::Semantic, point, side);
-        }
-    }
-
-    fn on_mouse_triple_click(&mut self, button: MouseButton, point: Point) {
-        if button == MouseButton::Left {
-            let side = self.ctx.mouse().cell_side;
-            self.ctx.start_selection(SelectionType::Lines, point, side);
-        }
-    }
-
     fn on_mouse_press(&mut self, button: MouseButton) {
+        // Handle mouse mode.
+        if !self.ctx.modifiers().shift() && self.ctx.mouse_mode() {
+            self.ctx.mouse_mut().click_state = ClickState::None;
+
+            let code = match button {
+                MouseButton::Left => 0,
+                MouseButton::Middle => 1,
+                MouseButton::Right => 2,
+                // Can't properly report more than three buttons..
+                MouseButton::Other(_) => return,
+            };
+
+            self.mouse_report(code, ElementState::Pressed);
+        } else if button == MouseButton::Left {
+            self.on_left_click();
+        } else {
+            // Do nothing when using buttons other than LMB.
+            self.ctx.mouse_mut().click_state = ClickState::None;
+        }
+    }
+
+    /// Handle left click selection and vi mode cursor movement.
+    fn on_left_click(&mut self) {
+        // Calculate time since the last click to handle double/triple clicks in normal mode.
         let now = Instant::now();
-        let elapsed = self.ctx.mouse().last_click_timestamp.elapsed();
+        let elapsed = now - self.ctx.mouse().last_click_timestamp;
         self.ctx.mouse_mut().last_click_timestamp = now;
 
-        let button_changed = self.ctx.mouse().last_button != button;
-
-        // Load mouse point, treating message bar and padding as closest cell
+        // Load mouse point, treating message bar and padding as closest cell.
         let mouse = self.ctx.mouse();
         let mut point = self.ctx.size_info().pixels_to_coords(mouse.x, mouse.y);
         point.line = min(point.line, self.ctx.terminal().grid().num_lines() - 1);
 
+        let side = self.ctx.mouse().cell_side;
+
         self.ctx.mouse_mut().click_state = match self.ctx.mouse().click_state {
             ClickState::Click
-                if !button_changed
-                    && elapsed < self.ctx.config().ui_config.mouse.double_click.threshold =>
+                if elapsed < self.ctx.config().ui_config.mouse.double_click.threshold =>
             {
                 self.ctx.mouse_mut().block_url_launcher = true;
-                self.on_mouse_double_click(button, point);
+                self.ctx.start_selection(SelectionType::Semantic, point, side);
                 ClickState::DoubleClick
             }
             ClickState::DoubleClick
-                if !button_changed
-                    && elapsed < self.ctx.config().ui_config.mouse.triple_click.threshold =>
+                if elapsed < self.ctx.config().ui_config.mouse.triple_click.threshold =>
             {
                 self.ctx.mouse_mut().block_url_launcher = true;
-                self.on_mouse_triple_click(button, point);
+                self.ctx.start_selection(SelectionType::Lines, point, side);
                 ClickState::TripleClick
             }
             _ => {
-                if button == MouseButton::Left
-                    && (self.ctx.modifiers().shift()
-                        || !self.ctx.terminal().mode().intersects(TermMode::MOUSE_MODE))
-                {
-                    // Don't launch URLs if this click cleared the selection
-                    self.ctx.mouse_mut().block_url_launcher = !self.ctx.selection_is_empty();
+                // Don't launch URLs if this click cleared the selection.
+                self.ctx.mouse_mut().block_url_launcher = !self.ctx.selection_is_empty();
 
-                    self.ctx.clear_selection();
+                self.ctx.clear_selection();
 
-                    // Start new empty selection
-                    let side = self.ctx.mouse().cell_side;
-                    if self.ctx.modifiers().ctrl() {
-                        self.ctx.start_selection(SelectionType::Block, point, side);
-                    } else {
-                        self.ctx.start_selection(SelectionType::Simple, point, side);
-                    }
-
-                    // Move vi mode cursor to mouse position
-                    if self.ctx.terminal().mode().contains(TermMode::VI) {
-                        // Update vi mode cursor position on click
-                        self.ctx.terminal_mut().vi_mode_cursor.point = point;
-                    }
-                }
-
-                if !self.ctx.modifiers().shift() && self.ctx.mouse_mode() {
-                    let code = match button {
-                        MouseButton::Left => 0,
-                        MouseButton::Middle => 1,
-                        MouseButton::Right => 2,
-                        // Can't properly report more than three buttons.
-                        MouseButton::Other(_) => return,
-                    };
-                    self.mouse_report(code, ElementState::Pressed);
-                    return;
+                // Start new empty selection.
+                if self.ctx.modifiers().ctrl() {
+                    self.ctx.start_selection(SelectionType::Block, point, side);
+                } else {
+                    self.ctx.start_selection(SelectionType::Simple, point, side);
                 }
 
                 ClickState::Click
             },
         };
+
+        // Move vi mode cursor to mouse position.
+        if self.ctx.terminal().mode().contains(TermMode::VI) {
+            // Update Vi mode cursor position on click.
+            self.ctx.terminal_mut().vi_mode_cursor.point = point;
+        }
     }
 
     fn on_mouse_release(&mut self, button: MouseButton) {
@@ -568,7 +571,7 @@ impl<'a, T: EventListener, A: ActionContext<T>> Processor<'a, T, A> {
             MouseScrollDelta::PixelDelta(lpos) => {
                 match phase {
                     TouchPhase::Started => {
-                        // Reset offset to zero
+                        // Reset offset to zero.
                         self.ctx.mouse_mut().scroll_px = 0.;
                     },
                     TouchPhase::Moved => {
@@ -624,18 +627,18 @@ impl<'a, T: EventListener, A: ActionContext<T>> Processor<'a, T, A> {
 
             let lines = self.ctx.mouse().scroll_px / height;
 
-            // Store absolute position of vi mode cursor
+            // Store absolute position of vi mode cursor.
             let term = self.ctx.terminal();
             let absolute = term.visible_to_buffer(term.vi_mode_cursor.point);
 
             self.ctx.scroll(Scroll::Lines(lines as isize));
 
-            // Try to restore vi mode cursor position, to keep it above its previous content
+            // Try to restore vi mode cursor position, to keep it above its previous content.
             let term = self.ctx.terminal_mut();
             term.vi_mode_cursor.point = term.grid().clamp_buffer_to_visible(absolute);
             term.vi_mode_cursor.point.col = absolute.col;
 
-            // Update selection
+            // Update selection.
             if term.mode().contains(TermMode::VI) {
                 let point = term.vi_mode_cursor.point;
                 if !self.ctx.selection_is_empty() {
@@ -664,12 +667,12 @@ impl<'a, T: EventListener, A: ActionContext<T>> Processor<'a, T, A> {
             _ => (),
         }
 
-        // Skip normal mouse events if the message bar has been clicked
+        // Skip normal mouse events if the message bar has been clicked.
         if self.message_close_at_cursor() && state == ElementState::Pressed {
             self.ctx.clear_selection();
             self.ctx.pop_message();
 
-            // Reset cursor when message bar height changed or all messages are gone
+            // Reset cursor when message bar height changed or all messages are gone.
             let size = self.ctx.size_info();
             let current_lines = (size.lines() - self.ctx.terminal().grid().num_lines()).0;
             let new_lines = self.ctx.message().map(|m| m.text(&size).len()).unwrap_or(0);
@@ -696,8 +699,6 @@ impl<'a, T: EventListener, A: ActionContext<T>> Processor<'a, T, A> {
                 ElementState::Released => self.on_mouse_release(button),
             }
         }
-
-        self.ctx.mouse_mut().last_button = button;
     }
 
     /// Process key input.
@@ -716,7 +717,7 @@ impl<'a, T: EventListener, A: ActionContext<T>> Processor<'a, T, A> {
     pub fn modifiers_input(&mut self, modifiers: ModifiersState) {
         *self.ctx.modifiers() = modifiers;
 
-        // Update mouse state and check for URL change
+        // Update mouse state and check for URL change.
         let mouse_state = self.mouse_state();
         self.update_url_state(&mouse_state);
         self.ctx.window_mut().set_mouse_cursor(mouse_state.into());
@@ -726,6 +727,10 @@ impl<'a, T: EventListener, A: ActionContext<T>> Processor<'a, T, A> {
     pub fn received_char(&mut self, c: char) {
         if *self.ctx.suppress_chars() || self.ctx.terminal().mode().contains(TermMode::VI) {
             return;
+        }
+
+        if self.ctx.config().ui_config.mouse.hide_when_typing {
+            self.ctx.window_mut().set_mouse_visible(false);
         }
 
         self.ctx.scroll(Scroll::Bottom);
@@ -776,16 +781,16 @@ impl<'a, T: EventListener, A: ActionContext<T>> Processor<'a, T, A> {
             };
 
             if binding.is_triggered_by(*self.ctx.terminal().mode(), mods, &key) {
-                // Binding was triggered; run the action
+                // Binding was triggered; run the action.
                 let binding = binding.clone();
                 binding.execute(&mut self.ctx);
 
-                // Don't suppress when there has been a `ReceiveChar` action
+                // Don't suppress when there has been a `ReceiveChar` action.
                 *suppress_chars.get_or_insert(true) &= binding.action != Action::ReceiveChar;
             }
         }
 
-        // Don't suppress char if no bindings were triggered
+        // Don't suppress char if no bindings were triggered.
         *self.ctx.suppress_chars() = suppress_chars.unwrap_or(false);
     }
 
@@ -801,7 +806,7 @@ impl<'a, T: EventListener, A: ActionContext<T>> Processor<'a, T, A> {
         for i in 0..self.ctx.config().ui_config.mouse_bindings.len() {
             let mut binding = self.ctx.config().ui_config.mouse_bindings[i].clone();
 
-            // Require shift for all modifiers when mouse mode is active
+            // Require shift for all modifiers when mouse mode is active.
             if mouse_mode {
                 binding.mods |= ModifiersState::SHIFT;
             }
@@ -817,7 +822,7 @@ impl<'a, T: EventListener, A: ActionContext<T>> Processor<'a, T, A> {
         self.ctx.mouse().line >= self.ctx.terminal().grid().num_lines()
     }
 
-    /// Whether the point is over the message bar's close button
+    /// Whether the point is over the message bar's close button.
     fn message_close_at_cursor(&self) -> bool {
         let mouse = self.ctx.mouse();
         mouse.inside_grid
@@ -847,7 +852,7 @@ impl<'a, T: EventListener, A: ActionContext<T>> Processor<'a, T, A> {
 
     /// Location of the mouse cursor.
     fn mouse_state(&mut self) -> MouseState {
-        // Check message bar before URL to ignore URLs in the message bar
+        // Check message bar before URL to ignore URLs in the message bar.
         if self.message_close_at_cursor() {
             return MouseState::MessageBarButton;
         } else if self.message_at_cursor() {
@@ -856,7 +861,7 @@ impl<'a, T: EventListener, A: ActionContext<T>> Processor<'a, T, A> {
 
         let mouse_mode = self.ctx.mouse_mode();
 
-        // Check for URL at mouse cursor
+        // Check for URL at mouse cursor.
         let mods = *self.ctx.modifiers();
         let highlighted_url = self.ctx.urls().highlighted(
             self.ctx.config(),
@@ -870,7 +875,7 @@ impl<'a, T: EventListener, A: ActionContext<T>> Processor<'a, T, A> {
             return MouseState::Url(url);
         }
 
-        // Check mouse mode if location is not special
+        // Check mouse mode if location is not special.
         if !self.ctx.modifiers().shift() && mouse_mode {
             MouseState::Mouse
         } else {
@@ -912,20 +917,12 @@ mod tests {
         fn send_event(&self, _event: TerminalEvent) {}
     }
 
-    #[derive(Debug, PartialEq)]
-    enum MultiClick {
-        DoubleClick,
-        TripleClick,
-        None,
-    }
-
     struct ActionContext<'a, T> {
         pub terminal: &'a mut Term<T>,
         pub selection: &'a mut Option<Selection>,
         pub size_info: &'a SizeInfo,
         pub mouse: &'a mut Mouse,
         pub message_buffer: &'a mut MessageBuffer,
-        pub last_action: MultiClick,
         pub received_count: usize,
         pub suppress_chars: bool,
         pub modifiers: ModifiersState,
@@ -937,13 +934,7 @@ mod tests {
 
         fn update_selection(&mut self, _point: Point, _side: Side) {}
 
-        fn start_selection(&mut self, ty: SelectionType, _point: Point, _side: Side) {
-            match ty {
-                SelectionType::Semantic => self.last_action = MultiClick::DoubleClick,
-                SelectionType::Lines => self.last_action = MultiClick::TripleClick,
-                _ => (),
-            }
-        }
+        fn start_selection(&mut self, _ty: SelectionType, _point: Point, _side: Side) {}
 
         fn toggle_selection(&mut self, _ty: SelectionType, _point: Point, _side: Side) {}
 
@@ -1053,8 +1044,7 @@ mod tests {
             initial_state: $initial_state:expr,
             initial_button: $initial_button:expr,
             input: $input:expr,
-            end_state: $end_state:pat,
-            last_action: $last_action:expr
+            end_state: $end_state:expr,
         } => {
             #[test]
             fn $name() {
@@ -1086,7 +1076,6 @@ mod tests {
 
                 let mut mouse = Mouse::default();
                 mouse.click_state = $initial_state;
-                mouse.last_button = $initial_button;
 
                 let mut selection = None;
 
@@ -1097,7 +1086,6 @@ mod tests {
                     selection: &mut selection,
                     mouse: &mut mouse,
                     size_info: &size,
-                    last_action: MultiClick::None,
                     received_count: 0,
                     suppress_chars: false,
                     modifiers: Default::default(),
@@ -1120,10 +1108,7 @@ mod tests {
                     processor.mouse_input(state, button);
                 };
 
-                assert!(match processor.ctx.mouse.click_state {
-                    $end_state => processor.ctx.last_action == $last_action,
-                    _ => false
-                });
+                assert_eq!(processor.ctx.mouse.click_state, $end_state);
             }
         }
     }
@@ -1155,13 +1140,44 @@ mod tests {
             event: WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 button: MouseButton::Left,
-                device_id: unsafe { ::std::mem::transmute_copy(&0) },
+                device_id: unsafe { std::mem::transmute_copy(&0) },
                 modifiers: ModifiersState::default(),
             },
-            window_id: unsafe { ::std::mem::transmute_copy(&0) },
+            window_id: unsafe { std::mem::transmute_copy(&0) },
         },
         end_state: ClickState::Click,
-        last_action: MultiClick::None
+    }
+
+    test_clickstate! {
+        name: single_right_click,
+        initial_state: ClickState::None,
+        initial_button: MouseButton::Other(0),
+        input: Event::WindowEvent {
+            event: WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                button: MouseButton::Right,
+                device_id: unsafe { std::mem::transmute_copy(&0) },
+                modifiers: ModifiersState::default(),
+            },
+            window_id: unsafe { std::mem::transmute_copy(&0) },
+        },
+        end_state: ClickState::None,
+    }
+
+    test_clickstate! {
+        name: single_middle_click,
+        initial_state: ClickState::None,
+        initial_button: MouseButton::Other(0),
+        input: Event::WindowEvent {
+            event: WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                button: MouseButton::Middle,
+                device_id: unsafe { std::mem::transmute_copy(&0) },
+                modifiers: ModifiersState::default(),
+            },
+            window_id: unsafe { std::mem::transmute_copy(&0) },
+        },
+        end_state: ClickState::None,
     }
 
     test_clickstate! {
@@ -1172,13 +1188,12 @@ mod tests {
             event: WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 button: MouseButton::Left,
-                device_id: unsafe { ::std::mem::transmute_copy(&0) },
+                device_id: unsafe { std::mem::transmute_copy(&0) },
                 modifiers: ModifiersState::default(),
             },
-            window_id: unsafe { ::std::mem::transmute_copy(&0) },
+            window_id: unsafe { std::mem::transmute_copy(&0) },
         },
         end_state: ClickState::DoubleClick,
-        last_action: MultiClick::DoubleClick
     }
 
     test_clickstate! {
@@ -1189,13 +1204,12 @@ mod tests {
             event: WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 button: MouseButton::Left,
-                device_id: unsafe { ::std::mem::transmute_copy(&0) },
+                device_id: unsafe { std::mem::transmute_copy(&0) },
                 modifiers: ModifiersState::default(),
             },
-            window_id: unsafe { ::std::mem::transmute_copy(&0) },
+            window_id: unsafe { std::mem::transmute_copy(&0) },
         },
         end_state: ClickState::TripleClick,
-        last_action: MultiClick::TripleClick
     }
 
     test_clickstate! {
@@ -1206,13 +1220,12 @@ mod tests {
             event: WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 button: MouseButton::Right,
-                device_id: unsafe { ::std::mem::transmute_copy(&0) },
+                device_id: unsafe { std::mem::transmute_copy(&0) },
                 modifiers: ModifiersState::default(),
             },
-            window_id: unsafe { ::std::mem::transmute_copy(&0) },
+            window_id: unsafe { std::mem::transmute_copy(&0) },
         },
-        end_state: ClickState::Click,
-        last_action: MultiClick::None
+        end_state: ClickState::None,
     }
 
     test_process_binding! {
