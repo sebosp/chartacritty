@@ -41,71 +41,72 @@ use crate::term::color::Rgb;
 
 pub const LOG_TARGET_CONFIG: &str = "alacritty_config";
 const MAX_SCROLLBACK_LINES: u32 = 100_000;
+const DEFAULT_CURSOR_THICKNESS: f32 = 0.15;
 
 pub type MockConfig = Config<HashMap<String, serde_yaml::Value>>;
 
-/// Top-level config type
+/// Top-level config type.
 #[derive(Debug, PartialEq, Default, Deserialize)]
 pub struct Config<T> {
-    /// Pixel padding
+    /// Pixel padding.
     #[serde(default, deserialize_with = "failure_default")]
     pub padding: Option<Delta<u8>>,
 
-    /// TERM env variable
+    /// TERM env variable.
     #[serde(default, deserialize_with = "failure_default")]
     pub env: HashMap<String, String>,
 
-    /// Font configuration
+    /// Font configuration.
     #[serde(default, deserialize_with = "failure_default")]
     pub font: Font,
 
-    /// Should draw bold text with brighter colors instead of bold font
+    /// Should draw bold text with brighter colors instead of bold font.
     #[serde(default, deserialize_with = "failure_default")]
     draw_bold_text_with_bright_colors: bool,
 
     #[serde(default, deserialize_with = "failure_default")]
     pub colors: Colors,
 
-    /// Background opacity from 0.0 to 1.0
+    /// Background opacity from 0.0 to 1.0.
     #[serde(default, deserialize_with = "failure_default")]
-    background_opacity: Alpha,
+    background_opacity: Percentage,
 
-    /// Window configuration
+    /// Window configuration.
     #[serde(default, deserialize_with = "failure_default")]
     pub window: WindowConfig,
 
     #[serde(default, deserialize_with = "failure_default")]
     pub selection: Selection,
 
-    /// Path to a shell program to run on startup
+    /// Path to a shell program to run on startup.
     #[serde(default, deserialize_with = "from_string_or_deserialize")]
     pub shell: Option<Shell<'static>>,
 
-    /// Path where config was loaded from
+    /// Path where config was loaded from.
     #[serde(default, deserialize_with = "failure_default")]
     pub config_path: Option<PathBuf>,
 
-    /// Visual bell configuration
+    /// Visual bell configuration.
     #[serde(default, deserialize_with = "failure_default")]
     pub visual_bell: VisualBellConfig,
 
-    /// Use dynamic title
+    /// Use dynamic title.
     #[serde(default, deserialize_with = "failure_default")]
     dynamic_title: DefaultTrueBool,
 
-    /// Live config reload
+    /// Live config reload.
     #[serde(default, deserialize_with = "failure_default")]
     live_config_reload: DefaultTrueBool,
 
-    /// How much scrolling history to keep
+    /// How much scrolling history to keep.
     #[serde(default, deserialize_with = "failure_default")]
     pub scrolling: Scrolling,
 
-    /// Cursor configuration
+    /// Cursor configuration.
     #[serde(default, deserialize_with = "failure_default")]
     pub cursor: Cursor,
 
-    /// Use WinPTY backend even if ConPTY is available
+    /// Use WinPTY backend even if ConPTY is available.
     #[cfg(windows)]
     #[serde(default, deserialize_with = "failure_default")]
     pub winpty_backend: bool,
@@ -114,22 +115,22 @@ pub struct Config<T> {
     #[serde(default, deserialize_with = "failure_default")]
     alt_send_esc: DefaultTrueBool,
 
-    /// Shell startup directory
+    /// Shell startup directory.
     #[serde(default, deserialize_with = "option_explicit_none")]
     pub working_directory: Option<PathBuf>,
 
-    /// Debug options
+    /// Debug options.
     #[serde(default, deserialize_with = "failure_default")]
     pub debug: Debug,
 
     #[serde(default, deserialize_with = "option_explicit_none")]
     pub charts: Option<crate::alacritty_charts::ChartsConfig>,
 
-    /// Additional configuration options not directly required by the terminal
+    /// Additional configuration options not directly required by the terminal.
     #[serde(flatten)]
     pub ui_config: T,
 
-    /// Remain open after child process exits
+    /// Remain open after child process exits.
     #[serde(skip)]
     pub hold: bool,
 
@@ -152,13 +153,13 @@ impl<T> Config<T> {
         self.draw_bold_text_with_bright_colors
     }
 
-    /// Should show render timer
+    /// Should show render timer.
     #[inline]
     pub fn render_timer(&self) -> bool {
         self.render_timer.unwrap_or(self.debug.render_timer)
     }
 
-    /// Live config reload
+    /// Live config reload.
     #[inline]
     pub fn live_config_reload(&self) -> bool {
         self.live_config_reload.0
@@ -203,13 +204,13 @@ impl<T> Config<T> {
         self.dynamic_title.0 = dynamic_title;
     }
 
-    /// Send escape sequences using the alt key
+    /// Send escape sequences using the alt key.
     #[inline]
     pub fn alt_send_esc(&self) -> bool {
         self.alt_send_esc.0
     }
 
-    /// Keep the log file after quitting Alacritty
+    /// Keep the log file after quitting Alacritty.
     #[inline]
     pub fn persistent_logging(&self) -> bool {
         self.persistent_logging.unwrap_or(self.debug.persistent_logging)
@@ -217,7 +218,7 @@ impl<T> Config<T> {
 
     #[inline]
     pub fn background_opacity(&self) -> f32 {
-        self.background_opacity.0
+        self.background_opacity.0 as f32
     }
 }
 
@@ -246,20 +247,47 @@ impl Default for EscapeChars {
 }
 
 #[serde(default)]
-#[derive(Deserialize, Copy, Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Deserialize, Copy, Clone, Debug, PartialEq)]
 pub struct Cursor {
     #[serde(deserialize_with = "failure_default")]
     pub style: CursorStyle,
     #[serde(deserialize_with = "option_explicit_none")]
     pub vi_mode_style: Option<CursorStyle>,
+    #[serde(deserialize_with = "deserialize_cursor_thickness")]
+    thickness: Percentage,
     #[serde(deserialize_with = "failure_default")]
     unfocused_hollow: DefaultTrueBool,
 }
 
 impl Cursor {
+    #[inline]
     pub fn unfocused_hollow(self) -> bool {
         self.unfocused_hollow.0
     }
+
+    #[inline]
+    pub fn thickness(self) -> f64 {
+        self.thickness.0 as f64
+    }
+}
+
+impl Default for Cursor {
+    fn default() -> Self {
+        Self {
+            style: Default::default(),
+            vi_mode_style: Default::default(),
+            thickness: Percentage::new(DEFAULT_CURSOR_THICKNESS),
+            unfocused_hollow: Default::default(),
+        }
+    }
+}
+
+pub fn deserialize_cursor_thickness<'a, D>(deserializer: D) -> Result<Percentage, D::Error>
+where
+    D: Deserializer<'a>,
+{
+    Ok(Percentage::deserialize(Value::deserialize(deserializer)?)
+        .unwrap_or_else(|_| Percentage::new(DEFAULT_CURSOR_THICKNESS)))
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -292,25 +320,25 @@ impl FromString for Option<Shell<'_>> {
     }
 }
 
-/// A delta for a point in a 2 dimensional plane
+/// A delta for a point in a 2 dimensional plane.
 #[serde(default, bound(deserialize = "T: Deserialize<'de> + Default"))]
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
 pub struct Delta<T: Default + PartialEq + Eq> {
-    /// Horizontal change
+    /// Horizontal change.
     #[serde(deserialize_with = "failure_default")]
     pub x: T,
-    /// Vertical change
+    /// Vertical change.
     #[serde(deserialize_with = "failure_default")]
     pub y: T,
 }
 
-/// Wrapper around f32 that represents an alpha value between 0.0 and 1.0
+/// Wrapper around f32 that represents a percentage value between 0.0 and 1.0.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Alpha(f32);
+pub struct Percentage(f32);
 
-impl Alpha {
+impl Percentage {
     pub fn new(value: f32) -> Self {
-        Alpha(if value < 0.0 {
+        Percentage(if value < 0.0 {
             0.0
         } else if value > 1.0 {
             1.0
@@ -320,18 +348,18 @@ impl Alpha {
     }
 }
 
-impl Default for Alpha {
+impl Default for Percentage {
     fn default() -> Self {
-        Alpha(1.0)
+        Percentage(1.0)
     }
 }
 
-impl<'a> Deserialize<'a> for Alpha {
+impl<'a> Deserialize<'a> for Percentage {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'a>,
     {
-        Ok(Alpha::new(f32::deserialize(deserializer)?))
+        Ok(Percentage::new(f32::deserialize(deserializer)?))
     }
 }
 
@@ -383,7 +411,7 @@ where
     })
 }
 
-// Used over From<String>, to allow implementation for foreign types
+// Used over From<String>, to allow implementation for foreign types.
 pub trait FromString {
     fn from(input: String) -> Self;
 }

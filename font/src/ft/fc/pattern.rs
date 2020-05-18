@@ -21,10 +21,14 @@ use std::str;
 use foreign_types::{foreign_type, ForeignType, ForeignTypeRef};
 use libc::{c_char, c_double, c_int};
 
+use super::ffi::FcMatrix;
 use super::ffi::FcResultMatch;
 use super::ffi::{FcBool, FcFontRenderPrepare, FcPatternGetBool, FcPatternGetDouble};
 use super::ffi::{FcChar8, FcConfigSubstitute, FcDefaultSubstitute, FcPattern, FcPatternHash};
-use super::ffi::{FcPatternAddCharSet, FcPatternDestroy, FcPatternDuplicate, FcPatternGetCharSet};
+use super::ffi::{
+    FcPatternAddCharSet, FcPatternDestroy, FcPatternDuplicate, FcPatternGetCharSet,
+    FcPatternGetMatrix,
+};
 use super::ffi::{FcPatternAddDouble, FcPatternAddString, FcPatternCreate, FcPatternGetString};
 use super::ffi::{FcPatternAddInteger, FcPatternGetInteger, FcPatternPrint};
 
@@ -54,7 +58,7 @@ impl<'a> StringPropertyIter<'a> {
         };
 
         if result == FcResultMatch {
-            // Transmute here is to extend lifetime of the str to that of the iterator
+            // Transmute here is to extend lifetime of the str to that of the iterator.
             //
             // Potential unsafety? What happens if the pattern is modified while this ptr is
             // borrowed out?
@@ -67,7 +71,7 @@ impl<'a> StringPropertyIter<'a> {
     }
 }
 
-/// Iterator over integer properties
+/// Iterator over integer properties.
 pub struct BooleanPropertyIter<'a> {
     pattern: &'a PatternRef,
     object: &'a [u8],
@@ -99,7 +103,7 @@ impl<'a> BooleanPropertyIter<'a> {
     }
 }
 
-/// Iterator over integer properties
+/// Iterator over integer properties.
 pub struct IntPropertyIter<'a> {
     pattern: &'a PatternRef,
     object: &'a [u8],
@@ -204,7 +208,7 @@ impl<'a> LcdFilterPropertyIter<'a> {
     }
 }
 
-/// Iterator over integer properties
+/// Iterator over integer properties.
 pub struct DoublePropertyIter<'a> {
     pattern: &'a PatternRef,
     object: &'a [u8],
@@ -236,7 +240,7 @@ impl<'a> DoublePropertyIter<'a> {
     }
 }
 
-/// Implement debug for a property iterator
+/// Implement debug for a property iterator.
 macro_rules! impl_property_iter_debug {
     ($iter:ty => $item:ty) => {
         impl<'a> fmt::Debug for $iter {
@@ -260,7 +264,7 @@ macro_rules! impl_property_iter_debug {
     };
 }
 
-/// Implement Iterator and Debug for a property iterator
+/// Implement Iterator and Debug for a property iterator.
 macro_rules! impl_property_iter {
     ($($iter:ty => $item:ty),*) => {
         $(
@@ -310,7 +314,7 @@ macro_rules! impl_derived_property_iter {
     }
 }
 
-// Basic Iterators
+// Basic Iterators.
 impl_property_iter! {
     StringPropertyIter<'a> => &'a str,
     IntPropertyIter<'a> => isize,
@@ -318,7 +322,7 @@ impl_property_iter! {
     BooleanPropertyIter<'a> => bool
 }
 
-// Derived Iterators
+// Derived Iterators.
 impl_derived_property_iter! {
     RgbaPropertyIter<'a> => Rgba,
     HintStylePropertyIter<'a> => HintStyle,
@@ -460,23 +464,23 @@ impl PatternRef {
         index() => b"index\0"
     }
 
-    // Prints the pattern to stdout
-    //
-    // FontConfig doesn't expose a way to iterate over all members of a pattern;
-    // instead, we just defer to FcPatternPrint. Otherwise, this could have been
-    // a `fmt::Debug` impl.
+    /// Prints the pattern to stdout.
+    ///
+    /// FontConfig doesn't expose a way to iterate over all members of a pattern;
+    /// instead, we just defer to FcPatternPrint. Otherwise, this could have been
+    /// a `fmt::Debug` impl.
     pub fn print(&self) {
         unsafe { FcPatternPrint(self.as_ptr()) }
     }
 
-    /// Add a string value to the pattern
+    /// Add a string value to the pattern.
     ///
     /// If the returned value is `true`, the value is added at the end of
     /// any existing list, otherwise it is inserted at the beginning.
     ///
     /// # Unsafety
     ///
-    /// `object` is not checked to be a valid null-terminated string
+    /// `object` is not checked to be a valid null-terminated string.
     unsafe fn add_string(&mut self, object: &[u8], value: &str) -> bool {
         let value = CString::new(&value[..]).unwrap();
         let value = value.as_ptr();
@@ -556,9 +560,9 @@ impl PatternRef {
         unsafe { PatternHash(FcPatternHash(self.as_ptr())) }
     }
 
-    /// Add charset to the pattern
+    /// Add charset to the pattern.
     ///
-    /// The referenced charset is copied by fontconfig internally using
+    /// The referenced charset is copied by Fontconfig internally using
     /// FcValueSave so that no references to application provided memory are
     /// retained. That is, the CharSet can be safely dropped immediately
     /// after being added to the pattern.
@@ -572,9 +576,10 @@ impl PatternRef {
         }
     }
 
+    /// Get charset from the pattern.
     pub fn get_charset(&self) -> Option<&CharSetRef> {
         unsafe {
-            let mut charset: *mut _ = ptr::null_mut();
+            let mut charset = ptr::null_mut();
 
             let result = FcPatternGetCharSet(
                 self.as_ptr(),
@@ -585,6 +590,25 @@ impl PatternRef {
 
             if result == FcResultMatch {
                 Some(&*(charset as *const CharSetRef))
+            } else {
+                None
+            }
+        }
+    }
+
+    /// Get matrix from the pattern.
+    pub fn get_matrix(&self) -> Option<FcMatrix> {
+        unsafe {
+            let mut matrix = ptr::null_mut();
+            let result = FcPatternGetMatrix(
+                self.as_ptr(),
+                b"matrix\0".as_ptr() as *mut c_char,
+                0,
+                &mut matrix,
+            );
+
+            if result == FcResultMatch {
+                Some(*matrix)
             } else {
                 None
             }
