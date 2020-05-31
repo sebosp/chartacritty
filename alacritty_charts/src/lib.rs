@@ -141,6 +141,9 @@ pub struct TimeSeries {
 
     /// How many items are active in our circular buffer
     pub active_items: usize,
+
+    /// The string representation of the metrics, for debug purposes
+    pub prev_snapshot: String,
 }
 
 /// `IterTimeSeries` provides the Iterator Trait for TimeSeries metrics.
@@ -797,6 +800,7 @@ impl Default for TimeSeries {
             missing_values_policy: MissingValuesPolicy::default(),
             first_idx: 0,
             active_items: 0,
+            prev_snapshot: String::from(""),
         }
     }
 }
@@ -937,10 +941,10 @@ impl TimeSeries {
         (self.first_idx + self.active_items - 1) % self.metrics.len()
     }
 
-    /// `get_tail_negative_offset_idx` return a negative offset from the last index in the array
+    /// `get_tail_backwards_offset_idx` return a negative offset from the last index in the array
     /// useful when metrics arrive that occurred in the past of the active metrics epoch range
     /// The value of offset should be negative
-    fn get_tail_negative_offset_idx(&self, offset: i64) -> usize {
+    fn get_tail_backwards_offset_idx(&self, offset: i64) -> usize {
         ((self.metrics.len() as i64 + self.get_last_idx() as i64 + offset)
             % self.metrics.len() as i64) as usize
     }
@@ -1002,7 +1006,7 @@ impl TimeSeries {
                     let previous_min_epoch = self.metrics[self.first_idx].0;
                     // Find what would be the first index given the current input, in case we need
                     // to roll back from the end of the array
-                    let target_idx = self.get_tail_negative_offset_idx(inactive_time);
+                    let target_idx = self.get_tail_backwards_offset_idx(inactive_time);
                     self.first_idx = target_idx;
                     self.metrics[target_idx] = input;
                     for fill_epoch in (input.0 + 1)..previous_min_epoch {
@@ -1013,10 +1017,10 @@ impl TimeSeries {
                 }
             } else {
                 // The input epoch has already been inserted in our array
-                let target_idx = self.get_tail_negative_offset_idx(inactive_time);
+                let target_idx = self.get_tail_backwards_offset_idx(inactive_time);
                 if self.metrics[target_idx].0 != input.0 {
                     event!(Level::ERROR,
-                        "upsert: lost synchrony len: {}, first_idx: {}, last_idx: {}, target_idx: {}, inactive_time: {}, input: {}, target_idx data: {} metrics: {:?}",
+                        "upsert: lost synchrony len: {}, first_idx: {}, last_idx: {}, target_idx: {}, inactive_time: {}, input: {}, target_idx data: {} prev_snapshot: {}, metrics: {:?}",
                         self.metrics.len(),
                         self.first_idx,
                         last_idx,
@@ -1024,6 +1028,7 @@ impl TimeSeries {
                         inactive_time,
                         input.0,
                         self.metrics[target_idx].0,
+                        self.prev_snapshot,
                         self.metrics
                     );
                 }
@@ -1218,7 +1223,7 @@ mod tests {
         assert_eq!(last_input_epoch, 15);
         let inactive_time = input.0 as i64 - last_input_epoch as i64;
         assert_eq!(inactive_time, -4);
-        let target_idx = test.get_tail_negative_offset_idx(inactive_time);
+        let target_idx = test.get_tail_backwards_offset_idx(inactive_time);
         assert_eq!(test.metrics.len(), 4);
         // This is an erroneous calculation because 11th is too old for little range
         assert_eq!(target_idx, 1);
@@ -1472,7 +1477,7 @@ mod tests {
         let last_idx = test.get_last_idx();
         let inactive_time = input.0 as i64 - test.metrics[last_idx].0 as i64;
         assert_eq!(inactive_time, -3);
-        let target_idx = test.get_tail_negative_offset_idx(inactive_time);
+        let target_idx = test.get_tail_backwards_offset_idx(inactive_time);
         assert_eq!(target_idx, 4);
         assert_eq!(test.metrics[target_idx].0, 4);
     }
