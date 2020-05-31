@@ -2171,6 +2171,7 @@ mod tests {
             default_dimensions: Some(Value2D { x: 25., y: 100. }),
             position: Some(Value2D { x: 200., y: 0. }),
             charts: vec![],
+            spacing: 0f32,
         };
         let (_size_test, mut chart_test) = simple_chart_setup_with_none();
         chart_test.position = None;
