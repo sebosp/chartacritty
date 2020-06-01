@@ -960,6 +960,15 @@ impl TimeSeries {
             self.circular_push(input);
             return 1;
         }
+        if !self.sanity_check() {
+            event!(
+                Level::ERROR,
+                "upsert: Sanity check failed: {:?}, prev_snapshot: {}",
+                self.as_vec(),
+                self.prev_snapshot
+            );
+            return 0usize;
+        }
         let last_idx = self.get_last_idx();
         if (self.metrics[last_idx].0 as i64 - input.0 as i64) >= self.metrics_capacity as i64 {
             // The timestamp is too old and should be discarded.
@@ -1122,6 +1131,22 @@ impl TimeSeries {
             pos: self.first_idx,
             current_item: 0,
         }
+    }
+
+    // `sanity_check` verifies the state of the circular buffer is valid
+    pub fn sanity_check(&self) -> bool {
+        if self.metrics.is_empty() || self.metrics.len() == 1 {
+            return true;
+        }
+        let mut curr_idx = self.first_idx;
+        while curr_idx != self.get_last_idx() {
+            let next_idx = (curr_idx + 1) % self.metrics_capacity;
+            if self.metrics[curr_idx].0 >= self.metrics[next_idx].0 {
+                return false;
+            }
+            curr_idx = next_idx;
+        }
+        true
     }
 }
 
