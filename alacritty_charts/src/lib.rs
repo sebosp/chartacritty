@@ -957,6 +957,7 @@ impl TimeSeries {
         let span = span!(Level::TRACE, "upsert");
         let _enter = span.enter();
         if self.metrics.is_empty() {
+            self.prev_snapshot = format!("{:?}", self);
             self.circular_push(input);
             return 1;
         }
@@ -985,6 +986,7 @@ impl TimeSeries {
         let inactive_time = input.0 as i64 - self.metrics[last_idx].0 as i64;
         if inactive_time > self.metrics_capacity as i64 {
             // The whole vector should be discarded
+            self.prev_snapshot = format!("{:?}", self);
             self.first_idx = 0;
             self.metrics[0] = input;
             self.active_items = 1;
@@ -1001,6 +1003,7 @@ impl TimeSeries {
                 // XXX: This is wrong, we should add as many padding_items as possible without
                 // breaking the metrics_capacity.
                 if self.metrics.len() + 1 < self.metrics_capacity {
+                    self.prev_snapshot = format!("{:?}", self);
                     // The vector is not full, let's shift the items to the right
                     // The array items have not been allocated at this point:
                     self.metrics.insert(0, input);
@@ -1010,6 +1013,7 @@ impl TimeSeries {
                     self.active_items += padding_items;
                     return padding_items;
                 } else {
+                    self.prev_snapshot = format!("{:?}", self);
                     // The vector is full, write the new epoch at first_idx and then fill the rest
                     // up to current_min value with None
                     let previous_min_epoch = self.metrics[self.first_idx].0;
@@ -1040,17 +1044,26 @@ impl TimeSeries {
                         self.prev_snapshot,
                         self.metrics
                     );
+                    self.prev_snapshot = format!("{:?}", self);
+                    // Let's reset the whole vector if we lost synchrony
+                    self.first_idx = 0;
+                    self.metrics[0] = input;
+                    self.active_items = 1;
+                } else {
+                    self.prev_snapshot = format!("{:?}", self);
+                    self.metrics[target_idx].1 =
+                        self.resolve_metric_collision(self.metrics[target_idx].1, input.1);
                 }
-                self.metrics[target_idx].1 =
-                    self.resolve_metric_collision(self.metrics[target_idx].1, input.1);
                 return 0;
             }
         } else if inactive_time == 0 {
+            self.prev_snapshot = format!("{:?}", self);
             // We have a metric for the last indexed epoch
             self.metrics[last_idx].1 =
                 self.resolve_metric_collision(self.metrics[last_idx].1, input.1);
             return 0;
         } else {
+            self.prev_snapshot = format!("{:?}", self);
             // The input epoch is in the future
             let max_epoch = self.metrics[last_idx].0;
             // Fill missing entries with None
