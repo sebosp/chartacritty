@@ -1076,7 +1076,7 @@ impl TimeSeries {
                 let target_idx = self.get_tail_backwards_offset_idx(inactive_time);
                 if self.metrics[target_idx].0 != input.0 {
                     event!(Level::ERROR,
-                        "upsert: lost synchrony len: {}, first_idx: {}, last_idx: {}, target_idx: {}, inactive_time: {}, input: {}, target_idx data: {} prev_snapshot: {:?}, metrics: {:?}",
+                        "upsert: lost synchrony len: {}, first_idx: {}, last_idx: {}, target_idx: {}, inactive_time: {}, input: {}, target_idx data: {}, prev_value: {:?}, upsert_type: {:?}, prev_snapshot: {:?}, metrics: {:?}",
                         self.metrics.len(),
                         self.first_idx,
                         last_idx,
@@ -1084,6 +1084,8 @@ impl TimeSeries {
                         inactive_time,
                         input.0,
                         self.metrics[target_idx].0,
+                        self.prev_value,
+                        self.upsert_type,
                         self.prev_snapshot,
                         self.metrics
                     );
