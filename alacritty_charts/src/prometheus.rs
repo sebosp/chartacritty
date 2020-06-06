@@ -1010,7 +1010,9 @@ mod tests {
                 missing_values_policy: MissingValuesPolicy::Zero,
                 first_idx: 0,
                 active_items: 5,
-                prev_snapshot: String::from(""),
+                prev_snapshot: vec![],
+                prev_value: (0, None),
+                upsert_type: crate::UpsertType::default(),
             },
             data: Vector {
                 result: vec![HTTPVectorResult {
@@ -1408,7 +1410,9 @@ mod tests {
                 missing_values_policy: MissingValuesPolicy::Zero,
                 first_idx: 0,
                 active_items: 1,
-                prev_snapshot: String::from(""),
+                prev_snapshot: vec![],
+                prev_value: (0, None),
+                upsert_type: crate::UpsertType::default(),
             },
             data: Vector {
                 result: vec![HTTPVectorResult {
