@@ -64,6 +64,48 @@ impl Default for MissingValuesPolicy {
     }
 }
 
+impl MissingValuesPolicy {
+    /// `fixed` tries to extracts the f64 enclosed in an input String of the form "Fixed(numf64)"
+    pub fn fixed(mut input: String) -> Result<MissingValuesPolicy, String> {
+        // TODO: Use failure crate and implement err
+        let open_paren_offset = input.find('(');
+        let closed_paren_offset = input.find(')');
+        if let (Some(mut open_paren_offset), Some(closed_paren_offset)) =
+            (open_paren_offset, closed_paren_offset)
+        {
+            open_paren_offset += 1;
+            if open_paren_offset >= closed_paren_offset {
+                return Err(String::from(
+                    "Unable to find parenthesis enclosed f64 value",
+                ));
+            }
+            let input_f64: String = input
+                .drain(open_paren_offset..closed_paren_offset)
+                .collect();
+            // TODO: simplify with ? operator
+            return match input_f64.parse::<f64>() {
+                Ok(val) => Ok(MissingValuesPolicy::Fixed(val)),
+                Err(err) => {
+                    event!(
+                        Level::ERROR,
+                        "MissingValuesPolicy::fixed({}) Could not parse enclosed f64: {}",
+                        input_f64,
+                        err
+                    );
+                    Err(String::from("Invalid f64 value"))
+                }
+            };
+        }
+        event!(
+                        Level::ERROR,
+                        "MissingValuesPolicy::fixed({}) Could not find opening and closing parenthesis. Expected Fixed(<num>) (i.e Fixed(10))",
+                        input
+                    );
+        Err(String::from(
+            "Unable to find parenthesis enclosed f64 value",
+        ))
+    }
+}
 /// `ValueCollisionPolicy` handles collisions when several values are collected
 /// for the same time unit, allowing for overwriting, incrementing, etc.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -858,7 +900,8 @@ impl TimeSeries {
             "first" => MissingValuesPolicy::First,
             _ => {
                 // TODO: Implement FromStr somehow
-                MissingValuesPolicy::Zero
+                MissingValuesPolicy::fixed(policy_type.clone())
+                    .unwrap_or(MissingValuesPolicy::default())
             }
         };
         self
@@ -2341,5 +2384,42 @@ mod tests {
             prev_value: (0, None),
         };
         assert_eq!(good.sanity_check(), true);
+    }
+
+    #[test]
+    fn missing_values_policy_fixed() {
+        init_log();
+        let test_string_0 = MissingValuesPolicy::fixed(String::from(")"));
+        assert_eq!(
+            test_string_0,
+            Err(String::from(
+                "Unable to find parenthesis enclosed f64 value"
+            ))
+        );
+        let test_string_1 = MissingValuesPolicy::fixed(String::from("("));
+        assert_eq!(
+            test_string_1,
+            Err(String::from(
+                "Unable to find parenthesis enclosed f64 value"
+            ))
+        );
+        let test_string_2 = MissingValuesPolicy::fixed(String::from("Fixed)("));
+        assert_eq!(
+            test_string_2,
+            Err(String::from(
+                "Unable to find parenthesis enclosed f64 value"
+            ))
+        );
+        let test_empty_literal = MissingValuesPolicy::fixed(String::from("Fixed()"));
+        assert_eq!(
+            test_empty_literal,
+            Err(String::from(
+                "Unable to find parenthesis enclosed f64 value"
+            ))
+        );
+        let test_bad_num = MissingValuesPolicy::fixed(String::from("Fixed(A)"));
+        assert_eq!(test_bad_num, Err(String::from("Invalid f64 value")));
+        let test_good = MissingValuesPolicy::fixed(String::from("Fixed(10.0)"));
+        assert_eq!(test_good, Ok(MissingValuesPolicy::Fixed(10f64)));
     }
 }
