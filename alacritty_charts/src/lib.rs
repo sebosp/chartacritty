@@ -1046,6 +1046,7 @@ impl TimeSeries {
         if self.metrics.is_empty() {
             self.circular_push(input);
             self.upsert_type = UpsertType::Empty;
+            self.prev_value = input;
             return 1;
         }
         if !self.sanity_check() {
@@ -1060,6 +1061,7 @@ impl TimeSeries {
             // we would need to restart the terminal to see metrics
             // XXX: What about timezones?
             self.upsert_type = UpsertType::TooOld;
+            self.prev_value = input;
             return 0;
         }
         // as_vec() is 5, 6, 7, 3, 4
@@ -1074,6 +1076,7 @@ impl TimeSeries {
             self.metrics[0] = input;
             self.active_items = 1;
             self.upsert_type = UpsertType::VectorDiscarded;
+            self.prev_value = input;
             return 1;
         } else if inactive_time < 0 {
             // We have a metric for an epoch in the past.
@@ -1096,6 +1099,7 @@ impl TimeSeries {
                     }
                     self.active_items += padding_items;
                     self.upsert_type = UpsertType::PrevEpochInputVecNotFull;
+                    self.prev_value = input;
                     return padding_items;
                 } else {
                     self.sync_prev_snapshot();
@@ -1112,6 +1116,7 @@ impl TimeSeries {
                     }
                     self.active_items += 1;
                     self.upsert_type = UpsertType::PrevEpochInputVecFull;
+                    self.prev_value = input;
                     return (previous_min_epoch - input.0) as usize;
                 }
             } else {
@@ -1143,6 +1148,7 @@ impl TimeSeries {
                         self.resolve_metric_collision(self.metrics[target_idx].1, input.1);
                 }
                 self.upsert_type = UpsertType::OverwritePrevEpoch;
+                self.prev_value = input;
                 return 0;
             }
         } else if inactive_time == 0 {
@@ -1151,6 +1157,7 @@ impl TimeSeries {
             self.metrics[last_idx].1 =
                 self.resolve_metric_collision(self.metrics[last_idx].1, input.1);
             self.upsert_type = UpsertType::OverwriteLastEpoch;
+            self.prev_value = input;
             return 0;
         } else {
             self.sync_prev_snapshot();
@@ -1162,6 +1169,7 @@ impl TimeSeries {
             }
             self.circular_push(input);
             self.upsert_type = UpsertType::NewEpoch;
+            self.prev_value = input;
             return 1;
         }
     }
