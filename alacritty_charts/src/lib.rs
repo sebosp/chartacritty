@@ -2478,7 +2478,7 @@ mod tests {
         };
         let previous_min_epoch = corrupt.metrics[corrupt.first_idx].0;
         assert_eq!(previous_min_epoch, 65916);
-        let input = (65899, Some(9.0));
+        let input = (65899, Some(8.0));
         let last_idx = corrupt.get_last_idx();
         assert_eq!(last_idx, 4);
         let inactive_time = input.0 as i64 - corrupt.metrics[last_idx].0 as i64;
@@ -2495,7 +2495,10 @@ mod tests {
                 (65918, None),
                 (65919, None),
                 (65920, None),
-                (65899, None),
+                (20425, Some(9.0)),
+                (20426, Some(9.0)),
+                (20427, Some(9.0)),
+                (65899, Some(8.0)),
                 (65900, None),
                 (65901, None),
                 (65902, None),
