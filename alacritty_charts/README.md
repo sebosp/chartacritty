@@ -250,3 +250,6 @@ groups:
     annotations:
       summary: Low Filesystem space
 ```
+
+## TODO
+- There is an issue when the circular buffer may lose sanity, i.e. the sequence is lost. A few fields in the TimeSeries struct have been added to aid in debugging. It seems most of the previous issues have been caught. When this is stable for a few months we should delete them.

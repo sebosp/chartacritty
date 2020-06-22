@@ -80,9 +80,8 @@ pub struct HTTPResponse {
 /// but our internal representation is u64
 pub fn prometheus_epoch_to_u64(input: &serde_json::Value) -> Option<u64> {
     if input.is_number() {
-        if let Some(input) = input.as_f64() {
-            return Some(input as u64);
-        }
+        let input = input.as_f64()?;
+        return Some(input as u64);
     }
     None
 }
@@ -90,10 +89,9 @@ pub fn prometheus_epoch_to_u64(input: &serde_json::Value) -> Option<u64> {
 /// Transforms an serde_json::Value into an optional f64
 pub fn serde_json_to_num(input: &serde_json::Value) -> Option<f64> {
     if input.is_string() {
-        if let Some(input) = input.as_str() {
-            if let Ok(value) = input.parse() {
-                return Some(value);
-            }
+        let input = input.as_str()?;
+        if let Ok(value) = input.parse() {
+            return Some(value);
         }
     }
     None
@@ -1010,6 +1008,9 @@ mod tests {
                 missing_values_policy: MissingValuesPolicy::Zero,
                 first_idx: 0,
                 active_items: 5,
+                prev_snapshot: vec![],
+                prev_value: (0, None),
+                upsert_type: crate::UpsertType::default(),
             },
             data: Vector {
                 result: vec![HTTPVectorResult {
@@ -1407,6 +1408,9 @@ mod tests {
                 missing_values_policy: MissingValuesPolicy::Zero,
                 first_idx: 0,
                 active_items: 1,
+                prev_snapshot: vec![],
+                prev_value: (0, None),
+                upsert_type: crate::UpsertType::default(),
             },
             data: Vector {
                 result: vec![HTTPVectorResult {

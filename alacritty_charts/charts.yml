@@ -1,4 +1,3 @@
-# TODO: rename positions to position
 charts:
   position:
     x: 200
@@ -58,7 +57,7 @@ charts:
       source: 'http://localhost:9090/api/v1/query_range?query=node_load1'
       color: "0xbb86cf"
       alpha: 0.9
-      missing_values_policy: avg
+      missing_values_policy: Fixeed(1) # Example on how to use a Fixed value for the policy
       collision_policy: Overwrite
     - name: load average 5 min
       type: prometheus

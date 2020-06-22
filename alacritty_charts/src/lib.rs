@@ -64,6 +64,48 @@ impl Default for MissingValuesPolicy {
     }
 }
 
+impl MissingValuesPolicy {
+    /// `fixed` tries to extracts the f64 enclosed in an input String of the form "Fixed(numf64)"
+    pub fn fixed(mut input: String) -> Result<MissingValuesPolicy, String> {
+        // TODO: Use failure crate and implement err
+        let open_paren_offset = input.find('(');
+        let closed_paren_offset = input.find(')');
+        if let (Some(mut open_paren_offset), Some(closed_paren_offset)) =
+            (open_paren_offset, closed_paren_offset)
+        {
+            open_paren_offset += 1;
+            if open_paren_offset >= closed_paren_offset {
+                return Err(String::from(
+                    "Unable to find parenthesis enclosed f64 value",
+                ));
+            }
+            let input_f64: String = input
+                .drain(open_paren_offset..closed_paren_offset)
+                .collect();
+            // TODO: simplify with ? operator
+            return match input_f64.parse::<f64>() {
+                Ok(val) => Ok(MissingValuesPolicy::Fixed(val)),
+                Err(err) => {
+                    event!(
+                        Level::ERROR,
+                        "MissingValuesPolicy::fixed({}) Could not parse enclosed f64: {}",
+                        input_f64,
+                        err
+                    );
+                    Err(String::from("Invalid f64 value"))
+                }
+            };
+        }
+        event!(
+                        Level::ERROR,
+                        "MissingValuesPolicy::fixed({}) Could not find opening and closing parenthesis. Expected Fixed(<num>) (i.e Fixed(10))",
+                        input
+                    );
+        Err(String::from(
+            "Unable to find parenthesis enclosed f64 value",
+        ))
+    }
+}
 /// `ValueCollisionPolicy` handles collisions when several values are collected
 /// for the same time unit, allowing for overwriting, incrementing, etc.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -110,6 +152,26 @@ impl Default for TimeSeriesStats {
     }
 }
 
+/// This enum is tied to the upsert() function and aids in a bug finding for synchronicity loss.
+/// TODO: Remove later
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub enum UpsertType {
+    Empty,
+    TooOld,
+    VectorDiscarded,
+    PrevEpochInputVecFull,
+    PrevEpochInputVecNotFull,
+    OverwritePrevEpoch,
+    OverwriteLastEpoch,
+    NewEpoch,
+}
+
+impl Default for UpsertType {
+    fn default() -> UpsertType {
+        UpsertType::Empty
+    }
+}
+
 /// `TimeSeries` contains a vector of tuple (epoch, Option<value>)
 /// The vector behaves as a circular buffer to avoid shifting values.
 /// The circular buffer may be invalidated partially, for example when too much
@@ -141,6 +203,18 @@ pub struct TimeSeries {
 
     /// How many items are active in our circular buffer
     pub active_items: usize,
+
+    /// The previous to current metric snapshot, for debug purposes
+    /// TODO: drop when upsert is sttable
+    pub prev_snapshot: Vec<(u64, Option<f64>)>,
+
+    /// The previous value inserted
+    /// TODO: drop when upsert is stable
+    pub prev_value: (u64, Option<f64>),
+
+    /// The last upsert type
+    /// TODO: drop when upsert is stable
+    pub upsert_type: UpsertType,
 }
 
 /// `IterTimeSeries` provides the Iterator Trait for TimeSeries metrics.
@@ -797,6 +871,9 @@ impl Default for TimeSeries {
             missing_values_policy: MissingValuesPolicy::default(),
             first_idx: 0,
             active_items: 0,
+            prev_snapshot: Vec::with_capacity(default_capacity),
+            prev_value: (0, None),
+            upsert_type: UpsertType::default(),
         }
     }
 }
@@ -823,7 +900,8 @@ impl TimeSeries {
             "first" => MissingValuesPolicy::First,
             _ => {
                 // TODO: Implement FromStr somehow
-                MissingValuesPolicy::Zero
+                MissingValuesPolicy::fixed(policy_type.clone())
+                    .unwrap_or(MissingValuesPolicy::default())
             }
         };
         self
@@ -937,12 +1015,25 @@ impl TimeSeries {
         (self.first_idx + self.active_items - 1) % self.metrics.len()
     }
 
-    /// `get_tail_negative_offset_idx` return a negative offset from the last index in the array
+    /// `get_tail_backwards_offset_idx` return a negative offset from the last index in the array
     /// useful when metrics arrive that occurred in the past of the active metrics epoch range
     /// The value of offset should be negative
-    fn get_tail_negative_offset_idx(&self, offset: i64) -> usize {
+    fn get_tail_backwards_offset_idx(&self, offset: i64) -> usize {
         ((self.metrics.len() as i64 + self.get_last_idx() as i64 + offset)
             % self.metrics.len() as i64) as usize
+    }
+
+    fn sync_prev_snapshot(&mut self) {
+        if self.metrics.len() != self.prev_snapshot.len() {
+            self.prev_snapshot
+                .push(self.metrics[self.metrics.len() - 1]);
+        } else {
+            for item_num in 0..self.metrics.len() {
+                if self.prev_snapshot[item_num] != self.metrics[item_num] {
+                    self.prev_snapshot[item_num] = self.metrics[item_num];
+                }
+            }
+        }
     }
 
     /// `upsert` Adds values to the circular buffer adding empty entries for
@@ -954,7 +1045,13 @@ impl TimeSeries {
         let _enter = span.enter();
         if self.metrics.is_empty() {
             self.circular_push(input);
+            self.upsert_type = UpsertType::Empty;
+            self.prev_value = input;
             return 1;
+        }
+        if !self.sanity_check() {
+            event!(Level::ERROR, "upsert: Sanity check failed: {:?}", self);
+            //return 0usize;
         }
         let last_idx = self.get_last_idx();
         if (self.metrics[last_idx].0 as i64 - input.0 as i64) >= self.metrics_capacity as i64 {
@@ -963,6 +1060,8 @@ impl TimeSeries {
             // i.e. if the date of the computer needs to go back in time
             // we would need to restart the terminal to see metrics
             // XXX: What about timezones?
+            self.upsert_type = UpsertType::TooOld;
+            self.prev_value = input;
             return 0;
         }
         // as_vec() is 5, 6, 7, 3, 4
@@ -972,9 +1071,12 @@ impl TimeSeries {
         let inactive_time = input.0 as i64 - self.metrics[last_idx].0 as i64;
         if inactive_time > self.metrics_capacity as i64 {
             // The whole vector should be discarded
+            self.sync_prev_snapshot();
             self.first_idx = 0;
             self.metrics[0] = input;
             self.active_items = 1;
+            self.upsert_type = UpsertType::VectorDiscarded;
+            self.prev_value = input;
             return 1;
         } else if inactive_time < 0 {
             // We have a metric for an epoch in the past.
@@ -988,6 +1090,7 @@ impl TimeSeries {
                 // XXX: This is wrong, we should add as many padding_items as possible without
                 // breaking the metrics_capacity.
                 if self.metrics.len() + 1 < self.metrics_capacity {
+                    self.sync_prev_snapshot();
                     // The vector is not full, let's shift the items to the right
                     // The array items have not been allocated at this point:
                     self.metrics.insert(0, input);
@@ -995,28 +1098,38 @@ impl TimeSeries {
                         self.metrics.insert(idx, (input.0 + idx as u64, None));
                     }
                     self.active_items += padding_items;
+                    self.upsert_type = UpsertType::PrevEpochInputVecNotFull;
+                    self.prev_value = input;
                     return padding_items;
                 } else {
+                    self.sync_prev_snapshot();
                     // The vector is full, write the new epoch at first_idx and then fill the rest
                     // up to current_min value with None
                     let previous_min_epoch = self.metrics[self.first_idx].0;
                     // Find what would be the first index given the current input, in case we need
                     // to roll back from the end of the array
-                    let target_idx = self.get_tail_negative_offset_idx(inactive_time);
-                    self.first_idx = target_idx;
+                    let target_idx = self.get_tail_backwards_offset_idx(inactive_time);
                     self.metrics[target_idx] = input;
+                    self.first_idx = target_idx;
+                    // We need to backfill the vector from a previous position, we need to cache the
+                    // previous version of active_items and then add it back after the operation
+                    let previous_active_items = self.active_items;
+                    self.active_items = 1;
                     for fill_epoch in (input.0 + 1)..previous_min_epoch {
                         self.circular_push((fill_epoch, None));
                     }
-                    self.active_items += 1;
+                    self.upsert_type = UpsertType::PrevEpochInputVecFull;
+                    self.prev_value = input;
+                    // XXX: make sure this doesn't go above the metrics_capacity
+                    self.active_items += previous_active_items;
                     return (previous_min_epoch - input.0) as usize;
                 }
             } else {
                 // The input epoch has already been inserted in our array
-                let target_idx = self.get_tail_negative_offset_idx(inactive_time);
+                let target_idx = self.get_tail_backwards_offset_idx(inactive_time);
                 if self.metrics[target_idx].0 != input.0 {
                     event!(Level::ERROR,
-                        "upsert: lost synchrony len: {}, first_idx: {}, last_idx: {}, target_idx: {}, inactive_time: {}, input: {}, target_idx data: {} metrics: {:?}",
+                        "upsert: lost synchrony len: {}, first_idx: {}, last_idx: {}, target_idx: {}, inactive_time: {}, input: {}, target_idx data: {}, prev_value: {:?}, upsert_type: {:?}, prev_snapshot: {:?}, metrics: {:?}",
                         self.metrics.len(),
                         self.first_idx,
                         last_idx,
@@ -1024,19 +1137,35 @@ impl TimeSeries {
                         inactive_time,
                         input.0,
                         self.metrics[target_idx].0,
+                        self.prev_value,
+                        self.upsert_type,
+                        self.prev_snapshot,
                         self.metrics
                     );
+                    self.sync_prev_snapshot();
+                    // Let's reset the whole vector if we lost synchrony
+                    self.first_idx = 0;
+                    self.metrics[0] = input;
+                    self.active_items = 1;
+                } else {
+                    self.sync_prev_snapshot();
+                    self.metrics[target_idx].1 =
+                        self.resolve_metric_collision(self.metrics[target_idx].1, input.1);
                 }
-                self.metrics[target_idx].1 =
-                    self.resolve_metric_collision(self.metrics[target_idx].1, input.1);
+                self.upsert_type = UpsertType::OverwritePrevEpoch;
+                self.prev_value = input;
                 return 0;
             }
         } else if inactive_time == 0 {
+            self.sync_prev_snapshot();
             // We have a metric for the last indexed epoch
             self.metrics[last_idx].1 =
                 self.resolve_metric_collision(self.metrics[last_idx].1, input.1);
+            self.upsert_type = UpsertType::OverwriteLastEpoch;
+            self.prev_value = input;
             return 0;
         } else {
+            self.sync_prev_snapshot();
             // The input epoch is in the future
             let max_epoch = self.metrics[last_idx].0;
             // Fill missing entries with None
@@ -1044,6 +1173,8 @@ impl TimeSeries {
                 self.circular_push((fill_epoch, None));
             }
             self.circular_push(input);
+            self.upsert_type = UpsertType::NewEpoch;
+            self.prev_value = input;
             return 1;
         }
     }
@@ -1117,6 +1248,22 @@ impl TimeSeries {
             pos: self.first_idx,
             current_item: 0,
         }
+    }
+
+    // `sanity_check` verifies the state of the circular buffer is valid
+    pub fn sanity_check(&self) -> bool {
+        if self.metrics.is_empty() || self.metrics.len() == 1 {
+            return true;
+        }
+        let mut curr_idx = self.first_idx;
+        while curr_idx != self.get_last_idx() {
+            let next_idx = (curr_idx + 1) % self.metrics_capacity;
+            if self.metrics[curr_idx].0 >= self.metrics[next_idx].0 {
+                return false;
+            }
+            curr_idx = next_idx;
+        }
+        true
     }
 }
 
@@ -1218,7 +1365,7 @@ mod tests {
         assert_eq!(last_input_epoch, 15);
         let inactive_time = input.0 as i64 - last_input_epoch as i64;
         assert_eq!(inactive_time, -4);
-        let target_idx = test.get_tail_negative_offset_idx(inactive_time);
+        let target_idx = test.get_tail_backwards_offset_idx(inactive_time);
         assert_eq!(test.metrics.len(), 4);
         // This is an erroneous calculation because 11th is too old for little range
         assert_eq!(target_idx, 1);
@@ -1472,7 +1619,7 @@ mod tests {
         let last_idx = test.get_last_idx();
         let inactive_time = input.0 as i64 - test.metrics[last_idx].0 as i64;
         assert_eq!(inactive_time, -3);
-        let target_idx = test.get_tail_negative_offset_idx(inactive_time);
+        let target_idx = test.get_tail_backwards_offset_idx(inactive_time);
         assert_eq!(target_idx, 4);
         assert_eq!(test.metrics[target_idx].0, 4);
     }
@@ -2166,6 +2313,7 @@ mod tests {
             default_dimensions: Some(Value2D { x: 25., y: 100. }),
             position: Some(Value2D { x: 200., y: 0. }),
             charts: vec![],
+            spacing: 0f32,
         };
         let (_size_test, mut chart_test) = simple_chart_setup_with_none();
         chart_test.position = None;
@@ -2208,6 +2356,166 @@ mod tests {
         assert_eq!(
             chart_config.charts[5].dimensions,
             chart_config.default_dimensions
+        );
+    }
+
+    #[test]
+    fn it_does_sanity_check() {
+        let bad = TimeSeries {
+            metrics: vec![
+                (1, Some(0f64)),
+                (0, Some(1f64)),
+                (1, Some(2f64)),
+                (0, Some(3f64)),
+            ],
+            active_items: 4,
+            metrics_capacity: 4,
+            collision_policy: ValueCollisionPolicy::Overwrite,
+            missing_values_policy: MissingValuesPolicy::default(),
+            stats: TimeSeriesStats::default(),
+            first_idx: 0,
+            prev_snapshot: vec![],
+            upsert_type: UpsertType::default(),
+            prev_value: (0, None),
+        };
+        assert_eq!(bad.sanity_check(), false);
+        let good = TimeSeries {
+            metrics: vec![
+                (0, Some(0f64)),
+                (1, Some(1f64)),
+                (2, Some(2f64)),
+                (3, Some(3f64)),
+            ],
+            active_items: 4,
+            metrics_capacity: 4,
+            collision_policy: ValueCollisionPolicy::Overwrite,
+            missing_values_policy: MissingValuesPolicy::default(),
+            stats: TimeSeriesStats::default(),
+            first_idx: 0,
+            prev_snapshot: vec![],
+            upsert_type: UpsertType::default(),
+            prev_value: (0, None),
+        };
+        assert_eq!(good.sanity_check(), true);
+    }
+
+    #[test]
+    fn missing_values_policy_fixed() {
+        init_log();
+        let test_string_0 = MissingValuesPolicy::fixed(String::from(")"));
+        assert_eq!(
+            test_string_0,
+            Err(String::from(
+                "Unable to find parenthesis enclosed f64 value"
+            ))
+        );
+        let test_string_1 = MissingValuesPolicy::fixed(String::from("("));
+        assert_eq!(
+            test_string_1,
+            Err(String::from(
+                "Unable to find parenthesis enclosed f64 value"
+            ))
+        );
+        let test_string_2 = MissingValuesPolicy::fixed(String::from("Fixed)("));
+        assert_eq!(
+            test_string_2,
+            Err(String::from(
+                "Unable to find parenthesis enclosed f64 value"
+            ))
+        );
+        let test_empty_literal = MissingValuesPolicy::fixed(String::from("Fixed()"));
+        assert_eq!(
+            test_empty_literal,
+            Err(String::from(
+                "Unable to find parenthesis enclosed f64 value"
+            ))
+        );
+        let test_bad_num = MissingValuesPolicy::fixed(String::from("Fixed(A)"));
+        assert_eq!(test_bad_num, Err(String::from("Invalid f64 value")));
+        let test_good = MissingValuesPolicy::fixed(String::from("Fixed(10.0)"));
+        assert_eq!(test_good, Ok(MissingValuesPolicy::Fixed(10f64)));
+    }
+    #[test]
+    fn sync_loss_replication() {
+        init_log();
+        let mut corrupt = TimeSeries {
+            metrics: vec![
+                (65916, None),
+                (65917, None),
+                (65918, None),
+                (65919, None),
+                (65920, None),
+                (20425, Some(9.0)),
+                (20426, Some(9.0)),
+                (20427, Some(9.0)),
+                (20428, Some(9.0)),
+                (20429, Some(9.0)),
+                (20430, Some(9.0)),
+                (20431, Some(9.0)),
+                (20432, Some(9.0)),
+                (20433, Some(9.0)),
+                (20434, Some(9.0)),
+                (20435, Some(9.0)),
+                (20436, Some(9.0)),
+                (20437, Some(9.0)),
+                (20438, Some(9.0)),
+                (20439, Some(9.0)),
+                (20440, Some(9.0)),
+                (20441, Some(9.0)),
+                (20442, Some(9.0)),
+                (20443, Some(9.0)),
+                (20444, Some(9.0)),
+            ],
+            active_items: 5,
+            metrics_capacity: 25,
+            collision_policy: ValueCollisionPolicy::Overwrite,
+            missing_values_policy: MissingValuesPolicy::default(),
+            stats: TimeSeriesStats::default(),
+            first_idx: 0,
+            prev_snapshot: Vec::with_capacity(25),
+            upsert_type: UpsertType::default(),
+            prev_value: (0, None),
+        };
+        let previous_min_epoch = corrupt.metrics[corrupt.first_idx].0;
+        assert_eq!(previous_min_epoch, 65916);
+        let input = (65899, Some(8.0));
+        let last_idx = corrupt.get_last_idx();
+        assert_eq!(last_idx, 4);
+        let inactive_time = input.0 as i64 - corrupt.metrics[last_idx].0 as i64;
+        assert_eq!(inactive_time, -21);
+        let target_idx = corrupt.get_tail_backwards_offset_idx(inactive_time);
+        assert_eq!(target_idx, 8);
+        corrupt.upsert(input);
+        assert_eq!(corrupt.sanity_check(), true);
+        assert_eq!(
+            corrupt.metrics,
+            vec![
+                (65916, None),
+                (65917, None),
+                (65918, None),
+                (65919, None),
+                (65920, None),
+                (20425, Some(9.0)),
+                (20426, Some(9.0)),
+                (20427, Some(9.0)),
+                (65899, Some(8.0)),
+                (65900, None),
+                (65901, None),
+                (65902, None),
+                (65903, None),
+                (65904, None),
+                (65905, None),
+                (65906, None),
+                (65907, None),
+                (65908, None),
+                (65909, None),
+                (65910, None),
+                (65911, None),
+                (65912, None),
+                (65913, None),
+                (65914, None),
+                (65915, None),
+            ]
         );
     }
 }
