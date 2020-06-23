@@ -1,10 +1,10 @@
 use std::os::raw::c_ulong;
 
-use serde::Deserialize;
+use log::error;
+use serde::{Deserialize, Deserializer};
+use serde_yaml::Value;
 
-use crate::config::{
-    failure_default, from_string_or_deserialize, option_explicit_none, Delta, FromString,
-};
+use crate::config::{failure_default, option_explicit_none, Delta, LOG_TARGET_CONFIG};
 use crate::index::{Column, Line};
 
 /// Default Alacritty name, used for window title and class.
@@ -42,7 +42,7 @@ pub struct WindowConfig {
     pub title: String,
 
     /// Window class.
-    #[serde(deserialize_with = "from_string_or_deserialize")]
+    #[serde(deserialize_with = "deserialize_class")]
     pub class: Class,
 
     /// XEmbed parent.
@@ -161,7 +161,10 @@ impl Dimensions {
 #[serde(default)]
 #[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct Class {
+    #[serde(deserialize_with = "deserialize_class_resource")]
     pub instance: String,
+
+    #[serde(deserialize_with = "deserialize_class_resource")]
     pub general: String,
 }
 
@@ -171,8 +174,42 @@ impl Default for Class {
     }
 }
 
-impl FromString for Class {
-    fn from(value: String) -> Self {
-        Class { instance: value, general: DEFAULT_NAME.into() }
+fn deserialize_class_resource<'a, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'a>,
+{
+    let value = Value::deserialize(deserializer)?;
+    match String::deserialize(value) {
+        Ok(value) => Ok(value),
+        Err(err) => {
+            error!(
+                target: LOG_TARGET_CONFIG,
+                "Problem with config: {}, using default value {}", err, DEFAULT_NAME,
+            );
+
+            Ok(DEFAULT_NAME.into())
+        },
+    }
+}
+
+fn deserialize_class<'a, D>(deserializer: D) -> Result<Class, D::Error>
+where
+    D: Deserializer<'a>,
+{
+    let value = Value::deserialize(deserializer)?;
+
+    if let Value::String(instance) = value {
+        return Ok(Class { instance, general: DEFAULT_NAME.into() });
+    }
+
+    match Class::deserialize(value) {
+        Ok(value) => Ok(value),
+        Err(err) => {
+            error!(
+                target: LOG_TARGET_CONFIG,
+                "Problem with config: {}; using class {}", err, DEFAULT_NAME
+            );
+            Ok(Class::default())
+        },
     }
 }

@@ -1,65 +1,44 @@
-// Copyright 2016 Joe Wilm, The Alacritty Project Contributors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-use std::convert::From;
+#[rustfmt::skip]
 #[cfg(not(any(target_os = "macos", windows)))]
-use std::ffi::c_void;
+use {
+    std::ffi::c_void,
+    std::os::raw::c_ulong,
+    std::sync::atomic::AtomicBool,
+    std::sync::Arc,
+
+    glutin::platform::unix::{EventLoopWindowTargetExtUnix, WindowBuilderExtUnix, WindowExtUnix},
+    image::ImageFormat,
+    log::error,
+    wayland_client::protocol::wl_surface::WlSurface,
+    wayland_client::{Attached, EventQueue, Proxy},
+    x11_dl::xlib::{Display as XDisplay, PropModeReplace, XErrorEvent, Xlib},
+
+    alacritty_terminal::config::Colors,
+
+    crate::wayland_theme::AlacrittyWaylandTheme,
+};
+
 use std::fmt::{self, Display, Formatter};
-#[cfg(not(any(target_os = "macos", windows)))]
-use std::os::raw::c_ulong;
-#[cfg(not(any(target_os = "macos", windows)))]
-use std::sync::atomic::AtomicBool;
-#[cfg(not(any(target_os = "macos", windows)))]
-use std::sync::Arc;
 
 use glutin::dpi::{PhysicalPosition, PhysicalSize};
 use glutin::event_loop::EventLoop;
 #[cfg(target_os = "macos")]
 use glutin::platform::macos::{RequestUserAttentionType, WindowBuilderExtMacOS, WindowExtMacOS};
-#[cfg(not(any(target_os = "macos", windows)))]
-use glutin::platform::unix::{EventLoopWindowTargetExtUnix, WindowBuilderExtUnix, WindowExtUnix};
 #[cfg(windows)]
 use glutin::platform::windows::IconExtWindows;
 #[cfg(not(target_os = "macos"))]
 use glutin::window::Icon;
 use glutin::window::{CursorIcon, Fullscreen, Window as GlutinWindow, WindowBuilder, WindowId};
 use glutin::{self, ContextBuilder, PossiblyCurrent, WindowedContext};
-#[cfg(not(any(target_os = "macos", windows)))]
-use image::ImageFormat;
-#[cfg(not(any(target_os = "macos", windows)))]
-use log::error;
 #[cfg(windows)]
 use winapi::shared::minwindef::WORD;
-#[cfg(not(any(target_os = "macos", windows)))]
-use x11_dl::xlib::{Display as XDisplay, PropModeReplace, XErrorEvent, Xlib};
 
-#[cfg(not(any(target_os = "macos", windows)))]
-use alacritty_terminal::config::Colors;
 use alacritty_terminal::config::{Decorations, StartupMode, WindowConfig};
-use alacritty_terminal::event::Event;
 #[cfg(not(windows))]
 use alacritty_terminal::term::{SizeInfo, Term};
 
 use crate::config::Config;
 use crate::gl;
-#[cfg(not(any(target_os = "macos", windows)))]
-use crate::wayland_theme::AlacrittyWaylandTheme;
-
-#[cfg(not(any(target_os = "macos", windows)))]
-use wayland_client::{Attached, EventQueue, Proxy};
-
-#[cfg(not(any(target_os = "macos", windows)))]
-use wayland_client::protocol::wl_surface::WlSurface;
 
 // It's required to be in this directory due to the `windows.rc` file.
 #[cfg(not(any(target_os = "macos", windows)))]
@@ -123,9 +102,9 @@ impl From<font::Error> for Error {
     }
 }
 
-fn create_gl_window(
+fn create_gl_window<E>(
     mut window: WindowBuilder,
-    event_loop: &EventLoop<Event>,
+    event_loop: &EventLoop<E>,
     srgb: bool,
     vsync: bool,
     dimensions: Option<PhysicalSize<u32>>,
@@ -167,8 +146,8 @@ impl Window {
     /// Create a new window.
     ///
     /// This creates a window and fully initializes a window.
-    pub fn new(
-        event_loop: &EventLoop<Event>,
+    pub fn new<E>(
+        event_loop: &EventLoop<E>,
         config: &Config,
         size: Option<PhysicalSize<u32>>,
         #[cfg(not(any(target_os = "macos", windows)))] wayland_event_queue: Option<&EventQueue>,
@@ -420,7 +399,7 @@ impl Window {
     /// Adjust the IME editor position according to the new location of the cursor.
     #[cfg(not(windows))]
     pub fn update_ime_position<T>(&mut self, terminal: &Term<T>, size_info: &SizeInfo) {
-        let point = terminal.cursor().point;
+        let point = terminal.grid().cursor.point;
         let SizeInfo { cell_width, cell_height, padding_x, padding_y, .. } = size_info;
 
         let nspot_x = f64::from(padding_x + point.col.0 as f32 * cell_width);

@@ -1,20 +1,6 @@
-// Copyright 2016 Joe Wilm, The Alacritty Project Contributors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-//
 //! TTY related functionality.
 
-use crate::config::{Config, Shell};
+use crate::config::{Config, Program};
 use crate::event::OnResize;
 use crate::term::SizeInfo;
 use crate::tty::{ChildEvent, EventedPty, EventedReadWrite};
@@ -22,6 +8,8 @@ use crate::tty::{ChildEvent, EventedPty, EventedReadWrite};
 use libc::{self, c_int, pid_t, winsize, TIOCSCTTY};
 use log::error;
 use nix::pty::openpty;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use nix::sys::termios::{self, InputFlags, SetArg};
 use signal_hook::{self as sighook, iterator::Signals};
 
 use mio::unix::EventedFd;
@@ -45,7 +33,7 @@ static PID: AtomicUsize = AtomicUsize::new(0);
 macro_rules! die {
     ($($arg:tt)*) => {{
         error!($($arg)*);
-        ::std::process::exit(1);
+        std::process::exit(1);
     }}
 }
 
@@ -148,18 +136,27 @@ pub fn new<C>(config: &Config<C>, size: &SizeInfo, window_id: Option<usize>) -> 
 
     let (master, slave) = make_pty(win_size);
 
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        if let Ok(mut termios) = termios::tcgetattr(master) {
+            // Set character encoding to UTF-8.
+            termios.input_flags.set(InputFlags::IUTF8, true);
+            let _ = termios::tcsetattr(master, SetArg::TCSANOW, &termios);
+        }
+    }
+
     let default_shell = if cfg!(target_os = "macos") {
         let shell_name = pw.shell.rsplit('/').next().unwrap();
         let argv = vec![String::from("-c"), format!("exec -a -{} {}", shell_name, pw.shell)];
 
-        Shell::new_with_args("/bin/bash", argv)
+        Program::WithArgs { program: "/bin/bash".to_owned(), args: argv }
     } else {
-        Shell::new(pw.shell)
+        Program::Just(pw.shell.to_owned())
     };
     let shell = config.shell.as_ref().unwrap_or(&default_shell);
 
-    let mut builder = Command::new(&*shell.program);
-    for arg in &shell.args {
+    let mut builder = Command::new(&*shell.program());
+    for arg in shell.args() {
         builder.arg(arg);
     }
 
@@ -235,7 +232,7 @@ pub fn new<C>(config: &Config<C>, size: &SizeInfo, window_id: Option<usize>) -> 
             pty.on_resize(size);
             pty
         },
-        Err(err) => die!("Failed to spawn command '{}': {}", shell.program, err),
+        Err(err) => die!("Failed to spawn command '{}': {}", shell.program(), err),
     }
 }
 

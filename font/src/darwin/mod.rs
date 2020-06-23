@@ -1,18 +1,5 @@
-// Copyright 2016 Joe Wilm, The Alacritty Project Contributors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-//
 //! Font rendering based on CoreText.
+
 #![allow(improper_ctypes)]
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -281,7 +268,6 @@ pub struct Font {
 
 unsafe impl Send for Font {}
 
-
 /// Set subpixel anti-aliasing on macOS.
 ///
 /// Sub-pixel anti-aliasing has been disabled since macOS Mojave by default. This function allows
@@ -294,7 +280,7 @@ pub fn set_font_smoothing(enable: bool) {
     unsafe {
         // Check that we're running at least Mojave (10.14.0+).
         if !NSProcessInfo::processInfo(nil).isOperatingSystemAtLeastVersion(min_macos_version) {
-            return
+            return;
         }
 
         let key = NSString::alloc(nil).init_str("CGFontRenderingFontSmoothingDisabled");
@@ -516,8 +502,12 @@ impl Font {
             kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Host,
         );
 
+        let is_colored = self.is_colored();
+
         // Set background color for graphics context.
-        cg_context.set_rgb_fill_color(0.0, 0.0, 0.0, 0.0);
+        let bg_a = if is_colored { 0.0 } else { 1.0 };
+        cg_context.set_rgb_fill_color(0.0, 0.0, 0.0, bg_a);
+
         let context_rect = CGRect::new(
             &CGPoint::new(0.0, 0.0),
             &CGSize::new(f64::from(rasterized_width), f64::from(rasterized_height)),
@@ -551,7 +541,7 @@ impl Font {
 
         let rasterized_pixels = cg_context.data().to_vec();
 
-        let buf = if self.is_colored() {
+        let buf = if is_colored {
             BitmapBuffer::RGBA(byte_order::extract_rgba(&rasterized_pixels))
         } else {
             BitmapBuffer::RGB(byte_order::extract_rgb(&rasterized_pixels))

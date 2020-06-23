@@ -1,18 +1,3 @@
-// Copyright 2016 Joe Wilm, The Alacritty Project Contributors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::path::PathBuf;
@@ -79,8 +64,8 @@ pub struct Config<T> {
     pub selection: Selection,
 
     /// Path to a shell program to run on startup.
-    #[serde(default, deserialize_with = "from_string_or_deserialize")]
-    pub shell: Option<Shell<'static>>,
+    #[serde(default, deserialize_with = "failure_default")]
+    pub shell: Option<Program>,
 
     /// Path where config was loaded from.
     #[serde(default, deserialize_with = "failure_default")]
@@ -282,41 +267,50 @@ impl Default for Cursor {
     }
 }
 
-pub fn deserialize_cursor_thickness<'a, D>(deserializer: D) -> Result<Percentage, D::Error>
+fn deserialize_cursor_thickness<'a, D>(deserializer: D) -> Result<Percentage, D::Error>
 where
     D: Deserializer<'a>,
 {
-    Ok(Percentage::deserialize(Value::deserialize(deserializer)?)
-        .unwrap_or_else(|_| Percentage::new(DEFAULT_CURSOR_THICKNESS)))
-}
+    let value = Value::deserialize(deserializer)?;
+    match Percentage::deserialize(value) {
+        Ok(value) => Ok(value),
+        Err(err) => {
+            error!(
+                target: LOG_TARGET_CONFIG,
+                "Problem with config: {}, using default thickness value {}",
+                err,
+                DEFAULT_CURSOR_THICKNESS
+            );
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
-pub struct Shell<'a> {
-    pub program: Cow<'a, str>,
-
-    #[serde(default, deserialize_with = "failure_default")]
-    pub args: Vec<String>,
-}
-
-impl<'a> Shell<'a> {
-    pub fn new<S>(program: S) -> Shell<'a>
-    where
-        S: Into<Cow<'a, str>>,
-    {
-        Shell { program: program.into(), args: Vec::new() }
-    }
-
-    pub fn new_with_args<S>(program: S, args: Vec<String>) -> Shell<'a>
-    where
-        S: Into<Cow<'a, str>>,
-    {
-        Shell { program: program.into(), args }
+            Ok(Percentage::new(DEFAULT_CURSOR_THICKNESS))
+        },
     }
 }
 
-impl FromString for Option<Shell<'_>> {
-    fn from(input: String) -> Self {
-        Some(Shell::new(input))
+#[serde(untagged)]
+#[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
+pub enum Program {
+    Just(String),
+    WithArgs {
+        program: String,
+        #[serde(default, deserialize_with = "failure_default")]
+        args: Vec<String>,
+    },
+}
+
+impl Program {
+    pub fn program(&self) -> &str {
+        match self {
+            Program::Just(program) => program,
+            Program::WithArgs { program, .. } => program,
+        }
+    }
+
+    pub fn args(&self) -> &[String] {
+        match self {
+            Program::Just(_) => &[],
+            Program::WithArgs { args, .. } => args,
+        }
     }
 }
 
@@ -398,20 +392,4 @@ where
         Value::String(ref value) if value.to_lowercase() == "none" => None,
         value => Some(T::deserialize(value).unwrap_or_else(fallback_default)),
     })
-}
-
-pub fn from_string_or_deserialize<'de, T, D>(deserializer: D) -> Result<T, D::Error>
-where
-    D: Deserializer<'de>,
-    T: Deserialize<'de> + FromString + Default,
-{
-    Ok(match Value::deserialize(deserializer)? {
-        Value::String(value) => T::from(value),
-        value => T::deserialize(value).unwrap_or_else(fallback_default),
-    })
-}
-
-// Used over From<String>, to allow implementation for foreign types.
-pub trait FromString {
-    fn from(input: String) -> Self;
 }

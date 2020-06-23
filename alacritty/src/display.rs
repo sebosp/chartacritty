@@ -1,22 +1,9 @@
-// Copyright 2016 Joe Wilm, The Alacritty Project Contributors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 //! The display subsystem including window management, font rasterization, and
 //! GPU drawing.
 use futures::future::lazy;
 use futures::sync::mpsc as futures_mpsc;
 use futures::sync::oneshot;
+
 use std::f64;
 use std::fmt::{self, Formatter};
 #[cfg(not(any(target_os = "macos", windows)))]
@@ -42,7 +29,7 @@ use font::set_font_smoothing;
 use font::{self, Rasterize};
 
 use alacritty_terminal::config::{Font, StartupMode};
-use alacritty_terminal::event::{Event, OnResize};
+use alacritty_terminal::event::OnResize;
 use alacritty_terminal::index::Line;
 use alacritty_terminal::message_bar::MessageBuffer;
 use alacritty_terminal::meter::Meter;
@@ -139,7 +126,7 @@ pub struct Display {
 }
 
 impl Display {
-    pub fn new(config: &Config, event_loop: &EventLoop<Event>) -> Result<Display, Error> {
+    pub fn new<E>(config: &Config, event_loop: &EventLoop<E>) -> Result<Display, Error> {
         // Guess DPR based on first monitor.
         let estimated_dpr =
             event_loop.available_monitors().next().map(|m| m.scale_factor()).unwrap_or(1.);
@@ -464,7 +451,7 @@ impl Display {
         let size_info = self.size_info;
         let charts_enabled = terminal.charts_enabled();
 
-        let selection = !terminal.selection().as_ref().map(Selection::is_empty).unwrap_or(true);
+        let selection = !terminal.selection.as_ref().map(Selection::is_empty).unwrap_or(true);
         let mouse_mode = terminal.mode().intersects(TermMode::MOUSE_MODE)
             && !terminal.mode().contains(TermMode::VI);
 
@@ -496,7 +483,7 @@ impl Display {
                 // Iterate over all non-empty cells in the grid.
                 for cell in grid_cells {
                     // Update URL underlines.
-                    urls.update(size_info.cols().0, cell);
+                    urls.update(size_info.cols(), cell);
 
                     // Update underline/strikeout.
                     lines.update(cell);

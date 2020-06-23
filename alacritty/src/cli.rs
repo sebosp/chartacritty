@@ -1,24 +1,10 @@
-// Copyright 2019 Joe Wilm, The Alacritty Project Contributors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 use std::cmp::max;
 use std::path::PathBuf;
 
 use clap::{crate_authors, crate_description, crate_name, crate_version, App, Arg};
 use log::{self, error, LevelFilter};
 
-use alacritty_terminal::config::{Delta, Dimensions, Shell, DEFAULT_NAME};
+use alacritty_terminal::config::{Delta, Dimensions, Program, DEFAULT_NAME};
 use alacritty_terminal::index::{Column, Line};
 
 use crate::config::Config;
@@ -41,7 +27,7 @@ pub struct Options {
     pub class: Option<String>,
     pub embed: Option<String>,
     pub log_level: LevelFilter,
-    pub command: Option<Shell<'static>>,
+    pub command: Option<Program>,
     pub hold: bool,
     pub working_dir: Option<PathBuf>,
     pub config: Option<PathBuf>,
@@ -243,9 +229,9 @@ impl Options {
             // The following unwrap is guaranteed to succeed.
             // If `command` exists it must also have a first item since
             // `Arg::min_values(1)` is set.
-            let command = String::from(args.next().unwrap());
+            let program = String::from(args.next().unwrap());
             let args = args.map(String::from).collect();
-            options.command = Some(Shell::new_with_args(command, args));
+            options.command = Some(Program::WithArgs { program, args });
         }
 
         if matches.is_present("hold") {
