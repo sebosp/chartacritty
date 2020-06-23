@@ -611,27 +611,6 @@
   #- { key: Return,   mods: Alt,           action: ToggleFullscreen }
 
   # (macOS only)
-  #- { key: Key0,   mods: Command,         action: ResetFontSize    }
-  #- { key: Equals, mods: Command,         action: IncreaseFontSize }
-  #- { key: Add,    mods: Command,         action: IncreaseFontSize }
-  #- { key: Minus,  mods: Command,         action: DecreaseFontSize }
-  #- { key: K,      mods: Command,         action: ClearHistory     }
-  #- { key: K,      mods: Command,         chars: "\x0c"            }
-  #- { key: V,      mods: Command,         action: Paste            }
-  #- { key: C,      mods: Command,         action: Copy             }
-  #- { key: H,      mods: Command,         action: Hide             }
-  #- { key: M,      mods: Command,         action: Minimize         }
-  #- { key: Q,      mods: Command,         action: Quit             }
-  #- { key: W,      mods: Command,         action: Quit             }
-  #- { key: F,      mods: Command|Control, action: ToggleFullscreen }
-  #- { key: Paste,                    action: Paste                            }
-  #- { key: Copy,                     action: Copy                             }
-  #- { key: L,         mods: Control, action: ClearLogNotice                   }
-  #- { key: L,         mods: Control, chars: "\x0c"                            }
-  #- { key: PageUp,    mods: Shift,   action: ScrollPageUp,   mode: ~Alt       }
-  #- { key: PageDown,  mods: Shift,   action: ScrollPageDown, mode: ~Alt       }
-  #- { key: Home,      mods: Shift,   action: ScrollToTop,    mode: ~Alt       }
-  #- { key: End,       mods: Shift,   action: ScrollToBottom, mode: ~Alt       }
   #- { key: Comma,     mods: Alt,     action: ToggleChartShow                  }
   #- { key: K,      mods: Command, mode: ~Vi, chars: "\x0c"            }
   #- { key: Key0,   mods: Command,            action: ResetFontSize    }
@@ -669,116 +648,116 @@
 
   # Print all received window events.
   #print_events: false
-charts:
-  default_dimensions:
-    x: 50
-    y: 25
-  position:
-    x: 200
-  spacing: 10
-  charts:
-  - name: async loaded items
-    series:
-    - name: Number of input items for TimeSeries
-      type: async_items_loaded
-      refresh: 1
-      color: "0x9c27b0"
-      alpha: 1.0
-  - name: output newlines
-    series:
-    - name: output
-      type: alacritty_output
-      color: "0x00ff00"
-      alpha: 1.0
-      missing_values_policy: last
-      collision_policy: Increment
-  - name: input newlines
-    series:
-    - name: input
-      type: alacritty_input
-      color: "0xff0000"
-      alpha: 1.0
-      missing_values_policy: last
-      collision_policy: Increment
-  - name: load
-    decorations:
-    - type: reference
-      value: 4.0             # Show a reference point at 4 CPU marks
-      color: "0x03dac6"
-      alpha: 0.3
-      height_multiplier: 0.05
-    - type: alert
-      target: prometheus alerts # ties to below series of the same name
-      threshold: 0
-      comparator: '>'
-      color: "0xff0000"
-    series:
-    - name: load average 1 min
-      type: prometheus
-      refresh: 15
-      source: 'http://localhost:9090/api/v1/query_range?query=node_load1'
-      color: "0xbb86cf"
-      alpha: 0.9
-      missing_values_policy: avg
-      collision_policy: Overwrite
-    - name: load average 5 min
-      type: prometheus
-      refresh: 15
-      source: 'http://localhost:9090/api/v1/query_range?query=node_load5'
-      color: "0xba68c8"
-      alpha: 0.6
-      missing_values_policy: avg
-      collision_policy: Overwrite
-    - name: load average 15 min
-      type: prometheus
-      refresh: 15
-      source: 'http://localhost:9090/api/v1/query_range?query=node_load15'
-      color: "0xee98fb"
-      alpha: 0.3
-      missing_values_policy: avg
-      collision_policy: Overwrite
-    - name: prometheus alerts
-      type: prometheus
-      refresh: 15
-      source: 'http://localhost:9090/api/v1/query_range?query=ALERTS'
-      color: "0xff0000"
-      collision_policy: Overwrite
-      missing_values_policy: zero  # The ALERT type queries tend to disappear, so making them zero by default
-      alpha: 0.0                   # This is meant only for alerting, so it will be set to transparent
-  - name: cpu
-    series:
-    - name: cpu
-      type: prometheus
-      refresh: 15
-      # This actually returns many CPUs, XXX: split into lines
-      source: 'http://localhost:9090/api/v1/query_range?query=100 - (avg by (instance) (irate(node_cpu_seconds_total{job="node_exporter",mode="idle"}[5m])) * 100)'
-      color: "0xc8b900"
-      alpha: 1.0
-  - name: prom status
-    series:
-    - name: prometheus_up
-      type: prometheus
-      refresh: 15
-      source: 'http://localhost:9090/api/v1/query?query=up'
-      labels:
-        job: node_exporter
-      color: "0xc8b900"
-      alpha: 1.0
-  - name: memory
-    series:
-    - name: memory used
-      type: prometheus
-      refresh: 15
-      source: 'http://localhost:9090/api/v1/query_range?query=node_memory_Active_bytes'
-      color: "0xcf6679"
-      alpha: 1.0
-      missing_values_policy: avg
-      collision_policy: Overwrite
-    - name: memory total
-      type: prometheus
-      refresh: 15
-      source: 'http://localhost:9090/api/v1/query_range?query=node_memory_MemTotal_bytes'
-      color: "0xe1f5fe"
-      alpha: 1.0
-      missing_values_policy: avg
-      collision_policy: Overwrite
+#charts:
+#  default_dimensions:
+#    x: 50
+#    y: 25
+#  position:
+#    x: 200
+#  spacing: 10
+#  charts:
+#  - name: async loaded items
+#    series:
+#    - name: Number of input items for TimeSeries
+#      type: async_items_loaded
+#      refresh: 1
+#      color: "0x9c27b0"
+#      alpha: 1.0
+#  - name: output newlines
+#    series:
+#    - name: output
+#      type: alacritty_output
+#      color: "0x00ff00"
+#      alpha: 1.0
+#      missing_values_policy: last
+#      collision_policy: Increment
+#  - name: input newlines
+#    series:
+#    - name: input
+#      type: alacritty_input
+#      color: "0xff0000"
+#      alpha: 1.0
+#      missing_values_policy: last
+#      collision_policy: Increment
+#  - name: load
+#    decorations:
+#    - type: reference
+#      value: 4.0             # Show a reference point at 4 CPU marks
+#      color: "0x03dac6"
+#      alpha: 0.3
+#      height_multiplier: 0.05
+#    - type: alert
+#      target: prometheus alerts # ties to below series of the same name
+#      threshold: 0
+#      comparator: '>'
+#      color: "0xff0000"
+#    series:
+#    - name: load average 1 min
+#      type: prometheus
+#      refresh: 15
+#      source: 'http://localhost:9090/api/v1/query_range?query=node_load1'
+#      color: "0xbb86cf"
+#      alpha: 0.9
+#      missing_values_policy: avg
+#      collision_policy: Overwrite
+#    - name: load average 5 min
+#      type: prometheus
+#      refresh: 15
+#      source: 'http://localhost:9090/api/v1/query_range?query=node_load5'
+#      color: "0xba68c8"
+#      alpha: 0.6
+#      missing_values_policy: avg
+#      collision_policy: Overwrite
+#    - name: load average 15 min
+#      type: prometheus
+#      refresh: 15
+#      source: 'http://localhost:9090/api/v1/query_range?query=node_load15'
+#      color: "0xee98fb"
+#      alpha: 0.3
+#      missing_values_policy: avg
+#      collision_policy: Overwrite
+#    - name: prometheus alerts
+#      type: prometheus
+#      refresh: 15
+#      source: 'http://localhost:9090/api/v1/query_range?query=ALERTS'
+#      color: "0xff0000"
+#      collision_policy: Overwrite
+#      missing_values_policy: zero  # The ALERT type queries tend to disappear, so making them zero by default
+#      alpha: 0.0                   # This is meant only for alerting, so it will be set to transparent
+#  - name: cpu
+#    series:
+#    - name: cpu
+#      type: prometheus
+#      refresh: 15
+#      # This actually returns many CPUs, XXX: split into lines
+#      source: 'http://localhost:9090/api/v1/query_range?query=100 - (avg by (instance) (irate(node_cpu_seconds_total{job="node_exporter",mode="idle"}[5m])) * 100)'
+#      color: "0xc8b900"
+#      alpha: 1.0
+#  - name: prom status
+#    series:
+#    - name: prometheus_up
+#      type: prometheus
+#      refresh: 15
+#      source: 'http://localhost:9090/api/v1/query?query=up'
+#      labels:
+#        job: node_exporter
+#      color: "0xc8b900"
+#      alpha: 1.0
+#  - name: memory
+#    series:
+#    - name: memory used
+#      type: prometheus
+#      refresh: 15
+#      source: 'http://localhost:9090/api/v1/query_range?query=node_memory_Active_bytes'
+#      color: "0xcf6679"
+#      alpha: 1.0
+#      missing_values_policy: avg
+#      collision_policy: Overwrite
+#    - name: memory total
+#      type: prometheus
+#      refresh: 15
+#      source: 'http://localhost:9090/api/v1/query_range?query=node_memory_MemTotal_bytes'
+#      color: "0xe1f5fe"
+#      alpha: 1.0
+#      missing_values_policy: avg
+#      collision_policy: Overwrite
