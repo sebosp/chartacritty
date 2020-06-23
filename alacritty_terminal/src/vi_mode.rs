@@ -385,11 +385,10 @@ fn last_occupied_in_line<T>(term: &Term<T>, line: usize) -> Option<Point<usize>>
 
 /// Advance point based on direction.
 fn advance<T>(term: &Term<T>, point: Point<usize>, left: bool) -> Point<usize> {
-    let cols = term.grid().num_cols();
     if left {
-        point.sub_absolute(cols.0, 1)
+        point.sub_absolute(term.grid().num_cols(), 1)
     } else {
-        point.add_absolute(cols.0, 1)
+        point.add_absolute(term.grid().num_cols(), 1)
     }
 }
 
@@ -413,7 +412,6 @@ fn is_boundary<T>(term: &Term<T>, point: Point<usize>, left: bool) -> bool {
 mod tests {
     use super::*;
 
-    use crate::clipboard::Clipboard;
     use crate::config::MockConfig;
     use crate::event::Event;
     use crate::index::{Column, Line};
@@ -434,7 +432,7 @@ mod tests {
             padding_y: 0.0,
             dpr: 1.0,
         };
-        Term::new(&MockConfig::default(), &size, Clipboard::new_nop(), Mock)
+        Term::new(&MockConfig::default(), &size, Mock)
     }
 
     #[test]
@@ -679,7 +677,7 @@ mod tests {
     #[test]
     fn scroll_semantic() {
         let mut term = term();
-        term.grid_mut().scroll_up(&(Line(0)..Line(20)), Line(5), &Default::default());
+        term.grid_mut().scroll_up(&(Line(0)..Line(20)), Line(5), Default::default());
 
         let mut cursor = ViModeCursor::new(Point::new(Line(0), Column(0)));
 
@@ -755,7 +753,7 @@ mod tests {
     #[test]
     fn scroll_word() {
         let mut term = term();
-        term.grid_mut().scroll_up(&(Line(0)..Line(20)), Line(5), &Default::default());
+        term.grid_mut().scroll_up(&(Line(0)..Line(20)), Line(5), Default::default());
 
         let mut cursor = ViModeCursor::new(Point::new(Line(0), Column(0)));
 

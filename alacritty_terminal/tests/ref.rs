@@ -6,7 +6,6 @@ use std::io::{self, Read};
 use std::path::Path;
 
 use alacritty_terminal::ansi;
-use alacritty_terminal::clipboard::Clipboard;
 use alacritty_terminal::config::MockConfig;
 use alacritty_terminal::event::{Event, EventListener};
 use alacritty_terminal::index::Column;
@@ -100,8 +99,7 @@ fn ref_test(dir: &Path) {
 
     let (tokio_handle, charts_tx, _tokio_shutdown) =
         alacritty_charts::async_utils::tokio_default_setup();
-    let mut terminal =
-        Term::new(&config, &size, Clipboard::new_nop(), Mock, tokio_handle, charts_tx);
+    let mut terminal = Term::new(&config, &size, Mock, tokio_handle, charts_tx);
     let mut parser = ansi::Processor::new();
 
     for byte in recording {
@@ -110,7 +108,7 @@ fn ref_test(dir: &Path) {
 
     // Truncate invisible lines from the grid.
     let mut term_grid = terminal.grid().clone();
-    term_grid.initialize_all(&Cell::default());
+    term_grid.initialize_all(Cell::default());
     term_grid.truncate();
 
     if grid != term_grid {

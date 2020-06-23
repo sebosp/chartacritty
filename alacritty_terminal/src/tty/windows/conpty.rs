@@ -1,17 +1,3 @@
-// Copyright 2016 Joe Wilm, The Alacritty Project Contributors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 use std::i16;
 use std::io::Error;
 use std::mem;
@@ -231,15 +217,7 @@ pub fn new<C>(config: &Config<C>, size: &SizeInfo, _window_id: Option<usize>) ->
     let child_watcher = ChildExitWatcher::new(proc_info.hProcess).unwrap();
     let conpty = Conpty { handle: pty_handle, api };
 
-    Some(Pty {
-        backend: super::PtyBackend::Conpty(conpty),
-        conout: super::EventedReadablePipe::Anonymous(conout),
-        conin: super::EventedWritablePipe::Anonymous(conin),
-        read_token: 0.into(),
-        write_token: 0.into(),
-        child_event_token: 0.into(),
-        child_watcher,
-    })
+    Some(Pty::new(conpty, conout, conin, child_watcher))
 }
 
 // Panic with the last os error as message.

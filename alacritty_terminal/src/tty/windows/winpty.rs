@@ -1,17 +1,3 @@
-// Copyright 2016 Joe Wilm, The Alacritty Project Contributors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 use std::fs::OpenOptions;
 use std::os::windows::fs::OpenOptionsExt;
 use std::os::windows::io::{FromRawHandle, IntoRawHandle};
@@ -70,15 +56,7 @@ pub fn new<C>(config: &Config<C>, size: &SizeInfo, _window_id: Option<usize>) ->
 
     let child_watcher = ChildExitWatcher::new(agent.raw_handle()).unwrap();
 
-    Pty {
-        backend: super::PtyBackend::Winpty(agent),
-        conout: super::EventedReadablePipe::Named(conout_pipe),
-        conin: super::EventedWritablePipe::Named(conin_pipe),
-        read_token: 0.into(),
-        write_token: 0.into(),
-        child_event_token: 0.into(),
-        child_watcher,
-    }
+    Pty::new(agent, conout_pipe, conin_pipe, child_watcher)
 }
 
 impl OnResize for Agent {

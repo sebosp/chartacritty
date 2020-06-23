@@ -17,6 +17,7 @@ A background thread is started for tokio, it is in charge of:
 
 ## Last merge date from upstream/master (real alacritty)
 - 2020-03-26 (fde2424)
+- 2020-06-23 (43c0ad6)
 
 ## License
 

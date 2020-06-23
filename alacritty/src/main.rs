@@ -1,18 +1,5 @@
-// Copyright 2016 Joe Wilm, The Alacritty Project Contributors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-//
 //! Alacritty - The GPU Enhanced Terminal.
+
 #![deny(clippy::all, clippy::if_not_else, clippy::enum_glob_use, clippy::wrong_pub_self_convention)]
 #![cfg_attr(feature = "nightly", feature(core_intrinsics))]
 #![cfg_attr(all(test, feature = "bench"), feature(test))]
@@ -39,6 +26,7 @@ use winapi::um::wincon::{AttachConsole, FreeConsole, ATTACH_PARENT_PROCESS};
 use alacritty_charts::futures::sync::mpsc;
 use alacritty_terminal::clipboard::Clipboard;
 use alacritty_terminal::event::Event;
+
 use alacritty_terminal::event_loop::{self, EventLoop, Msg};
 #[cfg(target_os = "macos")]
 use alacritty_terminal::locale;
@@ -49,6 +37,7 @@ use alacritty_terminal::term::Term;
 use alacritty_terminal::tty;
 
 mod cli;
+mod clipboard;
 mod config;
 mod cursor;
 mod display;
@@ -56,6 +45,7 @@ mod event;
 mod input;
 mod logging;
 mod renderer;
+mod scheduler;
 mod url;
 mod window;
 
@@ -71,7 +61,7 @@ use crate::cli::Options;
 use crate::config::monitor::Monitor;
 use crate::config::Config;
 use crate::display::Display;
-use crate::event::{EventProxy, Processor};
+use crate::event::{Event, EventProxy, Processor};
 
 fn main() {
     panic::attach_handler();
@@ -150,12 +140,6 @@ fn run(window_event_loop: GlutinEventLoop<Event>, config: Config) -> Result<(), 
 
     info!("PTY dimensions: {:?} x {:?}", display.size_info.lines(), display.size_info.cols());
 
-    // Create new native clipboard.
-    #[cfg(not(any(target_os = "macos", windows)))]
-    let clipboard = Clipboard::new(display.window.wayland_display());
-    #[cfg(any(target_os = "macos", windows))]
-    let clipboard = Clipboard::new();
-
     // Copy the terminal size into the alacritty_charts SizeInfo copy.
     let charts_size_info = alacritty_charts::SizeInfo {
         height: display.size_info.height,
@@ -191,7 +175,6 @@ fn run(window_event_loop: GlutinEventLoop<Event>, config: Config) -> Result<(), 
     let terminal = Term::new(
         &config,
         &display.size_info,
-        clipboard,
         event_proxy.clone(),
         tokio_handle.clone(),
         charts_tx.clone(),

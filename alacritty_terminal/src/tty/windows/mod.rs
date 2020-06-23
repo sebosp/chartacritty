@@ -1,193 +1,76 @@
-// Copyright 2016 Joe Wilm, The Alacritty Project Contributors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 use std::ffi::OsStr;
-use std::io::{self, Read, Write};
+use std::io;
 use std::iter::once;
 use std::os::windows::ffi::OsStrExt;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::TryRecvError;
 
-use mio::{self, Evented, Poll, PollOpt, Ready, Token};
-use mio_anonymous_pipes::{EventedAnonRead, EventedAnonWrite};
-use mio_named_pipes::NamedPipe;
-
-use log::info;
-
-use crate::config::{Config, Shell};
+use crate::config::{Config, Program};
 use crate::event::OnResize;
 use crate::term::SizeInfo;
 use crate::tty::windows::child::ChildExitWatcher;
 use crate::tty::{ChildEvent, EventedPty, EventedReadWrite};
 
+#[cfg(feature = "winpty")]
+mod automatic_backend;
 mod child;
 mod conpty;
+#[cfg(feature = "winpty")]
 mod winpty;
 
-static IS_CONPTY: AtomicBool = AtomicBool::new(false);
+#[cfg(not(feature = "winpty"))]
+use conpty::Conpty as Backend;
+#[cfg(not(feature = "winpty"))]
+use mio_anonymous_pipes::{EventedAnonRead as ReadPipe, EventedAnonWrite as WritePipe};
 
-pub fn is_conpty() -> bool {
-    IS_CONPTY.load(Ordering::Relaxed)
-}
-
-enum PtyBackend {
-    Winpty(winpty::Agent),
-    Conpty(conpty::Conpty),
-}
+#[cfg(feature = "winpty")]
+use automatic_backend::{
+    EventedReadablePipe as ReadPipe, EventedWritablePipe as WritePipe, PtyBackend as Backend,
+};
 
 pub struct Pty {
     // XXX: Backend is required to be the first field, to ensure correct drop order. Dropping
-    // `conout` before `backend` will cause a deadlock.
-    backend: PtyBackend,
-    // TODO: It's on the roadmap for the Conpty API to support Overlapped I/O.
-    // See https://github.com/Microsoft/console/issues/262.
-    // When support for that lands then it should be possible to use
-    // NamedPipe for the conout and conin handles.
-    conout: EventedReadablePipe,
-    conin: EventedWritablePipe,
+    // `conout` before `backend` will cause a deadlock (with Conpty).
+    backend: Backend,
+    conout: ReadPipe,
+    conin: WritePipe,
     read_token: mio::Token,
     write_token: mio::Token,
     child_event_token: mio::Token,
     child_watcher: ChildExitWatcher,
 }
 
+#[cfg(not(feature = "winpty"))]
 pub fn new<C>(config: &Config<C>, size: &SizeInfo, window_id: Option<usize>) -> Pty {
-    if let Some(pty) = conpty::new(config, size, window_id) {
-        info!("Using ConPTY backend");
-        IS_CONPTY.store(true, Ordering::Relaxed);
-        pty
-    } else {
-        info!("Using WinPTY backend");
-        winpty::new(config, size, window_id)
-    }
+    conpty::new(config, size, window_id).expect("Failed to create ConPTY backend")
 }
 
-// TODO: The ConPTY API currently must use synchronous pipes as the input
-// and output handles. This has led to the need to support two different
-// types of pipe.
-//
-// When https://github.com/Microsoft/console/issues/262 lands then the
-// Anonymous variant of this enum can be removed from the codebase and
-// everything can just use NamedPipe.
-pub enum EventedReadablePipe {
-    Anonymous(EventedAnonRead),
-    Named(NamedPipe),
+#[cfg(feature = "winpty")]
+pub fn new<C>(config: &Config<C>, size: &SizeInfo, window_id: Option<usize>) -> Pty {
+    automatic_backend::new(config, size, window_id)
 }
 
-pub enum EventedWritablePipe {
-    Anonymous(EventedAnonWrite),
-    Named(NamedPipe),
-}
-
-impl Evented for EventedReadablePipe {
-    fn register(
-        &self,
-        poll: &Poll,
-        token: Token,
-        interest: Ready,
-        opts: PollOpt,
-    ) -> io::Result<()> {
-        match self {
-            EventedReadablePipe::Anonymous(p) => p.register(poll, token, interest, opts),
-            EventedReadablePipe::Named(p) => p.register(poll, token, interest, opts),
-        }
-    }
-
-    fn reregister(
-        &self,
-        poll: &Poll,
-        token: Token,
-        interest: Ready,
-        opts: PollOpt,
-    ) -> io::Result<()> {
-        match self {
-            EventedReadablePipe::Anonymous(p) => p.reregister(poll, token, interest, opts),
-            EventedReadablePipe::Named(p) => p.reregister(poll, token, interest, opts),
-        }
-    }
-
-    fn deregister(&self, poll: &Poll) -> io::Result<()> {
-        match self {
-            EventedReadablePipe::Anonymous(p) => p.deregister(poll),
-            EventedReadablePipe::Named(p) => p.deregister(poll),
-        }
-    }
-}
-
-impl Read for EventedReadablePipe {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        match self {
-            EventedReadablePipe::Anonymous(p) => p.read(buf),
-            EventedReadablePipe::Named(p) => p.read(buf),
-        }
-    }
-}
-
-impl Evented for EventedWritablePipe {
-    fn register(
-        &self,
-        poll: &Poll,
-        token: Token,
-        interest: Ready,
-        opts: PollOpt,
-    ) -> io::Result<()> {
-        match self {
-            EventedWritablePipe::Anonymous(p) => p.register(poll, token, interest, opts),
-            EventedWritablePipe::Named(p) => p.register(poll, token, interest, opts),
-        }
-    }
-
-    fn reregister(
-        &self,
-        poll: &Poll,
-        token: Token,
-        interest: Ready,
-        opts: PollOpt,
-    ) -> io::Result<()> {
-        match self {
-            EventedWritablePipe::Anonymous(p) => p.reregister(poll, token, interest, opts),
-            EventedWritablePipe::Named(p) => p.reregister(poll, token, interest, opts),
-        }
-    }
-
-    fn deregister(&self, poll: &Poll) -> io::Result<()> {
-        match self {
-            EventedWritablePipe::Anonymous(p) => p.deregister(poll),
-            EventedWritablePipe::Named(p) => p.deregister(poll),
-        }
-    }
-}
-
-impl Write for EventedWritablePipe {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        match self {
-            EventedWritablePipe::Anonymous(p) => p.write(buf),
-            EventedWritablePipe::Named(p) => p.write(buf),
-        }
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        match self {
-            EventedWritablePipe::Anonymous(p) => p.flush(),
-            EventedWritablePipe::Named(p) => p.flush(),
+impl Pty {
+    fn new(
+        backend: impl Into<Backend>,
+        conout: impl Into<ReadPipe>,
+        conin: impl Into<WritePipe>,
+        child_watcher: ChildExitWatcher,
+    ) -> Self {
+        Self {
+            backend: backend.into(),
+            conout: conout.into(),
+            conin: conin.into(),
+            read_token: 0.into(),
+            write_token: 0.into(),
+            child_event_token: 0.into(),
+            child_watcher,
         }
     }
 }
 
 impl EventedReadWrite for Pty {
-    type Reader = EventedReadablePipe;
-    type Writer = EventedWritablePipe;
+    type Reader = ReadPipe;
+    type Writer = WritePipe;
 
     #[inline]
     fn register(
@@ -295,19 +178,16 @@ impl EventedPty for Pty {
 
 impl OnResize for Pty {
     fn on_resize(&mut self, size: &SizeInfo) {
-        match &mut self.backend {
-            PtyBackend::Winpty(w) => w.on_resize(size),
-            PtyBackend::Conpty(c) => c.on_resize(size),
-        }
+        self.backend.on_resize(size)
     }
 }
 
 fn cmdline<C>(config: &Config<C>) -> String {
-    let default_shell = Shell::new("powershell");
+    let default_shell = Program::Just("powershell".to_owned());
     let shell = config.shell.as_ref().unwrap_or(&default_shell);
 
-    once(shell.program.as_ref())
-        .chain(shell.args.iter().map(|a| a.as_ref()))
+    once(shell.program().as_ref())
+        .chain(shell.args().iter().map(|a| a.as_ref()))
         .collect::<Vec<_>>()
         .join(" ")
 }
