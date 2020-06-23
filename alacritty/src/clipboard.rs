@@ -1,22 +1,11 @@
-// Copyright 2016 Joe Wilm, The Alacritty Project Contributors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 use std::ffi::c_void;
 
 use log::{debug, warn};
 
+use alacritty_terminal::term::ClipboardType;
+
+#[cfg(any(test, not(any(feature = "x11", target_os = "macos", windows))))]
 use copypasta::nop_clipboard::NopClipboardContext;
 #[cfg(all(not(any(target_os = "macos", windows)), feature = "wayland"))]
 use copypasta::wayland_clipboard;
@@ -61,7 +50,9 @@ impl Clipboard {
         return Self::new_nop();
     }
 
-    // Use for tests and ref-tests.
+    /// Used for tests and to handle missing clipboard provider when built without the `x11`
+    /// feature.
+    #[cfg(any(test, not(any(feature = "x11", target_os = "macos", windows))))]
     pub fn new_nop() -> Self {
         Self { clipboard: Box::new(NopClipboardContext::new().unwrap()), selection: None }
     }
@@ -74,12 +65,6 @@ impl Default for Clipboard {
         #[cfg(not(any(feature = "x11", target_os = "macos", windows)))]
         return Self::new_nop();
     }
-}
-
-#[derive(Debug)]
-pub enum ClipboardType {
-    Clipboard,
-    Selection,
 }
 
 impl Clipboard {

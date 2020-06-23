@@ -1,4 +1,5 @@
 //! Process window events.
+
 use std::borrow::Cow;
 use std::cmp::max;
 use std::env;
@@ -14,7 +15,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use glutin::dpi::PhysicalSize;
-use glutin::event::{ElementState, Event as GlutinEvent, ModifiersState, WindowEvent};
+use glutin::event::{ElementState, Event as GlutinEvent, ModifiersState, MouseButton, WindowEvent};
 use glutin::event_loop::{ControlFlow, EventLoop, EventLoopProxy, EventLoopWindowTarget};
 use glutin::platform::desktop::EventLoopExtDesktop;
 #[cfg(not(any(target_os = "macos", windows)))]
@@ -26,32 +27,55 @@ use serde_json as json;
 use font::set_font_smoothing;
 use font::{self, Size};
 
-use alacritty_terminal::clipboard::ClipboardType;
 use alacritty_terminal::config::Font;
 use alacritty_terminal::config::LOG_TARGET_CONFIG;
 use alacritty_terminal::event::OnResize;
-use alacritty_terminal::event::{Event, EventListener, Notify};
+use alacritty_terminal::event::{Event as TerminalEvent, EventListener, Notify};
 use alacritty_terminal::grid::Scroll;
 use alacritty_terminal::index::{Column, Line, Point, Side};
 use alacritty_terminal::message_bar::{Message, MessageBuffer};
 use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::cell::Cell;
-use alacritty_terminal::term::{SizeInfo, Term, TermMode};
+use alacritty_terminal::term::{ClipboardType, SizeInfo, Term, TermMode};
 #[cfg(not(windows))]
 use alacritty_terminal::tty;
-use alacritty_terminal::util::{limit, start_daemon};
+use alacritty_terminal::util::start_daemon;
 
 use crate::cli::Options;
+use crate::clipboard::Clipboard;
 use crate::config;
 use crate::config::Config;
 use crate::display::Display;
 use crate::input::{self, ActionContext as _, FONT_SIZE_STEP};
+use crate::scheduler::Scheduler;
 use crate::url::{Url, Urls};
 use crate::window::Window;
 
 use futures::sync::mpsc as futures_mpsc;
 use tokio::runtime::current_thread;
+
+/// Events dispatched through the UI event loop.
+#[derive(Debug, Clone)]
+pub enum Event {
+    TerminalEvent(TerminalEvent),
+    DPRChanged(f64, (u32, u32)),
+    Scroll(Scroll),
+    ConfigReload(PathBuf),
+    Message(Message),
+}
+
+impl From<Event> for GlutinEvent<'_, Event> {
+    fn from(event: Event) -> Self {
+        GlutinEvent::UserEvent(event)
+    }
+}
+
+impl From<TerminalEvent> for Event {
+    fn from(event: TerminalEvent) -> Self {
+        Event::TerminalEvent(event)
+    }
+}
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct DisplayUpdate {
@@ -70,6 +94,7 @@ impl DisplayUpdate {
 pub struct ActionContext<'a, N, T> {
     pub notifier: &'a mut N,
     pub terminal: &'a mut Term<T>,
+    pub clipboard: &'a mut Clipboard,
     pub size_info: &'a mut SizeInfo,
     pub mouse: &'a mut Mouse,
     pub received_count: &'a mut usize,
@@ -81,6 +106,7 @@ pub struct ActionContext<'a, N, T> {
     pub config: &'a mut Config,
     pub event_loop: &'a EventLoopWindowTarget<Event>,
     pub urls: &'a Urls,
+    pub scheduler: &'a mut Scheduler,
     font_size: &'a mut Size,
 }
 
@@ -98,7 +124,7 @@ impl<'a, N: Notify + 'a, T: EventListener> input::ActionContext<T> for ActionCon
 
         // Update selection.
         if self.terminal.mode().contains(TermMode::VI)
-            && self.terminal.selection().as_ref().map(|s| s.is_empty()) != Some(true)
+            && self.terminal.selection.as_ref().map(|s| s.is_empty()) != Some(true)
         {
             self.update_selection(self.terminal.vi_mode_cursor.point, Side::Right);
         } else if ElementState::Pressed == self.mouse().left_button_state {
@@ -113,17 +139,17 @@ impl<'a, N: Notify + 'a, T: EventListener> input::ActionContext<T> for ActionCon
     fn copy_selection(&mut self, ty: ClipboardType) {
         if let Some(selected) = self.terminal.selection_to_string() {
             if !selected.is_empty() {
-                self.terminal.clipboard().store(ty, selected);
+                self.clipboard.store(ty, selected);
             }
         }
     }
 
     fn selection_is_empty(&self) -> bool {
-        self.terminal.selection().as_ref().map(Selection::is_empty).unwrap_or(true)
+        self.terminal.selection.as_ref().map(Selection::is_empty).unwrap_or(true)
     }
 
     fn clear_selection(&mut self) {
-        *self.terminal.selection_mut() = None;
+        self.terminal.selection = None;
         self.terminal.dirty = true;
     }
 
@@ -132,7 +158,7 @@ impl<'a, N: Notify + 'a, T: EventListener> input::ActionContext<T> for ActionCon
 
         // Update selection if one exists.
         let vi_mode = self.terminal.mode().contains(TermMode::VI);
-        if let Some(selection) = self.terminal.selection_mut() {
+        if let Some(selection) = &mut self.terminal.selection {
             selection.update(point, side);
 
             if vi_mode {
@@ -145,12 +171,12 @@ impl<'a, N: Notify + 'a, T: EventListener> input::ActionContext<T> for ActionCon
 
     fn start_selection(&mut self, ty: SelectionType, point: Point, side: Side) {
         let point = self.terminal.visible_to_buffer(point);
-        *self.terminal.selection_mut() = Some(Selection::new(ty, point, side));
+        self.terminal.selection = Some(Selection::new(ty, point, side));
         self.terminal.dirty = true;
     }
 
     fn toggle_selection(&mut self, ty: SelectionType, point: Point, side: Side) {
-        match self.terminal.selection_mut() {
+        match &mut self.terminal.selection {
             Some(selection) if selection.ty == ty && !selection.is_empty() => {
                 self.clear_selection();
             },
@@ -249,6 +275,25 @@ impl<'a, N: Notify + 'a, T: EventListener> input::ActionContext<T> for ActionCon
         }
     }
 
+    /// Spawn URL launcher when clicking on URLs.
+    fn launch_url(&self, url: Url) {
+        if self.mouse.block_url_launcher {
+            return;
+        }
+
+        if let Some(ref launcher) = self.config.ui_config.mouse.url.launcher {
+            let mut args = launcher.args().to_vec();
+            let start = self.terminal.visible_to_buffer(url.start());
+            let end = self.terminal.visible_to_buffer(url.end());
+            args.push(self.terminal.bounds_to_string(start, end));
+
+            match start_daemon(launcher.program(), &args) {
+                Ok(_) => debug!("Launched {} with args {:?}", launcher.program(), args),
+                Err(_) => warn!("Unable to launch {} with args {:?}", launcher.program(), args),
+            }
+        }
+    }
+
     fn change_font_size(&mut self, delta: f32) {
         *self.font_size = max(*self.font_size + delta, Size::new(FONT_SIZE_STEP));
         let font = self.config.font.clone().with_size(*self.font_size);
@@ -283,23 +328,12 @@ impl<'a, N: Notify + 'a, T: EventListener> input::ActionContext<T> for ActionCon
         self.urls
     }
 
-    /// Spawn URL launcher when clicking on URLs.
-    fn launch_url(&self, url: Url) {
-        if self.mouse.block_url_launcher {
-            return;
-        }
+    fn clipboard_mut(&mut self) -> &mut Clipboard {
+        self.clipboard
+    }
 
-        if let Some(ref launcher) = self.config.ui_config.mouse.url.launcher {
-            let mut args = launcher.args().to_vec();
-            let start = self.terminal.visible_to_buffer(url.start());
-            let end = self.terminal.visible_to_buffer(url.end());
-            args.push(self.terminal.bounds_to_string(start, end));
-
-            match start_daemon(launcher.program(), &args) {
-                Ok(_) => debug!("Launched {} with args {:?}", launcher.program(), args),
-                Err(_) => warn!("Unable to launch {} with args {:?}", launcher.program(), args),
-            }
-        }
+    fn scheduler_mut(&mut self) -> &mut Scheduler {
+        self.scheduler
     }
 }
 
@@ -320,6 +354,7 @@ pub struct Mouse {
     pub middle_button_state: ElementState,
     pub right_button_state: ElementState,
     pub last_click_timestamp: Instant,
+    pub last_click_button: MouseButton,
     pub click_state: ClickState,
     pub scroll_px: f64,
     pub line: Line,
@@ -336,6 +371,7 @@ impl Default for Mouse {
             x: 0,
             y: 0,
             last_click_timestamp: Instant::now(),
+            last_click_button: MouseButton::Left,
             left_button_state: ElementState::Released,
             middle_button_state: ElementState::Released,
             right_button_state: ElementState::Released,
@@ -360,6 +396,7 @@ pub struct Processor<N> {
     mouse: Mouse,
     received_count: usize,
     suppress_chars: bool,
+    clipboard: Clipboard,
     modifiers: ModifiersState,
     config: Config,
     message_buffer: MessageBuffer,
@@ -367,7 +404,7 @@ pub struct Processor<N> {
     font_size: Size,
     tokio_handle: current_thread::Handle,
     charts_tx: futures_mpsc::Sender<alacritty_charts::async_utils::AsyncChartTask>,
-    event_queue: Vec<GlutinEvent<'static, alacritty_terminal::event::Event>>,
+    event_queue: Vec<GlutinEvent<'static, Event>>,
 }
 
 impl<N: Notify + OnResize> Processor<N> {
@@ -382,6 +419,11 @@ impl<N: Notify + OnResize> Processor<N> {
         tokio_handle: current_thread::Handle,
         charts_tx: futures_mpsc::Sender<alacritty_charts::async_utils::AsyncChartTask>,
     ) -> Processor<N> {
+        #[cfg(not(any(target_os = "macos", windows)))]
+        let clipboard = Clipboard::new(display.window.wayland_display());
+        #[cfg(any(target_os = "macos", windows))]
+        let clipboard = Clipboard::new();
+
         Processor {
             notifier,
             mouse: Default::default(),
@@ -395,6 +437,7 @@ impl<N: Notify + OnResize> Processor<N> {
             tokio_handle,
             charts_tx,
             event_queue: Vec::new(),
+            clipboard,
         }
     }
 
@@ -428,6 +471,8 @@ impl<N: Notify + OnResize> Processor<N> {
     where
         T: EventListener,
     {
+        let mut scheduler = Scheduler::new();
+
         event_loop.run_return(|event, event_loop, control_flow| {
             if self.config.debug.print_events {
                 info!("glutin event: {:?}", event);
@@ -440,13 +485,16 @@ impl<N: Notify + OnResize> Processor<N> {
 
             match event {
                 // Check for shutdown.
-                GlutinEvent::UserEvent(Event::Exit) => {
+                GlutinEvent::UserEvent(Event::TerminalEvent(TerminalEvent::Exit)) => {
                     *control_flow = ControlFlow::Exit;
                     return;
                 },
                 // Process events.
                 GlutinEvent::RedrawEventsCleared => {
-                    *control_flow = ControlFlow::Wait;
+                    *control_flow = match scheduler.update(&mut self.event_queue) {
+                        Some(instant) => ControlFlow::WaitUntil(instant),
+                        None => ControlFlow::Wait,
+                    };
 
                     if self.event_queue_empty() {
                         return;
@@ -459,8 +507,7 @@ impl<N: Notify + OnResize> Processor<N> {
                 } => {
                     *control_flow = ControlFlow::Poll;
                     let size = (new_inner_size.width, new_inner_size.height);
-                    let event = GlutinEvent::UserEvent(Event::DPRChanged(scale_factor, size));
-                    self.event_queue.push(event);
+                    self.event_queue.push(Event::DPRChanged(scale_factor, size).into());
                     return;
                 },
                 // Transmute to extend lifetime, which exists only for `ScaleFactorChanged` event.
@@ -480,6 +527,7 @@ impl<N: Notify + OnResize> Processor<N> {
                 terminal: &mut terminal,
                 notifier: &mut self.notifier,
                 mouse: &mut self.mouse,
+                clipboard: &mut self.clipboard,
                 size_info: &mut self.display.size_info,
                 received_count: &mut self.received_count,
                 suppress_chars: &mut self.suppress_chars,
@@ -490,6 +538,7 @@ impl<N: Notify + OnResize> Processor<N> {
                 font_size: &mut self.font_size,
                 config: &mut self.config,
                 urls: &self.display.urls,
+                scheduler: &mut scheduler,
                 event_loop,
             };
             let mut processor = input::Processor::new(context, &self.display.highlighted_url);
@@ -526,7 +575,8 @@ impl<N: Notify + OnResize> Processor<N> {
 
                 // Request immediate re-draw if visual bell animation is not finished yet.
                 if !terminal.visual_bell.completed() {
-                    self.event_queue.push(GlutinEvent::UserEvent(Event::Wakeup));
+                    let event: Event = TerminalEvent::Wakeup.into();
+                    self.event_queue.push(event.into());
                 }
 
                 // Redraw screen.
@@ -570,19 +620,29 @@ impl<N: Notify + OnResize> Processor<N> {
                     processor.ctx.size_info.dpr = scale_factor;
                     processor.ctx.terminal.dirty = true;
                 },
-                Event::Title(title) => processor.ctx.window.set_title(&title),
-                Event::Wakeup => processor.ctx.terminal.dirty = true,
-                Event::Urgent => {
-                    processor.ctx.window.set_urgent(!processor.ctx.terminal.is_focused)
-                },
-                Event::ConfigReload(path) => Self::reload_config(&path, processor),
                 Event::Message(message) => {
                     processor.ctx.message_buffer.push(message);
                     processor.ctx.display_update_pending.message_buffer = true;
                     processor.ctx.terminal.dirty = true;
                 },
-                Event::MouseCursorDirty => processor.reset_mouse_cursor(),
-                Event::Exit => (),
+                Event::ConfigReload(path) => Self::reload_config(&path, processor),
+                Event::Scroll(scroll) => processor.ctx.scroll(scroll),
+                Event::TerminalEvent(event) => match event {
+                    TerminalEvent::Title(title) => processor.ctx.window.set_title(&title),
+                    TerminalEvent::Wakeup => processor.ctx.terminal.dirty = true,
+                    TerminalEvent::Urgent => {
+                        processor.ctx.window.set_urgent(!processor.ctx.terminal.is_focused)
+                    },
+                    TerminalEvent::ClipboardStore(clipboard_type, content) => {
+                        processor.ctx.clipboard.store(clipboard_type, content);
+                    },
+                    TerminalEvent::ClipboardLoad(clipboard_type, format) => {
+                        let text = format(processor.ctx.clipboard.load(clipboard_type).as_str());
+                        processor.ctx.write_to_pty(text.into_bytes());
+                    },
+                    TerminalEvent::MouseCursorDirty => processor.reset_mouse_cursor(),
+                    TerminalEvent::Exit => (),
+                },
             },
             GlutinEvent::RedrawRequested(_) => processor.ctx.terminal.dirty = true,
             GlutinEvent::WindowEvent { event, window_id, .. } => {
@@ -616,12 +676,8 @@ impl<N: Notify + OnResize> Processor<N> {
                         processor.modifiers_input(modifiers)
                     },
                     WindowEvent::CursorMoved { position, .. } => {
-                        let (x, y) = position.into();
-                        let x = limit(x, 0, processor.ctx.size_info.width as i32);
-                        let y = limit(y, 0, processor.ctx.size_info.height as i32);
-
                         processor.ctx.window.set_mouse_visible(true);
-                        processor.mouse_moved(x as usize, y as usize);
+                        processor.mouse_moved(position);
                     },
                     WindowEvent::MouseWheel { delta, phase, .. } => {
                         processor.ctx.window.set_mouse_visible(true);
@@ -643,7 +699,7 @@ impl<N: Notify + OnResize> Processor<N> {
                     },
                     WindowEvent::DroppedFile(path) => {
                         let path: String = path.to_string_lossy().into();
-                        processor.ctx.write_to_pty(path.into_bytes());
+                        processor.ctx.write_to_pty((path + " ").into_bytes());
                     },
                     WindowEvent::CursorLeft { .. } => {
                         processor.ctx.mouse.inside_grid = false;
@@ -758,7 +814,7 @@ impl<N: Notify + OnResize> Processor<N> {
 
         // Dump grid state.
         let mut grid = terminal.grid().clone();
-        grid.initialize_all(&Cell::default());
+        grid.initialize_all(Cell::default());
         grid.truncate();
 
         let serialized_grid = json::to_string(&grid).expect("serialize grid");
@@ -788,10 +844,15 @@ impl EventProxy {
     pub fn new(proxy: EventLoopProxy<Event>) -> Self {
         EventProxy(proxy)
     }
+
+    /// Send an event to the event loop.
+    pub fn send_event(&self, event: Event) {
+        let _ = self.0.send_event(event);
+    }
 }
 
 impl EventListener for EventProxy {
-    fn send_event(&self, event: Event) {
-        let _ = self.0.send_event(event);
+    fn send_event(&self, event: TerminalEvent) {
+        let _ = self.0.send_event(Event::TerminalEvent(event));
     }
 }
