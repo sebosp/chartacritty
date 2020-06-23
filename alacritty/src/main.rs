@@ -24,8 +24,6 @@ use log::{error, info};
 use winapi::um::wincon::{AttachConsole, FreeConsole, ATTACH_PARENT_PROCESS};
 
 use alacritty_charts::futures::sync::mpsc;
-use alacritty_terminal::clipboard::Clipboard;
-use alacritty_terminal::event::Event;
 
 use alacritty_terminal::event_loop::{self, EventLoop, Msg};
 #[cfg(target_os = "macos")]
