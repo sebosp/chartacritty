@@ -783,8 +783,8 @@ impl QuadRenderer {
         }
     }
 
-    /// `draw_charts_line` draws an opengl line that contains the data from the metrics
-    pub fn draw_charts_line(
+    /// `draw_line_strip` draws an 2D opengl line
+    pub fn draw_line_strip(
         &mut self,
         props: &term::SizeInfo,
         opengl_vecs: &[f32],
@@ -837,6 +837,79 @@ impl QuadRenderer {
         unsafe {
             // Draw the Activity Line, 2 points per vertex
             gl::DrawArrays(gl::LINE_STRIP, 0, (opengl_vecs.len() / 2usize) as i32);
+
+            // Reset blending strategy
+            gl::BlendFunc(gl::SRC1_COLOR, gl::ONE_MINUS_SRC1_COLOR);
+
+            // Reset data and buffers
+            gl::BindBuffer(gl::ARRAY_BUFFER, 0);
+            gl::BindVertexArray(0);
+
+            let padding_x = props.padding_x as i32;
+            let padding_y = props.padding_y as i32;
+            let width = props.width as i32;
+            let height = props.height as i32;
+            gl::Viewport(padding_x, padding_y, width - 2 * padding_x, height - 2 * padding_y);
+
+            // Disable program
+            gl::UseProgram(0);
+        }
+    }
+
+    /// `draw_points` draws an 2D opengl line
+    pub fn draw_points(
+        &mut self,
+        props: &term::SizeInfo,
+        opengl_vecs: &[f32],
+        color: Rgb,
+        alpha: f32,
+    ) {
+        // A least work on one point
+        if opengl_vecs.len() < 2 {
+            return;
+        }
+        // TODO: Use the Charts Shader Program (For now a copy of rect)
+        unsafe {
+            // Swap program
+            gl::UseProgram(self.charts_program.id);
+
+            // Remove padding from viewport
+            gl::Viewport(0, 0, props.width as i32, props.height as i32);
+
+            // Change blending strategy
+            gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+
+            // Setup data and buffers
+            gl::BindVertexArray(self.rect_vao);
+            gl::BindBuffer(gl::ARRAY_BUFFER, self.rect_vbo);
+
+            // Position
+            gl::VertexAttribPointer(
+                0,
+                2,
+                gl::FLOAT,
+                gl::FALSE,
+                (size_of::<f32>() * 2) as _,
+                ptr::null(),
+            );
+            gl::EnableVertexAttribArray(0);
+
+            // Load vertex data into array buffer
+            gl::BufferData(
+                gl::ARRAY_BUFFER,
+                (size_of::<f32>() * opengl_vecs.len()) as _,
+                opengl_vecs.as_ptr() as *const _,
+                gl::STATIC_DRAW,
+            );
+        }
+
+        // Color
+        self.charts_program.set_color(color, alpha);
+
+        // Deactivate rectangle program again
+        unsafe {
+            // Draw the Activity Line, 2 points per vertex
+            gl::DrawArrays(gl::POINTS, 0, (opengl_vecs.len() / 2usize) as i32);
 
             // Reset blending strategy
             gl::BlendFunc(gl::SRC1_COLOR, gl::ONE_MINUS_SRC1_COLOR);
