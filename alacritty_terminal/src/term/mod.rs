@@ -823,6 +823,9 @@ pub struct Term<T> {
     /// Stack of saved window titles. When a title is popped from this stack, the `title` for the
     /// term is set, and the Glutin window's title attribute is changed through the event listener.
     title_stack: Vec<Option<String>>,
+
+    /// Terminal decorations enabled
+    pub decorations_enabled: bool,
 }
 
 impl<T> Term<T> {
@@ -888,6 +891,7 @@ impl<T> Term<T> {
             title_stack: Vec::new(),
             charts_handle: TermChartsHandle { tokio_handle, charts_tx, enabled: charts_enabled },
             selection: None,
+            decorations_enabled: true,
         }
     }
 
