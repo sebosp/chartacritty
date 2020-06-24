@@ -450,6 +450,7 @@ impl Display {
         let glyph_cache = &mut self.glyph_cache;
         let size_info = self.size_info;
         let charts_enabled = terminal.charts_enabled();
+        let decorations_enabled = terminal.decorations_enabled;
 
         let selection = !terminal.selection.as_ref().map(Selection::is_empty).unwrap_or(true);
         let mouse_mode = terminal.mode().intersects(TermMode::MOUSE_MODE)
@@ -581,7 +582,7 @@ impl Display {
                             "decoration",
                             tokio_handle.clone(),
                         );
-                        self.renderer.draw_charts_line(
+                        self.renderer.draw_line_strip(
                             &size_info,
                             &opengl_data.0,
                             Rgb {
@@ -606,7 +607,7 @@ impl Display {
                             "metric_data",
                             tokio_handle.clone(),
                         );
-                        self.renderer.draw_charts_line(
+                        self.renderer.draw_line_strip(
                             &size_info,
                             &opengl_data.0,
                             Rgb {
@@ -621,6 +622,43 @@ impl Display {
                         std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
                 }
             }
+        } else {
+            debug!("Charts are not enabled");
+        }
+        if decorations_enabled {
+            debug!("draw: Decorations Dust");
+            let radius = 0.5f32;
+            let angle = 60.0f32;
+            let x_offset = angle.cos() * radius;
+            let y_offset = angle.sin() * radius;
+            let r_center_x = 0.0f32;
+            let r_center_y = 0.0f32;
+            let opengl_data = vec![
+                // Mid right:
+                r_center_x + radius,
+                r_center_y,
+                // Top right:
+                r_center_x + x_offset,
+                r_center_y - y_offset,
+                // Top left
+                r_center_x - x_offset,
+                r_center_y - y_offset,
+                // Mid left:
+                r_center_x - radius,
+                r_center_y,
+                // Bottom left
+                r_center_x - x_offset,
+                r_center_y + y_offset,
+                // Bottom Right
+                r_center_x + x_offset,
+                r_center_y + y_offset,
+            ];
+            self.renderer.draw_points(
+                &size_info,
+                &opengl_data,
+                Rgb { r: 25, g: 88, b: 167 },
+                0.5f32,
+            );
         } else {
             debug!("Charts are not enabled");
         }
