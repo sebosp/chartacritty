@@ -620,6 +620,8 @@ impl TimeSeriesChart {
             display_size,
             self.position,
         );
+        // For every timeseries in the current chart, we should calculate what are the max, min,
+        // etc values so that we can draw them all together sensibly
         for source in &mut self.sources {
             if source.series().stats.is_dirty {
                 event!(
@@ -630,6 +632,8 @@ impl TimeSeriesChart {
                 source.series_mut().calculate_stats();
             }
         }
+        // Join all the stats max/min/etc, this time not for individual metrics but from them
+        // together
         self.calculate_stats();
         let mut decorations_space = 0f32;
         for decoration in &self.decorations {
