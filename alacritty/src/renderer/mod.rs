@@ -466,6 +466,20 @@ pub struct Batch {
     instances: Vec<InstanceData>,
 }
 
+#[derive(Debug)]
+pub enum DrawArrayMode {
+    GlPoints,
+    GlLineStrip,
+    GlLineLoop,
+    GlLines,
+    GlTriangleStrip,
+    GlTriangleFan,
+    GlTriangles,
+    // GlQuadStrip, // Unsupported
+    GlQuads,
+    GlPolygon,
+}
+
 impl Batch {
     #[inline]
     pub fn new() -> Self {
@@ -783,18 +797,40 @@ impl QuadRenderer {
         }
     }
 
-    /// `draw_line_strip` draws an 2D opengl line
-    pub fn draw_line_strip(
+    /// `draw_array` draws an 2D opengl line
+    pub fn draw_array(
         &mut self,
         props: &term::SizeInfo,
         opengl_vecs: &[f32],
         color: Rgb,
         alpha: f32,
+        mode: DrawArrayMode,
     ) {
-        // A line should have at least 2 points, so [x1, y1, x2, y2]
-        if opengl_vecs.len() < 4 {
-            return;
-        }
+        match mode {
+            DrawArrayMode::GlPoints => (),
+            _ =>
+            // All types, except for Points, need at least 2 x,y coordinates to work on
+            {
+                if opengl_vecs.len() < 4 {
+                    return;
+                }
+            },
+        };
+        // Translate our enum to opengl enum, maybe this can be ommitted?
+        // Maybe we can extend the enum with custom classes that end up being like this.
+        // So then it should become a trait
+        let gl_mode = match mode {
+            DrawArrayMode::GlPoints => gl::POINTS,
+            DrawArrayMode::GlLineStrip => gl::LINE_STRIP,
+            DrawArrayMode::GlLineLoop => gl::LINE_LOOP,
+            DrawArrayMode::GlLines => gl::LINES,
+            DrawArrayMode::GlTriangleStrip => gl::TRIANGLE_STRIP,
+            DrawArrayMode::GlTriangleFan => gl::TRIANGLE_FAN,
+            DrawArrayMode::GlTriangles => gl::TRIANGLES,
+            // DrawArrayMode::GlQuadStrip => gl::QUAD_STRIP, // Unsupported?
+            DrawArrayMode::GlQuads => gl::QUADS,
+            DrawArrayMode::GlPolygon => gl::POLYGON_MODE,
+        };
         // TODO: Use the Charts Shader Program (For now a copy of rect)
         unsafe {
             // Swap program
@@ -835,81 +871,8 @@ impl QuadRenderer {
 
         // Deactivate rectangle program again
         unsafe {
-            // Draw the Activity Line, 2 points per vertex
-            gl::DrawArrays(gl::LINE_STRIP, 0, (opengl_vecs.len() / 2usize) as i32);
-
-            // Reset blending strategy
-            gl::BlendFunc(gl::SRC1_COLOR, gl::ONE_MINUS_SRC1_COLOR);
-
-            // Reset data and buffers
-            gl::BindBuffer(gl::ARRAY_BUFFER, 0);
-            gl::BindVertexArray(0);
-
-            let padding_x = props.padding_x as i32;
-            let padding_y = props.padding_y as i32;
-            let width = props.width as i32;
-            let height = props.height as i32;
-            gl::Viewport(padding_x, padding_y, width - 2 * padding_x, height - 2 * padding_y);
-
-            // Disable program
-            gl::UseProgram(0);
-        }
-    }
-
-    /// `draw_points` draws an 2D opengl line
-    pub fn draw_points(
-        &mut self,
-        props: &term::SizeInfo,
-        opengl_vecs: &[f32],
-        color: Rgb,
-        alpha: f32,
-    ) {
-        // A least work on one point
-        if opengl_vecs.len() < 2 {
-            return;
-        }
-        // TODO: Use the Charts Shader Program (For now a copy of rect)
-        unsafe {
-            // Swap program
-            gl::UseProgram(self.charts_program.id);
-
-            // Remove padding from viewport
-            gl::Viewport(0, 0, props.width as i32, props.height as i32);
-
-            // Change blending strategy
-            gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
-
-            // Setup data and buffers
-            gl::BindVertexArray(self.rect_vao);
-            gl::BindBuffer(gl::ARRAY_BUFFER, self.rect_vbo);
-
-            // Position
-            gl::VertexAttribPointer(
-                0,
-                2,
-                gl::FLOAT,
-                gl::FALSE,
-                (size_of::<f32>() * 2) as _,
-                ptr::null(),
-            );
-            gl::EnableVertexAttribArray(0);
-
-            // Load vertex data into array buffer
-            gl::BufferData(
-                gl::ARRAY_BUFFER,
-                (size_of::<f32>() * opengl_vecs.len()) as _,
-                opengl_vecs.as_ptr() as *const _,
-                gl::STATIC_DRAW,
-            );
-        }
-
-        // Color
-        self.charts_program.set_color(color, alpha);
-
-        // Deactivate rectangle program again
-        unsafe {
-            // Draw the Activity Line, 2 points per vertex
-            gl::DrawArrays(gl::POINTS, 0, (opengl_vecs.len() / 2usize) as i32);
+            // Draw the incoming array, 2 points per vertex
+            gl::DrawArrays(gl_mode, 0, (opengl_vecs.len() / 2usize) as i32);
 
             // Reset blending strategy
             gl::BlendFunc(gl::SRC1_COLOR, gl::ONE_MINUS_SRC1_COLOR);
