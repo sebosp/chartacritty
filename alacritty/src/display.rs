@@ -582,7 +582,7 @@ impl Display {
                             "decoration",
                             tokio_handle.clone(),
                         );
-                        self.renderer.draw_line_strip(
+                        self.renderer.draw_array(
                             &size_info,
                             &opengl_data.0,
                             Rgb {
@@ -597,6 +597,7 @@ impl Display {
                                     .b,
                             },
                             opengl_data.1,
+                            renderer::DrawArrayMode::GlLineStrip,
                         );
                     }
                     for series_idx in 0..chart_config.charts[chart_idx].sources.len() {
@@ -607,7 +608,7 @@ impl Display {
                             "metric_data",
                             tokio_handle.clone(),
                         );
-                        self.renderer.draw_line_strip(
+                        self.renderer.draw_array(
                             &size_info,
                             &opengl_data.0,
                             Rgb {
@@ -616,6 +617,7 @@ impl Display {
                                 b: chart_config.charts[chart_idx].sources[series_idx].color().b,
                             },
                             opengl_data.1,
+                            renderer::DrawArrayMode::GlLineStrip,
                         );
                     }
                     let chart_last_drawn =
@@ -626,38 +628,57 @@ impl Display {
             debug!("Charts are not enabled");
         }
         if decorations_enabled {
+            // TODO: SEB: width and height should be screen_width and screen_size
+            let decor_size_info = alacritty_charts::SizeInfo {
+                width: size_info.width,
+                height: size_info.height,
+                chart_width: size_info.width,
+                chart_height: size_info.height,
+                cell_width: size_info.cell_width,
+                cell_height: size_info.cell_height,
+                padding_x: size_info.padding_x,
+                padding_y: size_info.padding_y,
+            };
             debug!("draw: Decorations Dust");
-            let radius = 0.5f32;
+            let radius = 100f32; // 500 pixels
             let angle = 60.0f32;
-            let x_offset = angle.cos() * radius;
-            let y_offset = angle.sin() * radius;
-            let r_center_x = 0.0f32;
-            let r_center_y = 0.0f32;
+            let x_offset = angle.to_radians().cos() * radius;
+            let y_offset = angle.to_radians().sin() * radius;
+            let r_center_x = decor_size_info.width / 2f32;
+            let r_center_y = decor_size_info.height / 2f32;
+            info!("r_center_x : {}, r_center_y: {}", r_center_x, r_center_y);
+            info!("x_offset : {}, y_offset: {}", x_offset, y_offset);
             let opengl_data = vec![
                 // Mid right:
-                r_center_x + radius,
-                r_center_y,
+                decor_size_info.scale_x(r_center_x + radius),
+                decor_size_info.scale_y(decor_size_info.height as f64, r_center_y as f64),
                 // Top right:
-                r_center_x + x_offset,
-                r_center_y - y_offset,
+                decor_size_info.scale_x(r_center_x + x_offset),
+                decor_size_info
+                    .scale_y(decor_size_info.height as f64, (r_center_y + y_offset) as f64),
                 // Top left
-                r_center_x - x_offset,
-                r_center_y - y_offset,
+                decor_size_info.scale_x(r_center_x - x_offset),
+                decor_size_info
+                    .scale_y(decor_size_info.height as f64, (r_center_y + y_offset) as f64),
                 // Mid left:
-                r_center_x - radius,
-                r_center_y,
+                decor_size_info.scale_x(r_center_x - radius),
+                decor_size_info.scale_y(decor_size_info.height as f64, r_center_y as f64),
                 // Bottom left
-                r_center_x - x_offset,
-                r_center_y + y_offset,
+                decor_size_info.scale_x(r_center_x - x_offset),
+                decor_size_info
+                    .scale_y(decor_size_info.height as f64, (r_center_y - y_offset) as f64),
                 // Bottom Right
-                r_center_x + x_offset,
-                r_center_y + y_offset,
+                decor_size_info.scale_x(r_center_x + x_offset),
+                decor_size_info
+                    .scale_y(decor_size_info.height as f64, (r_center_y - y_offset) as f64),
             ];
-            self.renderer.draw_points(
+            info!("Drawing dust: {:?}", opengl_data);
+            self.renderer.draw_array(
                 &size_info,
                 &opengl_data,
                 Rgb { r: 25, g: 88, b: 167 },
                 0.5f32,
+                renderer::DrawArrayMode::GlLineLoop,
             );
         } else {
             debug!("Charts are not enabled");
