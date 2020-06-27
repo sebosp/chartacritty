@@ -2,8 +2,8 @@
 
 use crate::config::{Config, Program};
 use crate::event::OnResize;
-use crate::term::SizeInfo;
 use crate::tty::{ChildEvent, EventedPty, EventedReadWrite};
+use alacritty_common::SizeInfo;
 
 use libc::{self, c_int, pid_t, winsize, TIOCSCTTY};
 use log::error;

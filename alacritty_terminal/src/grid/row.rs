@@ -8,7 +8,7 @@ use std::slice;
 use serde::{Deserialize, Serialize};
 
 use crate::grid::GridCell;
-use crate::index::Column;
+use alacritty_common::index::Column;
 
 /// A row in the grid.
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]

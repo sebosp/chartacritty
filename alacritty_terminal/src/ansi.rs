@@ -6,8 +6,8 @@ use std::str;
 use log::{debug, trace};
 use serde::{Deserialize, Serialize};
 
-use crate::index::{Column, Line};
 use crate::term::color::Rgb;
+use alacritty_common::index::{Column, Line};
 
 /// Parse colors in XParseColor format.
 fn xparse_color(color: &[u8]) -> Option<Rgb> {
@@ -1397,8 +1397,8 @@ mod tests {
         parse_number, xparse_color, Attr, CharsetIndex, Color, Handler, Processor, StandardCharset,
         TermInfo,
     };
-    use crate::index::{Column, Line};
     use crate::term::color::Rgb;
+    use alacritty_common::index::{Column, Line};
     use std::io;
 
     struct MockHandler {

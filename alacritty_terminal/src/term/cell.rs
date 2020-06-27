@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::ansi::{Color, NamedColor};
 use crate::grid::{self, GridCell};
-use crate::index::Column;
+use alacritty_common::index::Column;
 
 /// Maximum number of zerowidth characters which will be stored per cell.
 pub const MAX_ZEROWIDTH_CHARS: usize = 5;
@@ -160,7 +160,7 @@ mod tests {
     use super::{Cell, LineLength};
 
     use crate::grid::Row;
-    use crate::index::Column;
+    use alacritty_common::index::Column;
 
     #[test]
     fn line_length_works() {

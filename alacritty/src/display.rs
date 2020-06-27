@@ -28,14 +28,15 @@ use wayland_client::{Display as WaylandDisplay, EventQueue};
 use font::set_font_smoothing;
 use font::{self, Rasterize};
 
+use alacritty_common::index::Line;
+use alacritty_common::SizeInfo;
 use alacritty_terminal::config::{Font, StartupMode};
 use alacritty_terminal::event::OnResize;
-use alacritty_terminal::index::Line;
 use alacritty_terminal::message_bar::MessageBuffer;
 use alacritty_terminal::meter::Meter;
 use alacritty_terminal::selection::Selection;
 use alacritty_terminal::term::color::Rgb;
-use alacritty_terminal::term::{RenderableCell, SizeInfo, Term, TermMode};
+use alacritty_terminal::term::{RenderableCell, Term, TermMode};
 
 use crate::config::Config;
 use crate::event::{DisplayUpdate, Mouse};

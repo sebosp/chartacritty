@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use font::Metrics;
 
-use alacritty_terminal::index::{Column, Point};
+use alacritty_common::index::{Column, Point};
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::color::Rgb;
 use alacritty_terminal::term::{RenderableCell, SizeInfo};

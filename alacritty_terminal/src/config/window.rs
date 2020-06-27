@@ -5,7 +5,7 @@ use serde::{Deserialize, Deserializer};
 use serde_yaml::Value;
 
 use crate::config::{failure_default, option_explicit_none, Delta, LOG_TARGET_CONFIG};
-use crate::index::{Column, Line};
+use alacritty_common::index::{Column, Line};
 
 /// Default Alacritty name, used for window title and class.
 pub const DEFAULT_NAME: &str = "Alacritty";

@@ -17,9 +17,10 @@ use crate::ansi;
 use crate::config::Config;
 use crate::event::{self, Event, EventListener};
 use crate::sync::FairMutex;
-use crate::term::{SizeInfo, Term};
+use crate::term::Term;
 use crate::tty;
 use crate::util::thread;
+use alacritty_common::SizeInfo;
 
 /// Max bytes to read from the PTY.
 const MAX_READ: usize = 0x10_000;

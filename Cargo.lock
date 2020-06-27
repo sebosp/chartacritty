@@ -26,6 +26,7 @@ name = "alacritty"
 version = "0.5.0-dev"
 dependencies = [
  "alacritty_charts 0.1.0",
+ "alacritty_common 0.1.0",
  "alacritty_terminal 0.5.0-dev",
  "clap 2.33.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "copypasta 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -76,10 +77,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "alacritty_common"
+version = "0.1.0"
+dependencies = [
+ "serde 1.0.111 (registry+https://github.com/rust-lang/crates.io-index)",
+ "serde_yaml 0.8.12 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
 name = "alacritty_terminal"
 version = "0.5.0-dev"
 dependencies = [
  "alacritty_charts 0.1.0",
+ "alacritty_common 0.1.0",
  "base64 0.12.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "bitflags 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "font 0.1.0",

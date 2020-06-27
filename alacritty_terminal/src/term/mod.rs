@@ -7,7 +7,7 @@ use std::time::{Duration, Instant, UNIX_EPOCH};
 use std::{io, mem, ptr, str};
 
 use log::{debug, error, trace};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use unicode_width::UnicodeWidthChar;
 
 use crate::ansi::{
@@ -18,11 +18,12 @@ use crate::event::{Event, EventListener};
 use crate::grid::{
     BidirectionalIterator, DisplayIter, Grid, GridCell, IndexRegion, Indexed, Scroll,
 };
-use crate::index::{self, Column, IndexRange, Line, Point, Side};
 use crate::selection::{Selection, SelectionRange};
 use crate::term::cell::{Cell, Flags, LineLength};
 use crate::term::color::Rgb;
 use crate::vi_mode::{ViModeCursor, ViMotion};
+use alacritty_common::index::{self, Column, IndexRange, Line, Point, Side};
+pub use alacritty_common::SizeInfo;
 use futures::future::lazy;
 use futures::sync::mpsc as futures_mpsc;
 use tokio::prelude::*;
@@ -436,6 +437,12 @@ impl RenderableCell {
     }
 }
 
+impl From<RenderableCell> for Point<Line> {
+    fn from(cell: RenderableCell) -> Self {
+        Point::new(cell.line, cell.column)
+    }
+}
+
 impl<'a, C> Iterator for RenderableCellsIter<'a, C> {
     type Item = RenderableCell;
 
@@ -669,75 +676,6 @@ pub struct TermChartsHandle {
 
     /// Wether or not the charts are enabled
     enabled: bool,
-}
-
-/// Terminal size info.
-#[derive(Serialize, Deserialize, Debug, Copy, Clone, PartialEq)]
-pub struct SizeInfo {
-    /// Terminal window width.
-    pub width: f32,
-
-    /// Terminal window height.
-    pub height: f32,
-
-    /// Width of individual cell.
-    pub cell_width: f32,
-
-    /// Height of individual cell.
-    pub cell_height: f32,
-
-    /// Horizontal window padding.
-    pub padding_x: f32,
-
-    /// Horizontal window padding.
-    pub padding_y: f32,
-
-    /// DPR of the current window.
-    #[serde(default)]
-    pub dpr: f64,
-}
-
-impl SizeInfo {
-    #[inline]
-    pub fn lines(&self) -> Line {
-        Line(((self.height - 2. * self.padding_y) / self.cell_height) as usize)
-    }
-
-    #[inline]
-    pub fn cols(&self) -> Column {
-        Column(((self.width - 2. * self.padding_x) / self.cell_width) as usize)
-    }
-
-    #[inline]
-    pub fn padding_right(&self) -> usize {
-        (self.padding_x + (self.width - 2. * self.padding_x) % self.cell_width) as usize
-    }
-
-    #[inline]
-    pub fn padding_bottom(&self) -> usize {
-        (self.padding_y + (self.height - 2. * self.padding_y) % self.cell_height) as usize
-    }
-
-    /// Check if coordinates are inside the terminal grid.
-    ///
-    /// The padding is not counted as part of the grid.
-    #[inline]
-    pub fn contains_point(&self, x: usize, y: usize) -> bool {
-        x < (self.width as usize - self.padding_right())
-            && x >= self.padding_x as usize
-            && y < (self.height as usize - self.padding_bottom())
-            && y >= self.padding_y as usize
-    }
-
-    pub fn pixels_to_coords(&self, x: usize, y: usize) -> Point {
-        let col = Column(x.saturating_sub(self.padding_x as usize) / (self.cell_width as usize));
-        let line = Line(y.saturating_sub(self.padding_y as usize) / (self.cell_height as usize));
-
-        Point {
-            line: min(line, Line(self.lines().saturating_sub(1))),
-            col: min(col, Column(self.cols().saturating_sub(1))),
-        }
-    }
 }
 
 pub struct Term<T> {
@@ -2291,9 +2229,9 @@ mod tests {
     use crate::config::MockConfig;
     use crate::event::{Event, EventListener};
     use crate::grid::{Grid, Scroll};
-    use crate::index::{Column, Line, Point, Side};
     use crate::selection::{Selection, SelectionType};
     use crate::term::cell::{Cell, Flags};
+    use alacritty_common::index::{Column, Line, Point, Side};
 
     struct Mock;
     impl EventListener for Mock {

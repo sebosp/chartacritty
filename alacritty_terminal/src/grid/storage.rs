@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use super::Row;
 use crate::grid::GridCell;
-use crate::index::{Column, Line};
+use alacritty_common::index::{Column, Line};
 
 /// Maximum number of buffered lines outside of the grid for performance optimization.
 const MAX_CACHE_SIZE: usize = 1_000;
@@ -301,8 +301,8 @@ mod tests {
     use crate::grid::row::Row;
     use crate::grid::storage::{Storage, MAX_CACHE_SIZE};
     use crate::grid::GridCell;
-    use crate::index::{Column, Line};
     use crate::term::cell::Flags;
+    use alacritty_common::index::{Column, Line};
 
     impl GridCell for char {
         fn is_empty(&self) -> bool {

@@ -26,6 +26,7 @@ tokio-core = "0.1.17"
 tokio = "0.1"
 futures = "0.1.26"
 alacritty_charts = { path = "../alacritty_charts" }
+alacritty_common = { path = "../alacritty_common" }
 
 [target.'cfg(unix)'.dependencies]
 nix = "0.17.0"
