@@ -59,6 +59,7 @@ dependencies = [
 name = "alacritty_charts"
 version = "0.1.0"
 dependencies = [
+ "alacritty_common 0.1.0",
  "env_logger 0.7.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "failure 0.1.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures 0.1.29 (registry+https://github.com/rust-lang/crates.io-index)",

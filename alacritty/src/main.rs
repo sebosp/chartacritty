@@ -139,12 +139,9 @@ fn run(window_event_loop: GlutinEventLoop<Event>, config: Config) -> Result<(), 
     info!("PTY dimensions: {:?} x {:?}", display.size_info.lines(), display.size_info.cols());
 
     // Copy the terminal size into the alacritty_charts SizeInfo copy.
-    let charts_size_info = alacritty_charts::SizeInfo {
-        height: display.size_info.height,
-        width: display.size_info.width,
-        padding_y: display.size_info.padding_y,
-        padding_x: display.size_info.padding_x,
-        ..alacritty_charts::SizeInfo::default()
+    let charts_size_info = alacritty_charts::ChartSizeInfo {
+        term_size: display.size_info,
+        ..alacritty_charts::ChartSizeInfo::default()
     };
 
     // Create the channel that is used to communicate with the

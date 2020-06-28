@@ -5,9 +5,10 @@
 //! channel that may contain new data, may request OpenGL data or increment
 //! internal counters.
 use crate::prometheus;
-use crate::SizeInfo;
+use crate::ChartSizeInfo;
 use crate::TimeSeriesChart;
 use crate::TimeSeriesSource;
+use alacritty_common::SizeInfo;
 use futures::future::lazy;
 use futures::sync::{mpsc, oneshot};
 use log::*;
@@ -81,7 +82,7 @@ pub fn increment_internal_counter(
     counter_type: &'static str,
     epoch: u64,
     value: f64,
-    size: SizeInfo,
+    size: ChartSizeInfo,
 ) {
     for chart in charts {
         let mut chart_updated = false;
@@ -160,7 +161,7 @@ pub fn send_last_updated_epoch(charts: &mut Vec<TimeSeriesChart>, channel: onesh
 pub fn load_http_response(
     charts: &mut Vec<TimeSeriesChart>,
     response: MetricRequest,
-    size: SizeInfo,
+    size: ChartSizeInfo,
 ) {
     let span = span!(
         Level::DEBUG,
@@ -308,7 +309,7 @@ pub fn send_decorations_opengl_data(
 /// until the size is stabilized.
 pub fn change_display_size(
     charts: &mut Vec<TimeSeriesChart>,
-    size: &mut SizeInfo,
+    size: &mut ChartSizeInfo,
     height: f32,
     width: f32,
     padding_y: f32,
@@ -323,10 +324,10 @@ pub fn change_display_size(
         padding_y,
         padding_x
     );
-    size.height = height;
-    size.width = width;
-    size.padding_y = padding_y;
-    size.padding_x = padding_x;
+    size.term_size.height = height;
+    size.term_size.width = width;
+    size.term_size.padding_y = padding_y;
+    size.term_size.padding_x = padding_x;
     for chart in charts {
         // Update the OpenGL representation when the display changes
         chart.update_all_series_opengl_vecs(*size);
@@ -376,12 +377,15 @@ pub fn async_coordinator(
             series.init();
         }
     }
-    let mut size = SizeInfo {
-        height,
-        width,
-        padding_y,
-        padding_x,
-        ..SizeInfo::default()
+    let mut size = ChartSizeInfo {
+        term_size: SizeInfo {
+            height,
+            width,
+            padding_y,
+            padding_x,
+            ..SizeInfo::default()
+        },
+        ..ChartSizeInfo::default()
     };
     rx.for_each(move |message| {
         event!(Level::DEBUG, "async_coordinator: message: {:?}", message);
@@ -663,7 +667,7 @@ pub fn tokio_default_setup() -> (
         charts_tx.clone(),
         charts_rx,
         handle_tx,
-        SizeInfo::default(),
+        ChartSizeInfo::default(),
     );
     let tokio_handle = handle_rx
         .recv()
@@ -678,7 +682,7 @@ pub fn spawn_async_tasks(
     charts_tx: mpsc::Sender<AsyncChartTask>,
     charts_rx: mpsc::Receiver<AsyncChartTask>,
     handle_tx: std::sync::mpsc::Sender<current_thread::Handle>,
-    charts_size_info: SizeInfo,
+    charts_size_info: ChartSizeInfo,
 ) -> (thread::JoinHandle<()>, oneshot::Sender<()>) {
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let tokio_thread = ::std::thread::Builder::new()
@@ -700,10 +704,10 @@ pub fn spawn_async_tasks(
                     async_coordinator(
                         charts_rx,
                         async_chart_config,
-                        charts_size_info.height,
-                        charts_size_info.width,
-                        charts_size_info.padding_y,
-                        charts_size_info.padding_x,
+                        charts_size_info.term_size.height,
+                        charts_size_info.term_size.width,
+                        charts_size_info.term_size.padding_y,
+                        charts_size_info.term_size.padding_x,
                     )
                 }));
             }
@@ -726,15 +730,18 @@ pub fn spawn_async_tasks(
 
 /// `run` is an example use of the crate without drawing the data.
 pub fn run(config: crate::config::Config) {
-    let charts_size_info = SizeInfo {
-        width: 100.,
-        height: 100.,
+    let charts_size_info = ChartSizeInfo {
+        term_size: SizeInfo {
+            width: 100.,
+            height: 100.,
+            cell_width: 0.,
+            cell_height: 0.,
+            padding_x: 0.,
+            padding_y: 0.,
+            ..SizeInfo::default()
+        },
         chart_width: 100.,
         chart_height: 100.,
-        cell_width: 0.,
-        cell_height: 0.,
-        padding_x: 0.,
-        padding_y: 0.,
     };
     // Create the channel that is used to communicate with the
     // charts background task.

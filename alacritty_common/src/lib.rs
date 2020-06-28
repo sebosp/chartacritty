@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::cmp::min;
 
 /// Terminal size info.
-#[derive(Serialize, Deserialize, Debug, Copy, Clone, PartialEq)]
+#[derive(Default, Serialize, Deserialize, Debug, Copy, Clone, PartialEq)]
 pub struct SizeInfo {
     /// Terminal window width.
     pub width: f32,

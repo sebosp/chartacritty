@@ -630,48 +630,51 @@ impl Display {
         }
         if decorations_enabled {
             // TODO: SEB: width and height should be screen_width and screen_size
-            let decor_size_info = alacritty_charts::SizeInfo {
-                width: size_info.width,
-                height: size_info.height,
+            let decor_size_info = alacritty_charts::ChartSizeInfo {
+                term_size: size_info,
                 chart_width: size_info.width,
                 chart_height: size_info.height,
-                cell_width: size_info.cell_width,
-                cell_height: size_info.cell_height,
-                padding_x: size_info.padding_x,
-                padding_y: size_info.padding_y,
             };
             debug!("draw: Decorations Dust");
             let radius = 100f32; // 500 pixels
             let angle = 60.0f32;
             let x_offset = angle.to_radians().cos() * radius;
             let y_offset = angle.to_radians().sin() * radius;
-            let r_center_x = decor_size_info.width / 2f32;
-            let r_center_y = decor_size_info.height / 2f32;
+            let r_center_x = decor_size_info.term_size.width / 2f32;
+            let r_center_y = decor_size_info.term_size.height / 2f32;
             info!("r_center_x : {}, r_center_y: {}", r_center_x, r_center_y);
             info!("x_offset : {}, y_offset: {}", x_offset, y_offset);
             let opengl_data = vec![
                 // Mid right:
                 decor_size_info.scale_x(r_center_x + radius),
-                decor_size_info.scale_y(decor_size_info.height as f64, r_center_y as f64),
+                decor_size_info.scale_y(decor_size_info.term_size.height as f64, r_center_y as f64),
                 // Top right:
                 decor_size_info.scale_x(r_center_x + x_offset),
-                decor_size_info
-                    .scale_y(decor_size_info.height as f64, (r_center_y + y_offset) as f64),
+                decor_size_info.scale_y(
+                    decor_size_info.term_size.height as f64,
+                    (r_center_y + y_offset) as f64,
+                ),
                 // Top left
                 decor_size_info.scale_x(r_center_x - x_offset),
-                decor_size_info
-                    .scale_y(decor_size_info.height as f64, (r_center_y + y_offset) as f64),
+                decor_size_info.scale_y(
+                    decor_size_info.term_size.height as f64,
+                    (r_center_y + y_offset) as f64,
+                ),
                 // Mid left:
                 decor_size_info.scale_x(r_center_x - radius),
-                decor_size_info.scale_y(decor_size_info.height as f64, r_center_y as f64),
+                decor_size_info.scale_y(decor_size_info.term_size.height as f64, r_center_y as f64),
                 // Bottom left
                 decor_size_info.scale_x(r_center_x - x_offset),
-                decor_size_info
-                    .scale_y(decor_size_info.height as f64, (r_center_y - y_offset) as f64),
+                decor_size_info.scale_y(
+                    decor_size_info.term_size.height as f64,
+                    (r_center_y - y_offset) as f64,
+                ),
                 // Bottom Right
                 decor_size_info.scale_x(r_center_x + x_offset),
-                decor_size_info
-                    .scale_y(decor_size_info.height as f64, (r_center_y - y_offset) as f64),
+                decor_size_info.scale_y(
+                    decor_size_info.term_size.height as f64,
+                    (r_center_y - y_offset) as f64,
+                ),
             ];
             info!("Drawing dust: {:?}", opengl_data);
             self.renderer.draw_array(

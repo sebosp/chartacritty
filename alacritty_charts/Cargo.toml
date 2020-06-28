@@ -20,3 +20,4 @@ hyper-tls = "0.3.2"
 failure = "0.1.6"
 tracing = { version = "0.1", features = ["log", "log-always"] }
 tracing-log = { version = "0.1", features = ["env_logger"]}
+alacritty_common = { path = "../alacritty_common" }

@@ -34,6 +34,7 @@ pub use percent_encoding;
 pub use tokio;
 pub use tokio_core;
 
+use alacritty_common::SizeInfo;
 use decorations::*;
 use log::*;
 use serde::de::Visitor;
@@ -456,26 +457,21 @@ pub struct Value2D {
     y: f32,
 }
 
-/// `SizeInfo` is a copy of the Alacritty SizeInfo, XXX: remove on merge.
+/// `ChartSizeInfo` Contains the current chart size information plus the terminal size info
 #[derive(Default, Debug, Serialize, Deserialize, PartialEq, Clone, Copy)]
-pub struct SizeInfo {
-    pub width: f32,
-    pub height: f32,
+pub struct ChartSizeInfo {
+    pub term_size: SizeInfo,
     pub chart_width: f32,
     pub chart_height: f32,
-    pub cell_width: f32,
-    pub cell_height: f32,
-    pub padding_x: f32,
-    pub padding_y: f32,
 }
 
-impl SizeInfo {
+impl ChartSizeInfo {
     /// `scale_x` Scales the value from the current display boundary to
     /// a cartesian plane from [-1.0, 1.0], where -1.0 is 0px (left-most) and
     /// 1.0 is the `display_width` parameter (right-most), i.e. 1024px.
     pub fn scale_x(&self, input_value: f32) -> f32 {
-        let center_x = self.width / 2.;
-        let x = self.padding_x + input_value;
+        let center_x = self.term_size.width / 2.;
+        let x = self.term_size.padding_x + input_value;
         (x - center_x) / center_x
     }
 
@@ -483,12 +479,12 @@ impl SizeInfo {
     /// a cartesian plane from [-1.0, 1.0], where 1.0 is 0px (top) and -1.0 is
     /// the `display_height` parameter (bottom), i.e. 768px.
     pub fn scale_y(&self, max_value: f64, input_value: f64) -> f32 {
-        let center_y = self.height / 2.;
+        let center_y = self.term_size.height / 2.;
         // From the bottom of the chart, what is the position of the input_value:
         // max_value    = input_value
         // chart_height   x
         let y_metric_value = (input_value as f32 * self.chart_height) / max_value as f32;
-        let y = self.height - 2. * self.padding_y - y_metric_value;
+        let y = self.term_size.height - 2. * self.term_size.padding_y - y_metric_value;
         -(y - center_y) / center_y
     }
 }
@@ -578,7 +574,7 @@ pub struct TimeSeriesChart {
 impl TimeSeriesChart {
     /// `update_series_opengl_vecs` Represents the activity levels values in a
     /// drawable vector for opengl, for a specific index in the series array
-    pub fn update_series_opengl_vecs(&mut self, series_idx: usize, display_size: SizeInfo) {
+    pub fn update_series_opengl_vecs(&mut self, series_idx: usize, display_size: ChartSizeInfo) {
         let span = span!(
             Level::TRACE,
             "update_series_opengl_vecs",
@@ -708,7 +704,7 @@ impl TimeSeriesChart {
 
     /// `update_all_series_opengl_vecs` Represents the activity levels values in a
     /// drawable vector for opengl for all the available series in the current chart
-    pub fn update_all_series_opengl_vecs(&mut self, display_size: SizeInfo) {
+    pub fn update_all_series_opengl_vecs(&mut self, display_size: ChartSizeInfo) {
         let span = span!(
             Level::TRACE,
             "update_all_series_opengl_vecs",
@@ -1804,12 +1800,15 @@ mod tests {
 
     #[test]
     fn it_gets_deduped_opengl_vecs() {
-        let size_test = SizeInfo {
-            padding_x: 0.,
-            padding_y: 0.,
-            height: 200., // Display Height: 200px test
-            width: 200.,  // Display Width: 200px test
-            ..SizeInfo::default()
+        let size_test = ChartSizeInfo {
+            term_size: SizeInfo {
+                padding_x: 0.,
+                padding_y: 0.,
+                height: 200., // Display Height: 200px test
+                width: 200.,  // Display Width: 200px test
+                ..SizeInfo::default()
+            },
+            ..ChartSizeInfo::default()
         };
         let mut all_dups = TimeSeriesChart::default();
         all_dups.sources.push(TimeSeriesSource::default());
@@ -1948,12 +1947,15 @@ mod tests {
 
     #[test]
     fn it_scales_x_to_display_size() {
-        let mut test = SizeInfo {
-            padding_x: 0.,
-            padding_y: 0.,
-            height: 100.,
-            width: 100.,
-            ..SizeInfo::default()
+        let mut test = ChartSizeInfo {
+            term_size: SizeInfo {
+                padding_x: 0.,
+                padding_y: 0.,
+                height: 100.,
+                width: 100.,
+                ..SizeInfo::default()
+            },
+            ..ChartSizeInfo::default()
         };
         // display size: 100 px, input the value: 0, padding_x: 0
         // The value should return should be left-most: -1.0
@@ -1967,7 +1969,7 @@ mod tests {
         // The value should return should be the center: 0.0
         let mid = test.scale_x(50f32);
         assert_eq!(mid, 0.0f32);
-        test.padding_x = 50.;
+        test.term_size.padding_x = 50.;
         // display size: 100 px, input the value: 50, padding_x: 50px
         // The value returned should be the right-most: 1.0
         let mid = test.scale_x(50f32);
@@ -1976,12 +1978,15 @@ mod tests {
 
     #[test]
     fn it_scales_y_to_display_size() {
-        let mut size_test = SizeInfo {
-            padding_x: 0.,
-            padding_y: 0.,
-            height: 100.,
+        let mut size_test = ChartSizeInfo {
+            term_size: SizeInfo {
+                padding_x: 0.,
+                padding_y: 0.,
+                height: 100.,
+                ..SizeInfo::default()
+            },
             chart_height: 100.,
-            ..SizeInfo::default()
+            ..ChartSizeInfo::default()
         };
         let mut chart_test = TimeSeriesChart::default();
         // To make testing easy, let's make three values equivalent:
@@ -2001,7 +2006,7 @@ mod tests {
         // The value should return should be the center: 0.0
         let mid = size_test.scale_y(100f64, 50f64);
         assert_eq!(mid, 0.0f32);
-        size_test.padding_y = 25.;
+        size_test.term_size.padding_y = 25.;
         // display size: 100 px, input the value: 50, padding_y: 25
         // The value returned should be upper-most: 1.0
         // In this case, the chart (100px) is bigger than the display,
@@ -2011,14 +2016,17 @@ mod tests {
         assert_eq!(mid, 1.0f32);
     }
 
-    fn simple_chart_setup_with_none() -> (SizeInfo, TimeSeriesChart) {
+    fn simple_chart_setup_with_none() -> (ChartSizeInfo, TimeSeriesChart) {
         init_log();
-        let size_test = SizeInfo {
-            padding_x: 0.,
-            padding_y: 0.,
-            height: 200., // Display Height: 200px test
-            width: 200.,  // Display Width: 200px test
-            ..SizeInfo::default()
+        let size_test = ChartSizeInfo {
+            term_size: SizeInfo {
+                padding_x: 0.,
+                padding_y: 0.,
+                height: 200., // Display Height: 200px test
+                width: 200.,  // Display Width: 200px test
+                ..SizeInfo::default()
+            },
+            ..ChartSizeInfo::default()
         };
         let mut chart_test = TimeSeriesChart::default();
         chart_test.sources.push(TimeSeriesSource::default());
