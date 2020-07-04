@@ -5,10 +5,9 @@ authors = ["Seb Ospina <kraige@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-tokio-core = "0.1.17"
-tokio = "0.1"
-hyper = "0.12"
-futures = "0.1.26"
+tokio = { version = "0.2", features = ["full"] }
+hyper = "0.13.6"
+futures = "0.3.5"
 serde = "1.0"
 serde_derive = "1.0"
 serde_json = "1"
@@ -16,7 +15,7 @@ serde_yaml = "0.8"
 log = "0.4"
 env_logger = "0.7"
 percent-encoding = "1.0.1"
-hyper-tls = "0.3.2"
+hyper-tls = "0.4.1"
 failure = "0.1.6"
 tracing = { version = "0.1", features = ["log", "log-always"] }
 tracing-log = { version = "0.1", features = ["env_logger"]}

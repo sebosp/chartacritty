@@ -1,7 +1,6 @@
 use crate::Rgb;
 use crate::ValueCollisionPolicy;
 /// `Prometheus HTTP API` data structures
-use hyper::rt::{Future, Stream};
 use hyper::Client;
 use hyper_tls::HttpsConnector;
 use log::*;
@@ -232,14 +231,14 @@ impl PrometheusTimeSeries {
         }
         match encoded_url.parse::<hyper::Uri>() {
             Ok(url) => {
-                if url.scheme_part() == Some(&hyper::http::uri::Scheme::HTTP)
-                    || url.scheme_part() == Some(&hyper::http::uri::Scheme::HTTPS)
+                if url.scheme_str() == Some(&hyper::http::uri::Scheme::HTTP)
+                    || url.scheme_str() == Some(&hyper::http::uri::Scheme::HTTPS)
                 {
                     debug!("Setting url to: {:?}", url);
                     Ok(url)
                 } else {
                     error!("Only HTTP and HTTPS protocols are supported");
-                    Err(format!("Unsupported protocol: {:?}", url.scheme_part()))
+                    Err(format!("Unsupported protocol: {:?}", url.scheme_str()))
                 }
             }
             Err(err) => {
@@ -354,41 +353,40 @@ impl PrometheusTimeSeries {
 
 /// `get_from_prometheus` is an async operation that returns an Optional
 /// PrometheusResponse
-pub fn get_from_prometheus(
+pub async fn get_from_prometheus(
     url: hyper::Uri,
-) -> impl Future<Item = hyper::Chunk, Error = (hyper::Uri, hyper::error::Error)> {
+) -> Result<hyper::body::Bytes, (hyper::Uri, hyper::error::Error)> {
     info!("get_from_prometheus: Loading Prometheus URL: {}", url);
-    let request = if url.scheme_part() == Some(&hyper::http::uri::Scheme::HTTP) {
+    let request = if url.scheme_str() == Some(&String::from("http")) {
         Client::new().get(url.clone())
     } else {
         // 4 is number of blocking DNS threads
-        let https = HttpsConnector::new(4).unwrap();
+        let https = HttpsConnector::new();
         Client::builder()
             .build::<_, hyper::Body>(https)
             .get(url.clone())
     };
     let url_copy = url.clone();
-    request
-        .and_then(|res| {
-            res.into_body()
-                // A hyper::Body is a Stream of Chunk values. We need a
-                // non-blocking way to get all the chunks so we can deserialize the response.
-                // The concat2() function takes the separate body chunks and makes one
-                // hyper::Chunk value with the contents of the entire body
-                .concat2()
-                .and_then(|body| Ok(body))
-        })
-        .map_err(|err| {
+    match request.await {
+        // Since we don't know the end yet, we can't simply stream
+        // the chunks as they arrive as we did with the above uppercase endpoint.
+        // So here we do `.await` on the future, waiting on concatenating the full body,
+        Ok(res) => match hyper::body::to_bytes(res.into_body()).await {
+            Ok(body) => Ok(body),
+            Err(err) => Err((url_copy, err)),
+        },
+        Err(err) => {
             info!(
                 "get_from_prometheus: Error loading '{:?}': '{:?}'",
                 url_copy, err
             );
-            (url_copy, err)
-        })
+            Err((url_copy, err))
+        }
+    }
 }
 /// `parse_json` transforms a hyper body chunk into a possible
 /// PrometheusResponse, mostly used for testing
-pub fn parse_json(url: &String, body: &hyper::Chunk) -> Option<HTTPResponse> {
+pub fn parse_json(url: &String, body: &hyper::body::Bytes) -> Option<HTTPResponse> {
     let prom_res: Result<HTTPResponse, serde_json::Error> = serde_json::from_slice(&body);
     match prom_res {
         Ok(v) => {
@@ -419,7 +417,6 @@ mod tests {
     use crate::MissingValuesPolicy;
     use crate::TimeSeries;
     use crate::TimeSeriesStats;
-    use tokio_core::reactor::Core;
     fn init_log() {
         let _ = env_logger::builder().is_test(true).try_init();
     }
@@ -436,7 +433,7 @@ mod tests {
         );
         assert_eq!(test0_res.is_ok(), true);
         // A json returned by prometheus
-        let test0_json = hyper::Chunk::from(
+        let test0_json = hyper::body::Bytes::from(
             r#"
             {
               "status": "error",
@@ -447,7 +444,7 @@ mod tests {
         );
         let res0_json = parse_json(&String::from("http://test"), &test0_json);
         assert_eq!(res0_json.is_none(), true);
-        let test1_json = hyper::Chunk::from("Internal Server Error");
+        let test1_json = hyper::body::Bytes::from("Internal Server Error");
         let res1_json = parse_json(&String::from("http://test"), &test1_json);
         assert_eq!(res1_json.is_none(), true);
     }
@@ -463,7 +460,7 @@ mod tests {
         assert_eq!(test0_res.is_ok(), true);
         let mut test0 = test0_res.unwrap();
         // A json returned by prometheus
-        let test0_json = hyper::Chunk::from(
+        let test0_json = hyper::body::Bytes::from(
             r#"
             { "status":"success",
               "data":{
@@ -478,7 +475,7 @@ mod tests {
         // 1 items should have been loaded
         assert_eq!(res0_load, Ok(1usize));
         // This json is missing the value after the epoch
-        let test1_json = hyper::Chunk::from(
+        let test1_json = hyper::body::Bytes::from(
             r#"
             { "status":"success",
               "data":{
@@ -508,7 +505,7 @@ mod tests {
         // Let's create space for 15, but we will receive 11 records:
         test0.series = test0.series.with_capacity(15usize);
         // A json returned by prometheus
-        let test0_json = hyper::Chunk::from(
+        let test0_json = hyper::body::Bytes::from(
             r#"
             {
               "status": "success",
@@ -546,7 +543,7 @@ mod tests {
         assert_eq!(loaded_data[1], (1558253470, Some(1.70f64)));
         assert_eq!(loaded_data[5], (1558253474, Some(1.74f64)));
         // Let's add one more item and subtract one item from the array
-        let test1_json = hyper::Chunk::from(
+        let test1_json = hyper::body::Bytes::from(
             r#"
             {
               "status": "success",
@@ -598,7 +595,7 @@ mod tests {
         assert_eq!(loaded_data[3], (1558253472, Some(1.72f64)));
         assert_eq!(loaded_data[5], (1558253474, Some(1.74f64)));
         // This json is missing the value after the epoch
-        let test2_json = hyper::Chunk::from(
+        let test2_json = hyper::body::Bytes::from(
             r#"
             {
               "status": "success",
@@ -637,7 +634,7 @@ mod tests {
         );
         assert_eq!(test0_res.is_ok(), true);
         let mut test0 = test0_res.unwrap();
-        let test1_json = hyper::Chunk::from(
+        let test1_json = hyper::body::Bytes::from(
             r#"
             {
               "status": "success",
@@ -746,7 +743,7 @@ mod tests {
         assert_eq!(test0_res.is_ok(), true);
         let mut test0 = test0_res.unwrap();
         // A json returned by prometheus
-        let test0_json = hyper::Chunk::from(
+        let test0_json = hyper::body::Bytes::from(
             r#"
             {
               "status": "success",
@@ -790,7 +787,7 @@ mod tests {
             vec![(1557571137u64, Some(1.)), (1557571138u64, Some(1.))]
         );
 
-        let test1_json = hyper::Chunk::from(
+        let test1_json = hyper::body::Bytes::from(
             r#"
             {
               "status": "success",
@@ -842,7 +839,7 @@ mod tests {
             ]
         );
 
-        let test2_json = hyper::Chunk::from(
+        let test2_json = hyper::body::Bytes::from(
             r#"
             {
               "status": "success",
@@ -891,7 +888,7 @@ mod tests {
             ]
         );
         // This json is missing the value after the epoch
-        let test3_json = hyper::Chunk::from(
+        let test3_json = hyper::body::Bytes::from(
             r#"
             {
               "status": "success",
@@ -919,14 +916,12 @@ mod tests {
         assert_eq!(res3_load, Ok(0usize));
     }
 
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn it_gets_prometheus_metrics() {
+    async fn it_gets_prometheus_metrics() {
         // These tests have been mocked above, but testing the actual communication
         // without creating a temporary web server is done needs this for now.
         init_log();
-        // Create a Tokio Core to use for testing
-        let mut core = Core::new().unwrap();
         let mut test_labels = HashMap::new();
         test_labels.insert(String::from("name"), String::from("up"));
         test_labels.insert(String::from("job"), String::from("prometheus"));
@@ -950,7 +945,7 @@ mod tests {
         );
         assert_eq!(test1_res.is_ok(), true);
         let test1 = test1_res.unwrap();
-        let res1_get = core.run(get_from_prometheus(test1.url.clone()));
+        let res1_get = tokio::try_join!(get_from_prometheus(test1.url.clone()));
         println!("get_from_prometheus: {:?}", res1_get);
         assert_eq!(res1_get.is_ok(), true);
         if let Some(prom_response) = parse_json(&String::from("http://test"), &res1_get.unwrap()) {
@@ -1033,7 +1028,7 @@ mod tests {
             alpha: 1.0,
         };
         // This should result in adding 15 more items
-        let test1_json = hyper::Chunk::from(
+        let test1_json = hyper::body::Bytes::from(
             r#"{
               "status":"success",
               "data":{
@@ -1433,7 +1428,7 @@ mod tests {
             alpha: 1.0,
         };
         assert_eq!(test.series.metrics.len(), 300usize);
-        let test1_json = hyper::Chunk::from(
+        let test1_json = hyper::body::Bytes::from(
             r#"{
               "status":"success",
               "data":{

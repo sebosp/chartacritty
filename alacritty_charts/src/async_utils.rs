@@ -10,13 +10,13 @@ use crate::TimeSeriesChart;
 use crate::TimeSeriesSource;
 use alacritty_common::SizeInfo;
 use futures::future::lazy;
-use futures::sync::{mpsc, oneshot};
 use log::*;
 use std::thread;
 use std::time::UNIX_EPOCH;
 use std::time::{Duration, Instant};
 use tokio::prelude::*;
 use tokio::runtime::current_thread;
+use tokio::sync::{mpsc, oneshot};
 use tokio::timer::Interval;
 use tracing::{event, span, Level};
 
@@ -349,14 +349,14 @@ pub fn change_display_size(
 /// `async_coordinator` receives messages from the tasks about data loaded from
 /// the network, it owns the charts array and is the single point by which data can
 /// be loaded or requested. XXX: Config updates are not possible yet.
-pub fn async_coordinator(
+pub async fn async_coordinator(
     rx: mpsc::Receiver<AsyncChartTask>,
     mut chart_config: crate::ChartsConfig,
     height: f32,
     width: f32,
     padding_y: f32,
     padding_x: f32,
-) -> impl Future<Item = (), Error = ()> {
+) -> Result<(), ()> {
     event!(
         Level::DEBUG,
         "async_coordinator: Starting, terminal height: {}, width: {}, padding_y: {}, padding_x {}",
@@ -427,13 +427,14 @@ pub fn async_coordinator(
         };
         Ok(())
     })
+    .await
 }
 /// `fetch_prometheus_response` gets data from prometheus and once data is ready
 /// it sends the results to the coordinator.
-fn fetch_prometheus_response(
+async fn fetch_prometheus_response(
     item: MetricRequest,
     tx: mpsc::Sender<AsyncChartTask>,
-) -> impl Future<Item = (), Error = ()> {
+) -> Result<(), ()> {
     event!(
         Level::DEBUG,
         "fetch_prometheus_response:(Chart: {}, Series: {}) Starting",
@@ -445,52 +446,61 @@ fn fetch_prometheus_response(
     let url_copy = item.source_url.clone();
     let chart_index = item.chart_index;
     let series_index = item.series_index;
-    prometheus::get_from_prometheus(url.clone())
+    let prom_res = prometheus::get_from_prometheus(url.clone())
         .timeout(Duration::from_secs(item.pull_interval))
-        .or_else(move |e| {
+        .await;
+    match prom_res {
+        Err(e) => {
             if e.is_elapsed() {
-            event!(
-                Level::INFO,
-                "fetch_prometheus_response:(Chart: {}, Series: {}) TimeOut accesing: {}", chart_index, series_index, url_copy);
+                event!(
+                    Level::INFO,
+                    "fetch_prometheus_response:(Chart: {}, Series: {}) TimeOut accesing: {}",
+                    chart_index,
+                    series_index,
+                    url_copy
+                );
             } else {
-            event!(
-                Level::INFO,
-                "fetch_prometheus_response:(Chart: {}, Series: {}) err={:?}", chart_index, series_index, e);
+                event!(
+                    Level::INFO,
+                    "fetch_prometheus_response:(Chart: {}, Series: {}) err={:?}",
+                    chart_index,
+                    series_index,
+                    e
+                );
             };
             // Instead of an error, return this so we can retry later.
             // XXX: Maybe exponential retries in the future.
-            Ok(hyper::Chunk::from(
-                r#"{ "status":"error","data":{"resultType":"scalar","result":[]}}"#,
-            ))
-        })
-        .and_then(move |value| {
+            Ok(())
+        }
+        Ok(value) => {
             event!(
                 Level::DEBUG,
                 "fetch_prometheus_response:(Chart: {}, Series: {}) Prometheus raw value={:?}",
-                chart_index, series_index, value
+                chart_index,
+                series_index,
+                value
             );
             let res = prometheus::parse_json(&item.source_url, &value);
-            tx.send(AsyncChartTask::LoadResponse(MetricRequest {
-                source_url: item.source_url.clone(),
-                chart_index: item.chart_index,
-                series_index: item.series_index,
-                pull_interval: item.pull_interval,
-                data: res.clone(),
-                capacity: item.capacity,
-            }))
-            .map_err(move |e| {
-            event!(
+            let tx_res = tx
+                .send(AsyncChartTask::LoadResponse(MetricRequest {
+                    source_url: item.source_url.clone(),
+                    chart_index: item.chart_index,
+                    series_index: item.series_index,
+                    pull_interval: item.pull_interval,
+                    data: res.clone(),
+                    capacity: item.capacity,
+                }))
+                .await;
+            if let Err(err) = tx_res {
+                event!(
                 Level::ERROR,
                     "fetch_prometheus_response:(Chart: {}, Series: {}) unable to send data back to coordinator; err={:?}",
-                    chart_index, series_index, e
+                    chart_index, series_index, err
                 )
-            })
-            .and_then(|_| Ok(()))
-        })
-        .map_err(|_| {
-            // This error is quite meaningless and get_from_prometheus already
-            // has shown the error message that contains the actual failure.
-        })
+            }
+            Ok(())
+        }
+    }
 }
 
 /// `spawn_charts_intervals` iterates over the charts and sources
@@ -523,7 +533,7 @@ pub fn spawn_charts_intervals(
                 };
                 let charts_tx = charts_tx.clone();
                 tokio_handle
-                    .spawn(lazy(move || {
+                    .spawn(lazy(move |_| {
                         spawn_datasource_interval_polls(&data_request, charts_tx)
                     }))
                     .expect(&format!("spawn_charts_intervals:(Chart: {}, Series: {}) Error spawning datasource internal polls", chart_index, series_index));
@@ -535,10 +545,10 @@ pub fn spawn_charts_intervals(
 }
 /// `spawn_datasource_interval_polls` creates intervals for each series requested
 /// Each series will have to reply to a mspc tx with the data
-pub fn spawn_datasource_interval_polls(
+pub async fn spawn_datasource_interval_polls(
     item: &MetricRequest,
     tx: mpsc::Sender<AsyncChartTask>,
-) -> impl Future<Item = (), Error = ()> {
+) -> Result<(), ()> {
     event!(
         Level::DEBUG,
         "spawn_datasource_interval_polls:(Chart: {}, Series: {}) Starting for item={:?}",
@@ -677,7 +687,7 @@ pub fn tokio_default_setup() -> (
 }
 
 /// `spawn_async_tasks` Starts a background thread to be used for tokio for async tasks
-pub fn spawn_async_tasks(
+pub async fn spawn_async_tasks(
     chart_config: Option<crate::ChartsConfig>,
     charts_tx: mpsc::Sender<AsyncChartTask>,
     charts_rx: mpsc::Receiver<AsyncChartTask>,
@@ -700,7 +710,7 @@ pub fn spawn_async_tasks(
             if let Some(chart_config) = &chart_config {
                 chart_array = chart_config.charts.clone();
                 let async_chart_config = chart_config.clone();
-                tokio_runtime.spawn(lazy(move || {
+                tokio_runtime.spawn(lazy(move |_| {
                     async_coordinator(
                         charts_rx,
                         async_chart_config,
@@ -712,12 +722,13 @@ pub fn spawn_async_tasks(
                 }));
             }
             let tokio_handle = tokio_runtime.handle().clone();
-            tokio_runtime.spawn(lazy(move || {
+            tokio_runtime.spawn(lazy(move |_| {
                 spawn_charts_intervals(chart_array.clone(), charts_tx, tokio_handle);
                 Ok(())
             }));
             tokio_runtime.spawn({
                 shutdown_rx
+                    .try_recv()
                     .map(|_x| info!("Got shutdown signal for Tokio"))
                     .map_err(|err| error!("Error on the tokio shutdown channel: {:?}", err))
             });
