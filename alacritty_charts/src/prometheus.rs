@@ -1,12 +1,13 @@
 use crate::Rgb;
 use crate::ValueCollisionPolicy;
+use hyper::client::connect::HttpConnector;
 /// `Prometheus HTTP API` data structures
 use hyper::Client;
 use hyper_tls::HttpsConnector;
 use log::*;
 use percent_encoding::{utf8_percent_encode, DEFAULT_ENCODE_SET};
 use std::collections::HashMap;
-use std::time::UNIX_EPOCH;
+use std::time::{Duration, UNIX_EPOCH};
 // The below data structures for parsing something like:
 //  {
 //   "data": {
@@ -231,14 +232,14 @@ impl PrometheusTimeSeries {
         }
         match encoded_url.parse::<hyper::Uri>() {
             Ok(url) => {
-                if url.scheme_str() == Some(&hyper::http::uri::Scheme::HTTP)
-                    || url.scheme_str() == Some(&hyper::http::uri::Scheme::HTTPS)
+                if url.scheme() == Some(&hyper::http::uri::Scheme::HTTP)
+                    || url.scheme() == Some(&hyper::http::uri::Scheme::HTTPS)
                 {
                     debug!("Setting url to: {:?}", url);
                     Ok(url)
                 } else {
                     error!("Only HTTP and HTTPS protocols are supported");
-                    Err(format!("Unsupported protocol: {:?}", url.scheme_str()))
+                    Err(format!("Unsupported protocol: {:?}", url.scheme()))
                 }
             }
             Err(err) => {
@@ -355,12 +356,15 @@ impl PrometheusTimeSeries {
 /// PrometheusResponse
 pub async fn get_from_prometheus(
     url: hyper::Uri,
+    connect_timeout: Option<Duration>,
 ) -> Result<hyper::body::Bytes, (hyper::Uri, hyper::error::Error)> {
     info!("get_from_prometheus: Loading Prometheus URL: {}", url);
-    let request = if url.scheme_str() == Some(&String::from("http")) {
-        Client::new().get(url.clone())
+    let request = if url.scheme() == Some(&hyper::http::uri::Scheme::HTTP) {
+        Client::builder()
+            .pool_idle_timeout(connect_timeout) // Is this the same as connect_timeout in Client?
+            .build::<_, hyper::Body>(HttpConnector::new())
+            .get(url.clone())
     } else {
-        // 4 is number of blocking DNS threads
         let https = HttpsConnector::new();
         Client::builder()
             .build::<_, hyper::Body>(https)
@@ -945,10 +949,11 @@ mod tests {
         );
         assert_eq!(test1_res.is_ok(), true);
         let test1 = test1_res.unwrap();
-        let res1_get = tokio::try_join!(get_from_prometheus(test1.url.clone()));
+        let res1_get = tokio::try_join!(get_from_prometheus(test1.url.clone(), None));
         println!("get_from_prometheus: {:?}", res1_get);
         assert_eq!(res1_get.is_ok(), true);
-        if let Some(prom_response) = parse_json(&String::from("http://test"), &res1_get.unwrap()) {
+        if let Some(prom_response) = parse_json(&String::from("http://test"), &res1_get.unwrap().0)
+        {
             // This requires a Prometheus Server running locally
             // XXX: mock this.
             // Example playload:
