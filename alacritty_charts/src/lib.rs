@@ -32,7 +32,6 @@ pub use hyper;
 pub use hyper_tls;
 pub use percent_encoding;
 pub use tokio;
-pub use tokio_core;
 
 use alacritty_common::SizeInfo;
 use decorations::*;
