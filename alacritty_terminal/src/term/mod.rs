@@ -24,10 +24,7 @@ use crate::term::color::Rgb;
 use crate::vi_mode::{ViModeCursor, ViMotion};
 use alacritty_common::index::{self, Column, IndexRange, Line, Point, Side};
 pub use alacritty_common::SizeInfo;
-use futures::future::lazy;
-use futures::sync::mpsc as futures_mpsc;
-use tokio::prelude::*;
-use tokio::runtime::current_thread;
+use tokio::sync::mpsc as tokio_mpsc;
 
 pub mod cell;
 pub mod color;
@@ -669,10 +666,10 @@ impl VisualBell {
 /// that is constantly fetching information and calculating OpenGL vecs.
 pub struct TermChartsHandle {
     /// A handle to the tokio current thread runtime
-    tokio_handle: current_thread::Handle,
+    pub tokio_handle: tokio::runtime::Handle,
 
     /// Channel to communicate with the chart background thread.
-    charts_tx: futures_mpsc::Sender<alacritty_charts::async_utils::AsyncChartTask>,
+    pub charts_tx: tokio_mpsc::Sender<alacritty_charts::async_utils::AsyncChartTask>,
 
     /// Wether or not the charts are enabled
     enabled: bool,
@@ -747,7 +744,7 @@ pub struct Term<T> {
     event_proxy: T,
 
     /// The handle to the background utilities (Should this be Option?)
-    charts_handle: TermChartsHandle,
+    pub charts_handle: TermChartsHandle,
 
     /// Current title of the window.
     title: Option<String>,
@@ -781,8 +778,8 @@ impl<T> Term<T> {
         config: &Config<C>,
         size: &SizeInfo,
         event_proxy: T,
-        tokio_handle: current_thread::Handle,
-        charts_tx: futures_mpsc::Sender<alacritty_charts::async_utils::AsyncChartTask>,
+        tokio_handle: tokio::runtime::Handle,
+        charts_tx: tokio_mpsc::Sender<alacritty_charts::async_utils::AsyncChartTask>,
     ) -> Term<T> {
         // TODO: On Update, we should refresh this.
         let num_cols = size.cols();
@@ -1034,29 +1031,27 @@ impl<T> Term<T> {
 
     pub fn increment_counter(&mut self, counter_type: &'static str, increment: f64) {
         let now = std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-        let send_increment_input_counter = self
-            .charts_handle
-            .charts_tx
-            .clone()
-            .send(if counter_type == "input" {
-                alacritty_charts::async_utils::AsyncChartTask::IncrementInputCounter(now, increment)
-            } else {
-                alacritty_charts::async_utils::AsyncChartTask::IncrementOutputCounter(
-                    now, increment,
-                )
-            })
-            .map_err(|e| error!("Sending IncrementInputCounter Task: err={:?}", e))
-            .and_then(move |_res| {
-                debug!(
-                    "Sent IncrementInputCounter Task for instant {} with value: {}",
-                    now, increment
-                );
-                Ok(())
-            });
+        let mut charts_tx = self.charts_handle.charts_tx.clone();
         self.charts_handle
             .tokio_handle
-            .spawn(lazy(move || send_increment_input_counter))
-            .expect("Unable to queue async task for send_increment_input_counter");
+            .spawn(async move {
+                let send_increment_input_counter = charts_tx
+                    .send(if counter_type == "input" {
+                        alacritty_charts::async_utils::AsyncChartTask::IncrementInputCounter(now, increment)
+                    } else {
+                        alacritty_charts::async_utils::AsyncChartTask::IncrementOutputCounter(
+                            now, increment,
+                    )
+                });
+                match send_increment_input_counter.await {
+                    Err(err) => error!("Sending IncrementInputCounter Task: err={:?}", err),
+                    Ok(_) => debug!(
+                        "Sent IncrementInputCounter Task for instant {} with value: {}",
+                        now, increment
+                    ),
+                }
+            });
+            //.expect("Unable to queue async task for send_increment_input_counter");
     }
 
     #[inline]

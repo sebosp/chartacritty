@@ -1,8 +1,8 @@
 //! The display subsystem including window management, font rasterization, and
 //! GPU drawing.
 use futures::future::lazy;
-use futures::sync::mpsc as futures_mpsc;
-use futures::sync::oneshot;
+use tokio::sync::mpsc as futures_mpsc;
+use tokio::sync::oneshot;
 
 use std::f64;
 use std::fmt::{self, Formatter};
@@ -10,8 +10,6 @@ use std::fmt::{self, Formatter};
 use std::sync::atomic::Ordering;
 use std::time::Instant;
 use std::time::UNIX_EPOCH;
-use tokio::prelude::*;
-use tokio::runtime::current_thread;
 
 use glutin::dpi::{PhysicalPosition, PhysicalSize};
 use glutin::event::ModifiersState;
@@ -339,8 +337,8 @@ impl Display {
         message_buffer: &MessageBuffer,
         config: &Config,
         update_pending: DisplayUpdate,
-        tokio_handle: current_thread::Handle,
-        charts_tx: futures_mpsc::Sender<alacritty_charts::async_utils::AsyncChartTask>,
+        tokio_handle: tokio::runtime::Handle,
+        mut charts_tx: futures_mpsc::Sender<alacritty_charts::async_utils::AsyncChartTask>,
     ) {
         // Update font size and cell dimensions.
         if let Some(font) = update_pending.font {
@@ -398,6 +396,8 @@ impl Display {
         self.window.resize(physical);
         let (height, width) = (self.size_info.height, self.size_info.width);
         let (chart_resize_tx, chart_resize_rx) = oneshot::channel();
+        tokio_handle
+            .spawn(async move {
         let send_display_size = charts_tx
             .send(alacritty_charts::async_utils::AsyncChartTask::ChangeDisplaySize(
                 height,
@@ -405,20 +405,21 @@ impl Display {
                 padding_y,
                 padding_x,
                 chart_resize_tx,
-            ))
-            .map_err(|e| error!("Sending ChangeDisplaySize Task: err={:?}", e))
-            .and_then(move |_res| {
+            ));
+                match send_display_size.await {
+            Err(e) => 
+            error!("Sending ChangeDisplaySize Task: err={:?}", e),
+            Ok(_) => 
                 debug!(
                     "Sent ChangeDisplaySize Task height: {}, width: {}, padding_y: {}, padding_x: \
                      {}",
                     height, width, padding_y, padding_x
-                );
-                Ok(())
+                ),
+            }
             });
-        tokio_handle
-            .spawn(lazy(move || send_display_size))
-            .expect("Unable to queue async task for send_display_size");
-        match chart_resize_rx.map(|x| x).wait() {
+        tokio_handle.block_on(
+        async {
+        match chart_resize_rx.await {
             Ok(_) => {
                 debug!("Got response from ChangeDisplaySize Task.");
             },
@@ -426,6 +427,7 @@ impl Display {
                 error!("Error response from ChangeDisplaySize Task: {:?}", err);
             },
         }
+        });
         self.renderer.resize(&self.size_info);
     }
 
@@ -441,8 +443,6 @@ impl Display {
         config: &Config,
         mouse: &Mouse,
         mods: ModifiersState,
-        tokio_handle: current_thread::Handle,
-        charts_tx: futures_mpsc::Sender<alacritty_charts::async_utils::AsyncChartTask>,
     ) {
         let grid_cells: Vec<RenderableCell> = terminal.renderable_cells(config).collect();
         let visual_bell_intensity = terminal.visual_bell.intensity();
@@ -462,6 +462,9 @@ impl Display {
         } else {
             None
         };
+
+        let tokio_handle = terminal.charts_handle.tokio_handle.clone();
+        let charts_tx = terminal.charts_handle.charts_tx.clone();
 
         // Update IME position.
         #[cfg(not(windows))]
