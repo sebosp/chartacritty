@@ -1,6 +1,5 @@
 //! The display subsystem including window management, font rasterization, and
 //! GPU drawing.
-use futures::future::lazy;
 use tokio::sync::mpsc as futures_mpsc;
 use tokio::sync::oneshot;
 

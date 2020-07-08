@@ -424,6 +424,10 @@ pub async fn async_coordinator(
             }
         };
     }
+    event!(
+        Level::ERROR,
+        "async_coordinator: Exiting. This shouldn't happen"
+    );
     Ok(())
 }
 /// `fetch_prometheus_response` gets data from prometheus and once data is ready
@@ -692,12 +696,12 @@ pub fn tokio_default_setup() -> (
 /// `spawn_async_tasks` Starts a background thread to be used for tokio for async tasks
 pub fn spawn_async_tasks(
     chart_config: Option<crate::ChartsConfig>,
-    charts_tx: mpsc::Sender<AsyncChartTask>,
-    charts_rx: mpsc::Receiver<AsyncChartTask>,
+    mut charts_tx: mpsc::Sender<AsyncChartTask>,
+    mut charts_rx: mpsc::Receiver<AsyncChartTask>,
     handle_tx: std::sync::mpsc::Sender<tokio::runtime::Handle>,
     charts_size_info: ChartSizeInfo,
 ) -> (thread::JoinHandle<()>, oneshot::Sender<()>) {
-    let (shutdown_tx, mut shutdown_rx) = oneshot::channel();
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let tokio_thread = ::std::thread::Builder::new()
         .name("async I/O".to_owned())
         .spawn(move || {
@@ -713,7 +717,7 @@ pub fn spawn_async_tasks(
             if let Some(chart_config) = &chart_config {
                 chart_array = chart_config.charts.clone();
                 let async_chart_config = chart_config.clone();
-                tokio_runtime.spawn(lazy(move |_| {
+                tokio_runtime.spawn(async move {
                     async_coordinator(
                         charts_rx,
                         async_chart_config,
@@ -722,7 +726,8 @@ pub fn spawn_async_tasks(
                         charts_size_info.term_size.padding_y,
                         charts_size_info.term_size.padding_x,
                     )
-                }));
+                    .await;
+                });
             }
             let chart_array = chart_array.clone();
             let tokio_handle = tokio_runtime.handle().clone();
@@ -730,7 +735,7 @@ pub fn spawn_async_tasks(
                 spawn_charts_intervals(chart_array, charts_tx, tokio_handle);
             });
             tokio_runtime.block_on(async {
-                match shutdown_rx.try_recv() {
+                match shutdown_rx.await {
                     Ok(_) => info!("Got shutdown signal for Tokio"),
                     Err(err) => error!("Error on the tokio shutdown channel: {:?}", err),
                 }
