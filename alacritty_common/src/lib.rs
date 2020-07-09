@@ -3,6 +3,7 @@
 // alacritty_terminal utilities without having to redefine them.
 
 pub mod index;
+pub mod renderer;
 
 pub use crate::index::*;
 use serde::{Deserialize, Serialize};
