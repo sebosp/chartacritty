@@ -27,6 +27,7 @@ version = "0.5.0-dev"
 dependencies = [
  "alacritty_charts 0.1.0",
  "alacritty_common 0.1.0",
+ "alacritty_decorations 0.1.0",
  "alacritty_terminal 0.5.0-dev",
  "clap 2.33.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "copypasta 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -81,6 +82,15 @@ version = "0.1.0"
 dependencies = [
  "serde 1.0.111 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde_yaml 0.8.12 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "alacritty_decorations"
+version = "0.1.0"
+dependencies = [
+ "alacritty_charts 0.1.0",
+ "alacritty_common 0.1.0",
+ "log 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]

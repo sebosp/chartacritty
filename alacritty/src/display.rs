@@ -34,6 +34,7 @@ use alacritty_terminal::meter::Meter;
 use alacritty_terminal::selection::Selection;
 use alacritty_terminal::term::color::Rgb;
 use alacritty_terminal::term::{RenderableCell, Term, TermMode};
+use alacritty_decorations::Decoration;
 
 use crate::config::Config;
 use crate::event::{DisplayUpdate, Mouse};
@@ -632,53 +633,9 @@ impl Display {
         }
         if decorations_enabled {
             // TODO: SEB: width and height should be screen_width and screen_size
-            let decor_size_info = alacritty_charts::ChartSizeInfo {
-                term_size: size_info,
-                chart_width: size_info.width,
-                chart_height: size_info.height,
-            };
-            debug!("draw: Decorations Dust");
-            let radius = 100f32; // 500 pixels
-            let angle = 60.0f32;
-            let x_offset = angle.to_radians().cos() * radius;
-            let y_offset = angle.to_radians().sin() * radius;
-            let r_center_x = decor_size_info.term_size.width / 2f32;
-            let r_center_y = decor_size_info.term_size.height / 2f32;
-            info!("r_center_x : {}, r_center_y: {}", r_center_x, r_center_y);
-            info!("x_offset : {}, y_offset: {}", x_offset, y_offset);
-            let opengl_data = vec![
-                // Mid right:
-                decor_size_info.scale_x(r_center_x + radius),
-                decor_size_info.scale_y(decor_size_info.term_size.height as f64, r_center_y as f64),
-                // Top right:
-                decor_size_info.scale_x(r_center_x + x_offset),
-                decor_size_info.scale_y(
-                    decor_size_info.term_size.height as f64,
-                    (r_center_y + y_offset) as f64,
-                ),
-                // Top left
-                decor_size_info.scale_x(r_center_x - x_offset),
-                decor_size_info.scale_y(
-                    decor_size_info.term_size.height as f64,
-                    (r_center_y + y_offset) as f64,
-                ),
-                // Mid left:
-                decor_size_info.scale_x(r_center_x - radius),
-                decor_size_info.scale_y(decor_size_info.term_size.height as f64, r_center_y as f64),
-                // Bottom left
-                decor_size_info.scale_x(r_center_x - x_offset),
-                decor_size_info.scale_y(
-                    decor_size_info.term_size.height as f64,
-                    (r_center_y - y_offset) as f64,
-                ),
-                // Bottom Right
-                decor_size_info.scale_x(r_center_x + x_offset),
-                decor_size_info.scale_y(
-                    decor_size_info.term_size.height as f64,
-                    (r_center_y - y_offset) as f64,
-                ),
-            ];
-            info!("Drawing dust: {:?}", opengl_data);
+            let hexagon_grid_decorator = alacritty_decorations::HexagonGridBackground::new(alacritty_charts::ChartSizeInfo{term_size: size_info,chart_width: size_info.width,chart_height: size_info.height});
+            let opengl_data = hexagon_grid_decorator.render();
+            debug!("draw: Decorations hexagon grid: {:?}", opengl_data);
             self.renderer.draw_array(
                 &size_info,
                 &opengl_data,
