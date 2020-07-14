@@ -354,7 +354,7 @@ pub async fn async_coordinator(
     width: f32,
     padding_y: f32,
     padding_x: f32,
-) -> Result<(), ()> {
+) {
     event!(
         Level::DEBUG,
         "async_coordinator: Starting, terminal height: {}, width: {}, padding_y: {}, padding_x {}",
@@ -428,7 +428,6 @@ pub async fn async_coordinator(
         Level::ERROR,
         "async_coordinator: Exiting. This shouldn't happen"
     );
-    Ok(())
 }
 /// `fetch_prometheus_response` gets data from prometheus and once data is ready
 /// it sends the results to the coordinator.
@@ -696,8 +695,8 @@ pub fn tokio_default_setup() -> (
 /// `spawn_async_tasks` Starts a background thread to be used for tokio for async tasks
 pub fn spawn_async_tasks(
     chart_config: Option<crate::ChartsConfig>,
-    mut charts_tx: mpsc::Sender<AsyncChartTask>,
-    mut charts_rx: mpsc::Receiver<AsyncChartTask>,
+    charts_tx: mpsc::Sender<AsyncChartTask>,
+    charts_rx: mpsc::Receiver<AsyncChartTask>,
     handle_tx: std::sync::mpsc::Sender<tokio::runtime::Handle>,
     charts_size_info: ChartSizeInfo,
 ) -> (thread::JoinHandle<()>, oneshot::Sender<()>) {

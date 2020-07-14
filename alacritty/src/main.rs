@@ -146,7 +146,7 @@ fn run(window_event_loop: GlutinEventLoop<Event>, config: Config) -> Result<(), 
 
     // Create the channel that is used to communicate with the
     // charts background task.
-    let (mut charts_tx, mut charts_rx) = mpsc::channel(4_096usize);
+    let (charts_tx, charts_rx) = mpsc::channel(4_096usize);
     // Create a channel to receive a handle from Tokio
     //
     let (handle_tx, handle_rx) = std::sync::mpsc::channel();

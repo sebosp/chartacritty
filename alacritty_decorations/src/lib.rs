@@ -1,5 +1,4 @@
 use alacritty_charts::ChartSizeInfo;
-#[macro_use]
 use log::debug;
 pub trait Decoration {
     fn render(self) -> Vec<f32>;
