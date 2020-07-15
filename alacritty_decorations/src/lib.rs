@@ -29,38 +29,58 @@ impl HexagonGridBackground {
 
 impl Decoration for HexagonGridBackground {
     fn render(self) -> Vec<f32> {
-        let radius = 100f32; // 500 pixels
-        let angle = 60.0f32;
+        let radius = 100f32; // 100 pixels
+        let angle = 60.0f32; // Hexagon degrees
         let x_offset = angle.to_radians().cos() * radius;
         let y_offset = angle.to_radians().sin() * radius;
-        let r_center_x = self.size_info.term_size.width / 2f32;
-        let r_center_y = self.size_info.term_size.height / 2f32;
-        debug!("r_center_x : {}, r_center_y: {}", r_center_x, r_center_y);
-        debug!("x_offset : {}, y_offset: {}", x_offset, y_offset);
-        let opengl_data = vec![
-            // Mid right:
-            self.size_info.scale_x(r_center_x + radius),
-            self.size_info.scale_y(self.size_info.term_size.height as f64, r_center_y as f64),
-            // Top right:
-            self.size_info.scale_x(r_center_x + x_offset),
-            self.size_info
-                .scale_y(self.size_info.term_size.height as f64, (r_center_y + y_offset) as f64),
-            // Top left
-            self.size_info.scale_x(r_center_x - x_offset),
-            self.size_info
-                .scale_y(self.size_info.term_size.height as f64, (r_center_y + y_offset) as f64),
-            // Mid left:
-            self.size_info.scale_x(r_center_x - radius),
-            self.size_info.scale_y(self.size_info.term_size.height as f64, r_center_y as f64),
-            // Bottom left
-            self.size_info.scale_x(r_center_x - x_offset),
-            self.size_info
-                .scale_y(self.size_info.term_size.height as f64, (r_center_y - y_offset) as f64),
-            // Bottom Right
-            self.size_info.scale_x(r_center_x + x_offset),
-            self.size_info
-                .scale_y(self.size_info.term_size.height as f64, (r_center_y - y_offset) as f64),
-        ];
+        let mut current_x_position = -radius;
+        let mut half_offset = true; // When true, we will add half radius to Y to make sure the hexagons do not overlap
+        let mut opengl_data: Vec<f32> = vec![];
+        while current_x_position <= self.size_info.term_size.width {
+            let current_y_position = -radius;
+            let mut temp_y = current_y_position;
+            if half_offset {
+                temp_y += radius / 2f32;
+            }
+            while temp_y <= self.size_info.term_size.height {
+                let mut current_hexagon = vec![
+                    // Mid right:
+                    self.size_info.scale_x(current_x_position + radius),
+                    self.size_info.scale_y(self.size_info.term_size.height as f64, temp_y as f64),
+                    // Top right:
+                    self.size_info.scale_x(current_x_position + x_offset),
+                    self.size_info.scale_y(
+                        self.size_info.term_size.height as f64,
+                        (temp_y + y_offset) as f64,
+                    ),
+                    // Top left
+                    self.size_info.scale_x(current_x_position - x_offset),
+                    self.size_info.scale_y(
+                        self.size_info.term_size.height as f64,
+                        (temp_y + y_offset) as f64,
+                    ),
+                    // Mid left:
+                    self.size_info.scale_x(current_x_position - radius),
+                    self.size_info.scale_y(self.size_info.term_size.height as f64, temp_y as f64),
+                    // Bottom left
+                    self.size_info.scale_x(current_x_position - x_offset),
+                    self.size_info.scale_y(
+                        self.size_info.term_size.height as f64,
+                        (temp_y - y_offset) as f64,
+                    ),
+                    // Bottom Right
+                    self.size_info.scale_x(current_x_position + x_offset),
+                    self.size_info.scale_y(
+                        self.size_info.term_size.height as f64,
+                        (temp_y - y_offset) as f64,
+                    ),
+                ];
+                opengl_data.append(&mut current_hexagon);
+                temp_y += radius;
+            }
+            half_offset = !half_offset;
+            current_x_position += radius;
+        }
         opengl_data
     }
 }
