@@ -33,14 +33,14 @@ impl Decoration for HexagonGridBackground {
         let angle = 60.0f32; // Hexagon degrees
         let x_offset = angle.to_radians().cos() * radius;
         let y_offset = angle.to_radians().sin() * radius;
-        let mut current_x_position = -radius;
+        let mut current_x_position = 0f32;
         let mut half_offset = true; // When true, we will add half radius to Y to make sure the hexagons do not overlap
         let mut opengl_data: Vec<f32> = vec![];
         while current_x_position <= self.size_info.term_size.width {
-            let current_y_position = -radius;
+            let current_y_position = 0f32;
             let mut temp_y = current_y_position;
             if half_offset {
-                temp_y += radius / 2f32;
+                temp_y += y_offset;
             }
             while temp_y <= self.size_info.term_size.height {
                 let mut current_hexagon = vec![
@@ -76,10 +76,10 @@ impl Decoration for HexagonGridBackground {
                     ),
                 ];
                 opengl_data.append(&mut current_hexagon);
-                temp_y += radius;
+                temp_y += y_offset * 2f32;
             }
             half_offset = !half_offset;
-            current_x_position += radius;
+            current_x_position += x_offset * 3f32;
         }
         opengl_data
     }
