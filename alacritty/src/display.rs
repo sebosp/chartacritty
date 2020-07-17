@@ -634,8 +634,16 @@ impl Display {
         if decorations_enabled {
             // TODO: SEB: width and height should be screen_width and screen_size
             let hexagon_grid_decorator = alacritty_decorations::HexagonGridBackground::new(alacritty_charts::ChartSizeInfo{term_size: size_info,chart_width: size_info.width,chart_height: size_info.height});
+            let hexagon_vertices = hexagon_grid_decorator.render();
+                    self.renderer.draw_array(
+                        &size_info,
+                        &hexagon_vertices,
+                        Rgb { r: 25, g: 88, b: 167 },
+                        0.9f32,
+                        renderer::DrawArrayMode::GlPoints,
+                    );
             // Draw chunks of 12, since it's 2 points (x,y) per coordinate
-            for opengl_data in hexagon_grid_decorator.render().chunks(12){
+            for opengl_data in hexagon_vertices.chunks(12){
                 debug!("draw: Decorations hexagon grid: {:?}", opengl_data);
                 self.renderer.draw_array(
                     &size_info,
