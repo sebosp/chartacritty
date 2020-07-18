@@ -471,13 +471,13 @@ pub enum DrawArrayMode {
     GlPoints,
     GlLineStrip,
     GlLineLoop,
-    GlLines,
-    GlTriangleStrip,
-    GlTriangleFan,
-    GlTriangles,
-    // GlQuadStrip, // Unsupported
-    GlQuads,
-    GlPolygon,
+    /* GlLines,
+     * GlTriangleStrip,
+     * GlTriangleFan,
+     * GlTriangles,
+     * GlQuadStrip, // Unsupported
+     * GlQuads,
+     * GlPolygon, */
 }
 
 impl Batch {
@@ -823,13 +823,13 @@ impl QuadRenderer {
             DrawArrayMode::GlPoints => gl::POINTS,
             DrawArrayMode::GlLineStrip => gl::LINE_STRIP,
             DrawArrayMode::GlLineLoop => gl::LINE_LOOP,
-            DrawArrayMode::GlLines => gl::LINES,
-            DrawArrayMode::GlTriangleStrip => gl::TRIANGLE_STRIP,
-            DrawArrayMode::GlTriangleFan => gl::TRIANGLE_FAN,
-            DrawArrayMode::GlTriangles => gl::TRIANGLES,
-            // DrawArrayMode::GlQuadStrip => gl::QUAD_STRIP, // Unsupported?
-            DrawArrayMode::GlQuads => gl::QUADS,
-            DrawArrayMode::GlPolygon => gl::POLYGON_MODE,
+            /* DrawArrayMode::GlLines => gl::LINES,
+             * DrawArrayMode::GlTriangleStrip => gl::TRIANGLE_STRIP,
+             * DrawArrayMode::GlTriangleFan => gl::TRIANGLE_FAN,
+             * DrawArrayMode::GlTriangles => gl::TRIANGLES,
+             * DrawArrayMode::GlQuadStrip => gl::QUAD_STRIP, // Unsupported?
+             * DrawArrayMode::GlQuads => gl::QUADS,
+             * DrawArrayMode::GlPolygon => gl::POLYGON_MODE, */
         };
         // TODO: Use the Charts Shader Program (For now a copy of rect)
         unsafe {

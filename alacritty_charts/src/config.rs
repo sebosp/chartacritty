@@ -1,10 +1,9 @@
 //! Reading configuration from a yaml file
 use log::*;
-use serde_yaml;
 use std::fs::File;
 use std::io::Read;
 use std::path::PathBuf;
-static DEFAULT_CHART_CONFIG: &'static str =
+static DEFAULT_CHART_CONFIG: &str =
     include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/charts.yml"));
 /// Top-level config type
 #[derive(Debug, PartialEq, Deserialize, Clone)]

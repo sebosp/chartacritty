@@ -38,7 +38,7 @@ use decorations::*;
 use log::*;
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer};
-use serde_yaml;
+use std::cmp::Ordering;
 use std::fmt;
 use std::str::FromStr;
 use std::time::UNIX_EPOCH;
@@ -584,7 +584,7 @@ impl TimeSeriesChart {
         if series_idx >= self.sources.len() {
             event!(
                 Level::ERROR,
-                "update_series_opengl_vecs: Request for out of bound series index: {}",
+                "update_series_opengl_vecs: Request for index out of bounds: {}",
                 series_idx
             );
             return;
@@ -603,6 +603,14 @@ impl TimeSeriesChart {
         }
         // Get the opengl representation of the vector
         let opengl_vecs_capacity = self.sources[series_idx].series().active_items;
+        event!(
+            Level::INFO,
+            "self: {:?}, self.opengl_vecs.capacity(): {}, self.sources.capacity(): {}, series_idx: {}",
+            self,
+            self.opengl_vecs.capacity(),
+            self.sources.capacity(),
+            series_idx,
+        );
         if opengl_vecs_capacity > self.opengl_vecs[series_idx].capacity() {
             let missing_capacity = opengl_vecs_capacity - self.opengl_vecs[series_idx].capacity();
             self.opengl_vecs[series_idx].reserve(missing_capacity);
@@ -899,8 +907,7 @@ impl TimeSeries {
             "first" => MissingValuesPolicy::First,
             _ => {
                 // TODO: Implement FromStr somehow
-                MissingValuesPolicy::fixed(policy_type.clone())
-                    .unwrap_or(MissingValuesPolicy::default())
+                MissingValuesPolicy::fixed(policy_type.clone()).unwrap_or_default()
             }
         };
         self
@@ -1000,11 +1007,11 @@ impl TimeSeries {
         } else {
             let target_idx = (self.first_idx + self.active_items) % self.metrics_capacity;
             self.metrics[target_idx] = input;
-            if self.active_items < self.metrics_capacity {
-                self.active_items += 1;
-            } else if self.active_items == self.metrics_capacity {
-                self.first_idx = (self.first_idx + 1) % self.metrics_capacity;
-            }
+            match self.active_items.cmp(&self.active_items) {
+                Ordering::Less => self.active_items += 1,
+                Ordering::Equal => self.first_idx = (self.first_idx + 1) % self.metrics_capacity,
+                Ordering::Greater => unreachable!(),
+            };
         }
         self.stats.is_dirty = true;
     }
@@ -1076,7 +1083,7 @@ impl TimeSeries {
             self.active_items = 1;
             self.upsert_type = UpsertType::VectorDiscarded;
             self.prev_value = input;
-            return 1;
+            1
         } else if inactive_time < 0 {
             // We have a metric for an epoch in the past.
             let current_min_epoch = self.metrics[self.first_idx].0;
@@ -1099,7 +1106,7 @@ impl TimeSeries {
                     self.active_items += padding_items;
                     self.upsert_type = UpsertType::PrevEpochInputVecNotFull;
                     self.prev_value = input;
-                    return padding_items;
+                    padding_items
                 } else {
                     self.sync_prev_snapshot();
                     // The vector is full, write the new epoch at first_idx and then fill the rest
@@ -1121,7 +1128,7 @@ impl TimeSeries {
                     self.prev_value = input;
                     // XXX: make sure this doesn't go above the metrics_capacity
                     self.active_items += previous_active_items;
-                    return (previous_min_epoch - input.0) as usize;
+                    (previous_min_epoch - input.0) as usize
                 }
             } else {
                 // The input epoch has already been inserted in our array
@@ -1153,7 +1160,7 @@ impl TimeSeries {
                 }
                 self.upsert_type = UpsertType::OverwritePrevEpoch;
                 self.prev_value = input;
-                return 0;
+                0
             }
         } else if inactive_time == 0 {
             self.sync_prev_snapshot();
@@ -1162,7 +1169,7 @@ impl TimeSeries {
                 self.resolve_metric_collision(self.metrics[last_idx].1, input.1);
             self.upsert_type = UpsertType::OverwriteLastEpoch;
             self.prev_value = input;
-            return 0;
+            0
         } else {
             self.sync_prev_snapshot();
             // The input epoch is in the future
@@ -1174,7 +1181,7 @@ impl TimeSeries {
             self.circular_push(input);
             self.upsert_type = UpsertType::NewEpoch;
             self.prev_value = input;
-            return 1;
+            1
         }
     }
 
@@ -1227,7 +1234,7 @@ impl TimeSeries {
         }
         let mut res: Vec<(u64, Option<f64>)> = Vec::with_capacity(self.metrics_capacity);
         for entry in self.iter() {
-            res.push(entry.clone());
+            res.push(*entry)
         }
         res
     }
@@ -2334,7 +2341,7 @@ mod tests {
         chart_config.charts.push(chart_test.clone());
         chart_config.charts.push(chart_test.clone());
         chart_config.charts.push(chart_test.clone());
-        chart_config.charts.push(chart_test.clone());
+        chart_config.charts.push(chart_test);
         chart_config.setup_chart_spacing();
         assert_eq!(
             chart_config.charts[0].dimensions,

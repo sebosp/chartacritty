@@ -9,7 +9,6 @@ use crate::ChartSizeInfo;
 use crate::TimeSeriesChart;
 use crate::TimeSeriesSource;
 use alacritty_common::SizeInfo;
-use futures::future::lazy;
 use log::*;
 use std::thread;
 use std::time::Duration;
@@ -49,19 +48,19 @@ pub async fn get_last_updated_chart_epoch(
     charts_tx: &mut mpsc::Sender<AsyncChartTask>,
     tokio_handle: tokio::runtime::Handle,
 ) -> u64 {
-    let (chart_tx, chart_rx) = oneshot::channel();
-    let get_latest_update_epoch = charts_tx
-        .send(AsyncChartTask::SendLastUpdatedEpoch(chart_tx))
-        .await
-        .map_err(|e| error!("Sending SendLastUpdatedEpoch Task: err={:?}", e))
-        .and_then(move |_res| {
-            debug!("Sent Request for SendLastUpdatedEpoch");
-            Ok(())
-        });
-    tokio_handle.spawn(lazy(move |_| get_latest_update_epoch));
+    let mut charts_tx = charts_tx.clone();
+    let (last_updated_epoch_tx, last_updated_epoch_rx) = oneshot::channel();
+    tokio_handle.spawn(async move {
+        let get_latest_update_epoch = charts_tx
+            .send(AsyncChartTask::SendLastUpdatedEpoch(last_updated_epoch_tx))
+            .await;
+        match get_latest_update_epoch {
+            Ok(_res) => debug!("Sent Request for SendLastUpdatedEpoch"),
+            Err(e) => error!("Sending SendLastUpdatedEpoch Task: err={:?}", e),
+        };
+    });
     //.expect("Unable to queue async task for get_latest_update_epoch");
-    let chart_rx = chart_rx.await;
-    match chart_rx {
+    match last_updated_epoch_rx.await {
         Ok(data) => {
             debug!("Got response from SendLastUpdatedEpoch Task: {:?}", data);
             data
@@ -365,7 +364,7 @@ pub async fn async_coordinator(
     );
     chart_config.setup_chart_spacing();
     for chart in &mut chart_config.charts {
-        // Caculate the spacing between charts
+        // Calculate the spacing between charts
         event!(
             Level::DEBUG,
             "Finishing setup for sources in chart: '{}'",
@@ -536,7 +535,7 @@ pub fn spawn_charts_intervals(
                 };
                 let charts_tx = charts_tx.clone();
                 tokio_handle.spawn(async move {
-                    spawn_datasource_interval_polls(&data_request, charts_tx).await.expect(&format!("spawn_charts_intervals:(Chart: {}, Series: {}) Error spawning datasource internal polls", chart_index, series_index));
+                    spawn_datasource_interval_polls(&data_request, charts_tx).await.unwrap_or_else(|_| panic!("spawn_charts_intervals:(Chart: {}, Series: {}) Error spawning datasource internal polls", chart_index, series_index));
                 });
             }
             series_index += 1;
@@ -605,7 +604,7 @@ pub fn get_metric_opengl_data(
     tokio_handle: tokio::runtime::Handle,
 ) -> (Vec<f32>, f32) {
     let (opengl_tx, opengl_rx) = oneshot::channel();
-    let chart_idx_bkp = chart_idx.clone();
+    let chart_idx_bkp = chart_idx;
     tokio_handle.spawn(async move {
         let get_metric_request = charts_tx.send(if request_type == "metric_data" {
             AsyncChartTask::SendMetricsOpenGLData(chart_idx, series_idx, opengl_tx)
@@ -728,7 +727,6 @@ pub fn spawn_async_tasks(
                     .await;
                 });
             }
-            let chart_array = chart_array.clone();
             let tokio_handle = tokio_runtime.handle().clone();
             tokio_runtime.spawn(async {
                 spawn_charts_intervals(chart_array, charts_tx, tokio_handle);
@@ -769,8 +767,8 @@ pub fn run(config: crate::config::Config) {
     // Start the Async I/O runtime, this needs to run in a background thread because in OSX, only
     // the main thread can write to the graphics card.
     let (tokio_thread, tokio_shutdown) = spawn_async_tasks(
-        config.charts.clone(),
-        charts_tx.clone(),
+        config.charts,
+        charts_tx,
         charts_rx,
         handle_tx,
         charts_size_info,

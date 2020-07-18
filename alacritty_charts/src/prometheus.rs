@@ -390,7 +390,7 @@ pub async fn get_from_prometheus(
 }
 /// `parse_json` transforms a hyper body chunk into a possible
 /// PrometheusResponse, mostly used for testing
-pub fn parse_json(url: &String, body: &hyper::body::Bytes) -> Option<HTTPResponse> {
+pub fn parse_json(url: &str, body: &hyper::body::Bytes) -> Option<HTTPResponse> {
     let prom_res: Result<HTTPResponse, serde_json::Error> = serde_json::from_slice(&body);
     match prom_res {
         Ok(v) => {

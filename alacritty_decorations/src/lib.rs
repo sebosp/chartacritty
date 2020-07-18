@@ -1,5 +1,5 @@
 use alacritty_charts::ChartSizeInfo;
-use log::debug;
+// use log::debug;
 pub trait Decoration {
     fn render(self) -> Vec<f32>;
     // fn load_vertex_shader(path: &str) -> bool {

@@ -506,9 +506,12 @@ impl ActiveAlertUnderLineDecoration {
         for series in sources {
             if series.name() == self.target {
                 event!(Level::DEBUG, "Matching target series: {}", series.name());
+                let minimum_difference_equality = 0.00001f64; // Accept less than this much difference as equality
                 match self.comparator {
                     AlertComparator::Equal => {
-                        if series.series().stats.last == self.threshold {
+                        if (series.series().stats.last - self.threshold).abs()
+                            < minimum_difference_equality
+                        {
                             return true;
                         }
                     }

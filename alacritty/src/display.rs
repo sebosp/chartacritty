@@ -119,7 +119,7 @@ pub struct Display {
     renderer: QuadRenderer,
     glyph_cache: GlyphCache,
     meter: Meter,
-    charts_last_drawn: u64,
+    // charts_last_drawn: u64,
     #[cfg(not(any(target_os = "macos", windows)))]
     is_x11: bool,
 }
@@ -267,7 +267,7 @@ impl Display {
             size_info,
             urls: Urls::new(),
             highlighted_url: None,
-            charts_last_drawn: 0u64,
+            // charts_last_drawn: 0u64,
             #[cfg(not(any(target_os = "macos", windows)))]
             is_x11,
             #[cfg(not(any(target_os = "macos", windows)))]
@@ -620,7 +620,7 @@ impl Display {
                             renderer::DrawArrayMode::GlLineStrip,
                         );
                     }
-                    let chart_last_drawn =
+                    let _chart_last_drawn =
                         std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
                 }
             }
