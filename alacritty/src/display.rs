@@ -27,6 +27,7 @@ use font::{self, Rasterize};
 
 use alacritty_common::index::Line;
 use alacritty_common::SizeInfo;
+use alacritty_decorations::Decoration;
 use alacritty_terminal::config::{Font, StartupMode};
 use alacritty_terminal::event::OnResize;
 use alacritty_terminal::message_bar::MessageBuffer;
@@ -34,7 +35,6 @@ use alacritty_terminal::meter::Meter;
 use alacritty_terminal::selection::Selection;
 use alacritty_terminal::term::color::Rgb;
 use alacritty_terminal::term::{RenderableCell, Term, TermMode};
-use alacritty_decorations::Decoration;
 
 use crate::config::Config;
 use crate::event::{DisplayUpdate, Mouse};
@@ -396,37 +396,33 @@ impl Display {
         self.window.resize(physical);
         let (height, width) = (self.size_info.height, self.size_info.width);
         let (chart_resize_tx, chart_resize_rx) = oneshot::channel();
-        tokio_handle
-            .spawn(async move {
-        let send_display_size = charts_tx
-            .send(alacritty_charts::async_utils::AsyncChartTask::ChangeDisplaySize(
-                height,
-                width,
-                padding_y,
-                padding_x,
-                chart_resize_tx,
-            ));
-                match send_display_size.await {
-            Err(e) => 
-            error!("Sending ChangeDisplaySize Task: err={:?}", e),
-            Ok(_) => 
-                debug!(
+        tokio_handle.spawn(async move {
+            let send_display_size =
+                charts_tx.send(alacritty_charts::async_utils::AsyncChartTask::ChangeDisplaySize(
+                    height,
+                    width,
+                    padding_y,
+                    padding_x,
+                    chart_resize_tx,
+                ));
+            match send_display_size.await {
+                Err(e) => error!("Sending ChangeDisplaySize Task: err={:?}", e),
+                Ok(_) => debug!(
                     "Sent ChangeDisplaySize Task height: {}, width: {}, padding_y: {}, padding_x: \
                      {}",
                     height, width, padding_y, padding_x
                 ),
             }
-            });
-        tokio_handle.block_on(
-        async {
-        match chart_resize_rx.await {
-            Ok(_) => {
-                debug!("Got response from ChangeDisplaySize Task.");
-            },
-            Err(err) => {
-                error!("Error response from ChangeDisplaySize Task: {:?}", err);
-            },
-        }
+        });
+        tokio_handle.block_on(async {
+            match chart_resize_rx.await {
+                Ok(_) => {
+                    debug!("Got response from ChangeDisplaySize Task.");
+                },
+                Err(err) => {
+                    error!("Error response from ChangeDisplaySize Task: {:?}", err);
+                },
+            }
         });
         self.renderer.resize(&self.size_info);
     }
@@ -633,17 +629,23 @@ impl Display {
         }
         if decorations_enabled {
             // TODO: SEB: width and height should be screen_width and screen_size
-            let hexagon_grid_decorator = alacritty_decorations::HexagonGridBackground::new(alacritty_charts::ChartSizeInfo{term_size: size_info,chart_width: size_info.width,chart_height: size_info.height});
+            let hexagon_grid_decorator = alacritty_decorations::HexagonGridBackground::new(
+                alacritty_charts::ChartSizeInfo {
+                    term_size: size_info,
+                    chart_width: size_info.width,
+                    chart_height: size_info.height,
+                },
+            );
             let hexagon_vertices = hexagon_grid_decorator.render();
-                    self.renderer.draw_array(
-                        &size_info,
-                        &hexagon_vertices,
-                        Rgb { r: 25, g: 88, b: 167 },
-                        0.9f32,
-                        renderer::DrawArrayMode::GlPoints,
-                    );
+            self.renderer.draw_array(
+                &size_info,
+                &hexagon_vertices,
+                Rgb { r: 25, g: 88, b: 167 },
+                0.9f32,
+                renderer::DrawArrayMode::GlPoints,
+            );
             // Draw chunks of 12, since it's 2 points (x,y) per coordinate
-            for opengl_data in hexagon_vertices.chunks(12){
+            for opengl_data in hexagon_vertices.chunks(12) {
                 debug!("draw: Decorations hexagon grid: {:?}", opengl_data);
                 self.renderer.draw_array(
                     &size_info,
