@@ -589,7 +589,7 @@ impl TimeSeriesChart {
             );
             return;
         }
-        while self.opengl_vecs.capacity() <= self.sources.capacity() {
+        while self.opengl_vecs.len() <= self.sources.len() {
             self.opengl_vecs.push(vec![]);
         }
         let mut display_size = display_size;
