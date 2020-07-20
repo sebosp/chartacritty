@@ -16,7 +16,7 @@ use glutin::event_loop::EventLoop;
 #[cfg(not(any(target_os = "macos", windows)))]
 use glutin::platform::unix::EventLoopWindowTargetExtUnix;
 use glutin::window::CursorIcon;
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use parking_lot::MutexGuard;
 #[cfg(not(any(target_os = "macos", windows)))]
 use wayland_client::{Display as WaylandDisplay, EventQueue};
@@ -122,6 +122,8 @@ pub struct Display {
     // charts_last_drawn: u64,
     #[cfg(not(any(target_os = "macos", windows)))]
     is_x11: bool,
+
+    hexagon_grid_decoration: Vec<f32>,
 }
 
 impl Display {
@@ -259,6 +261,15 @@ impl Display {
             _ => (),
         }
 
+        let hexagon_radius = 100f32;
+        let hexagon_grid_decorator = alacritty_decorations::HexagonGridBackground::new(
+            alacritty_charts::ChartSizeInfo {
+                term_size: size_info,
+                chart_width: size_info.width,
+                chart_height: size_info.height,
+            },
+            hexagon_radius,
+        );
         Ok(Self {
             window,
             renderer,
@@ -272,6 +283,7 @@ impl Display {
             is_x11,
             #[cfg(not(any(target_os = "macos", windows)))]
             wayland_event_queue,
+            hexagon_grid_decoration: hexagon_grid_decorator.render(),
         })
     }
 
@@ -425,6 +437,16 @@ impl Display {
             }
         });
         self.renderer.resize(&self.size_info);
+        let hexagon_radius = 100f32;
+        let hexagon_grid_decorator = alacritty_decorations::HexagonGridBackground::new(
+            alacritty_charts::ChartSizeInfo {
+                term_size: self.size_info,
+                chart_width: self.size_info.width,
+                chart_height: self.size_info.height,
+            },
+            hexagon_radius,
+        );
+        self.hexagon_grid_decoration = hexagon_grid_decorator.render();
     }
 
     /// Draw the screen.
@@ -628,24 +650,12 @@ impl Display {
             debug!("Charts are not enabled");
         }
         if decorations_enabled {
-            // TODO: SEB: width and height should be screen_width and screen_size
-            let hexagon_grid_decorator = alacritty_decorations::HexagonGridBackground::new(
-                alacritty_charts::ChartSizeInfo {
-                    term_size: size_info,
-                    chart_width: size_info.width,
-                    chart_height: size_info.height,
-                },
-            );
-            let hexagon_vertices = hexagon_grid_decorator.render();
-            self.renderer.draw_array(
-                &size_info,
-                &hexagon_vertices,
-                Rgb { r: 25, g: 88, b: 167 },
-                0.9f32,
-                renderer::DrawArrayMode::GlPoints,
-            );
             // Draw chunks of 12, since it's 2 points (x,y) per coordinate
-            for opengl_data in hexagon_vertices.chunks(12) {
+            // Create a "wind" effect of a moving curtain by making it very transparent as it
+            // reaches 1000
+            // let wind_curtain_window = 1000f32;
+            // let curr_seconds = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)
+            for opengl_data in self.hexagon_grid_decoration.chunks(12) {
                 debug!("draw: Decorations hexagon grid: {:?}", opengl_data);
                 self.renderer.draw_array(
                     &size_info,
@@ -653,6 +663,14 @@ impl Display {
                     Rgb { r: 25, g: 88, b: 167 },
                     0.1f32,
                     renderer::DrawArrayMode::GlLineLoop,
+                );
+                // Create some "dust"
+                self.renderer.draw_array(
+                    &size_info,
+                    &opengl_data,
+                    Rgb { r: 25, g: 88, b: 167 },
+                    0.9f32,
+                    renderer::DrawArrayMode::GlPoints,
                 );
             }
         } else {

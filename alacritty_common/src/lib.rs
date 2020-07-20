@@ -9,6 +9,7 @@ pub use crate::index::*;
 use serde::{Deserialize, Serialize};
 use std::cmp::min;
 
+// TODO: SEB: width and height should be screen_width and screen_size
 /// Terminal size info.
 #[derive(Default, Serialize, Deserialize, Debug, Copy, Clone, PartialEq)]
 pub struct SizeInfo {

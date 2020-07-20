@@ -15,14 +15,16 @@ pub struct HexagonGridBackground {
     // shader_vertex_path: String,
     // shader_fragment_path: String,
     size_info: ChartSizeInfo,
+    radius: f32,
 }
 
 impl HexagonGridBackground {
-    pub fn new(size_info: ChartSizeInfo) -> Self {
+    pub fn new(size_info: ChartSizeInfo, radius: f32) -> Self {
         HexagonGridBackground {
             // shader_fragment_path: String::from("Unimplemented"),
             // shader_vertex_path: String::from("Unimplemented"),
             size_info,
+            radius,
         }
     }
 
@@ -63,8 +65,6 @@ impl HexagonGridBackground {
 
 impl Decoration for HexagonGridBackground {
     fn render(self) -> Vec<f32> {
-        let radius = 100f32; // 100 pixels
-
         // We only care for the 60 degrees X,Y, the rest we can calculate from this distance.
         // For the degrees at 0, X is the radius, and Y is 0.
         // let angle = 60.0f32; // Hexagon degrees
@@ -74,16 +74,17 @@ impl Decoration for HexagonGridBackground {
         // let y_offset = angle.to_radians().sin() * radius;
         let cos_60 = 0.49999997f32;
         let sin_60 = 0.86602545f32;
-        let x_offset = cos_60 * radius;
-        let y_offset = sin_60 * radius;
+        let x_offset = cos_60 * self.radius;
+        let y_offset = sin_60 * self.radius;
         // Let's create an adjusted version of the values that is slightly less than the actual
         // position
-        let adjusted_radius = radius * 0.92;
+        let adjusted_radius = self.radius * 0.92;
         let adjusted_x_offset = x_offset * 0.92;
         let adjusted_y_offset = y_offset * 0.92;
         let mut current_x_position = 0f32;
         let mut half_offset = true; // When true, we will add half radius to Y to make sure the hexagons do not overlap
-        let mut opengl_data: Vec<f32> = vec![];
+        let mut outer_hexagons: Vec<f32> = vec![];
+        let mut inner_hexagons: Vec<f32> = vec![];
         while current_x_position <= self.size_info.term_size.width {
             let current_y_position = 0f32;
             let mut temp_y = current_y_position;
@@ -92,7 +93,7 @@ impl Decoration for HexagonGridBackground {
             }
             while temp_y <= self.size_info.term_size.height {
                 // Inner hexagon:
-                opengl_data.append(&mut self.create_hexagon(
+                inner_hexagons.append(&mut self.create_hexagon(
                     current_x_position,
                     temp_y,
                     adjusted_radius,
@@ -100,10 +101,10 @@ impl Decoration for HexagonGridBackground {
                     adjusted_y_offset,
                 ));
                 // Outer radius
-                opengl_data.append(&mut self.create_hexagon(
+                outer_hexagons.append(&mut self.create_hexagon(
                     current_x_position,
                     temp_y,
-                    radius,
+                    self.radius,
                     x_offset,
                     y_offset,
                 ));
@@ -112,7 +113,13 @@ impl Decoration for HexagonGridBackground {
             half_offset = !half_offset;
             current_x_position += x_offset * 3f32;
         }
-        opengl_data
+        outer_hexagons.append(&mut inner_hexagons);
+        // What is returned:
+        // First, the outer(bigger hexagons whos vertices touch the other outer hexagons
+        // Then the inner hexagons that are slightly less and:
+        // TODO: should in the future become triangle strips and the closer they get to the center
+        // the darker.
+        outer_hexagons
     }
 }
 
