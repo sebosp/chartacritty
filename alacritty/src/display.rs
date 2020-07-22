@@ -430,10 +430,10 @@ impl Display {
             match chart_resize_rx.await {
                 Ok(_) => {
                     debug!("Got response from ChangeDisplaySize Task.");
-                },
+                }
                 Err(err) => {
                     error!("Error response from ChangeDisplaySize Task: {:?}", err);
-                },
+                }
             }
         });
         self.renderer.resize(&self.size_info);
@@ -650,7 +650,6 @@ impl Display {
             debug!("Charts are not enabled");
         }
         if decorations_enabled {
-            // Draw chunks of 12, since it's 2 points (x,y) per coordinate
             // Create a "wind" effect of a moving curtain by making it very transparent as it
             // reaches 1000
             let curr_seconds = std::time::SystemTime::now()
@@ -662,10 +661,14 @@ impl Display {
             // 0.0 u                         0.25 u                             0.5
             // 0.0 seconds                    15 seconds                        15 seconds
             // Every 15 seconds the opacity should go back to 100% of out top
+
+            // Draw chunks of 12, since it's 2 points (x,y) per coordinate
+            let mut outer_hexagon_limit = self.hexagon_grid_decoration.len() / 2;
             for opengl_data in self.hexagon_grid_decoration.chunks(12) {
                 // Mid-left is the 6th in the array
-                let curr_x = opengl_data[6] + ((0.25f32 * (curr_seconds % 15f32)) / 15f32);
-                let curr_opacity = curr_x % 0.25;
+                let curr_opacity = (0.25f32
+                    - ((opengl_data[6] + ((0.25 * curr_seconds) / 15f32)) % 0.25f32))
+                    / 0.25f32;
                 debug!("draw: Decorations hexagon grid: {:?}", opengl_data);
                 self.renderer.draw_array(
                     &size_info,
@@ -674,14 +677,18 @@ impl Display {
                     curr_opacity,
                     renderer::DrawArrayMode::GlLineLoop,
                 );
-                // Create some "dust"
-                self.renderer.draw_array(
-                    &size_info,
-                    &opengl_data,
-                    Rgb { r: 25, g: 88, b: 167 },
-                    0.9f32,
-                    renderer::DrawArrayMode::GlPoints,
-                );
+                if outer_hexagon_limit > 0 {
+                    // Create some "dust"
+                    self.renderer.draw_array(
+                        &size_info,
+                        &opengl_data,
+                        Rgb { r: 25, g: 88, b: 167 },
+                        0.9f32,
+                        renderer::DrawArrayMode::GlPoints,
+                    );
+                } else {
+                    outer_hexagon_limit -= 12;
+                }
             }
         } else {
             debug!("Charts are not enabled");
