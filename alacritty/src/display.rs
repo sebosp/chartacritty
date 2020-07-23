@@ -652,10 +652,11 @@ impl Display {
         if decorations_enabled {
             // Create a "wind" effect of a moving curtain by making it very transparent as it
             // reaches 1000
-            let curr_seconds = std::time::SystemTime::now()
+            let curr_second_cycle = (std::time::SystemTime::now()
                 .duration_since(std::time::SystemTime::UNIX_EPOCH)
                 .unwrap()
-                .as_secs() as f32;
+                .as_secs()
+                % 15u64) as f32;
 
             // |-------------------------------|---------------------------------|
             // 0.0 u                         0.25 u                             0.5
@@ -664,17 +665,32 @@ impl Display {
 
             // Draw chunks of 12, since it's 2 points (x,y) per coordinate
             let mut outer_hexagon_limit = self.hexagon_grid_decoration.len() / 2;
+            let max_hexagon_opacity = 0.4f32;
+            let quarter_screen = 0.5f32;
+            let x_move_in_time = ((curr_second_cycle % 15f32) * quarter_screen) / 15f32;
             for opengl_data in self.hexagon_grid_decoration.chunks(12) {
                 // Mid-left is the 6th in the array
-                let curr_opacity = (0.25f32
-                    - ((opengl_data[6] + ((0.25 * curr_seconds) / 15f32)) % 0.25f32))
-                    / 0.25f32;
-                debug!("draw: Decorations hexagon grid: {:?}", opengl_data);
+                let curr_opacity = (((opengl_data[6] + x_move_in_time) % quarter_screen)
+                    / quarter_screen)
+                    * max_hexagon_opacity;
+                if outer_hexagon_limit == self.hexagon_grid_decoration.len() / 2 {
+                    info!(
+                        "draw: secs: {} opengl_data[6]: {}, opacity: {},  now: {:?}, duration_since: {:?}, as_secs: {:?}, as f32: {:?}",
+                        curr_second_cycle,
+                        opengl_data[6],
+                        curr_opacity,
+                        std::time::SystemTime::now(),
+                        std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH),
+                        std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH).unwrap().as_secs(),
+                        (std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH).unwrap().as_secs() % 15u64) as f32,
+
+                    );
+                }
                 self.renderer.draw_array(
                     &size_info,
                     &opengl_data,
                     Rgb { r: 25, g: 88, b: 167 },
-                    curr_opacity,
+                    curr_opacity.abs(),
                     renderer::DrawArrayMode::GlLineLoop,
                 );
                 if outer_hexagon_limit > 0 {
