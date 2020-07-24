@@ -652,11 +652,13 @@ impl Display {
         if decorations_enabled {
             // Create a "wind" effect of a moving curtain by making it very transparent as it
             // reaches 1000
+            //
+            let seconds_cycle = 15f32;
             let curr_second_cycle = (std::time::SystemTime::now()
                 .duration_since(std::time::SystemTime::UNIX_EPOCH)
                 .unwrap()
                 .as_secs()
-                % 15u64) as f32;
+                % (seconds_cycle as u64)) as f32;
 
             // |-------------------------------|---------------------------------|
             // 0.0 u                         0.25 u                             0.5
@@ -665,13 +667,13 @@ impl Display {
 
             // Draw chunks of 12, since it's 2 points (x,y) per coordinate
             let mut outer_hexagon_limit = self.hexagon_grid_decoration.len() / 2;
-            let max_hexagon_opacity = 0.4f32;
-            let quarter_screen = 0.5f32;
-            let x_move_in_time = ((curr_second_cycle % 15f32) * quarter_screen) / 15f32;
+            let max_hexagon_opacity = 0.25f32;
+            let wind_screen_size = 0.5f32;
+            let x_move_in_time = (curr_second_cycle * wind_screen_size) / seconds_cycle;
             for opengl_data in self.hexagon_grid_decoration.chunks(12) {
                 // Mid-left is the 6th in the array
-                let curr_opacity = (((opengl_data[6] + x_move_in_time) % quarter_screen)
-                    / quarter_screen)
+                let curr_opacity = (((opengl_data[6] + x_move_in_time) % wind_screen_size)
+                    / wind_screen_size)
                     * max_hexagon_opacity;
                 if outer_hexagon_limit == self.hexagon_grid_decoration.len() / 2 {
                     info!(
@@ -682,7 +684,7 @@ impl Display {
                         std::time::SystemTime::now(),
                         std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH),
                         std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH).unwrap().as_secs(),
-                        (std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH).unwrap().as_secs() % 15u64) as f32,
+                        (std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH).unwrap().as_secs() % (seconds_cycle as u64)) as f32,
 
                     );
                 }
