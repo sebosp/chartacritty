@@ -36,6 +36,8 @@ static RECT_SHADER_F_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../res/r
 static RECT_SHADER_V_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../res/rect.v.glsl");
 static CHRT_SHADER_F_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../res/rect.f.glsl");
 static CHRT_SHADER_V_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../res/rect.v.glsl");
+static HXBG_SHADER_F_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../res/hex_bg.f.glsl");
+static HXBG_SHADER_V_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../res/hex_bg.v.glsl");
 
 // Shader source which is used when live-shader-reload feature is disable.
 static TEXT_SHADER_F: &str =
@@ -50,6 +52,10 @@ static CHRT_SHADER_F: &str =
     include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../res/rect.f.glsl"));
 static CHRT_SHADER_V: &str =
     include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../res/rect.v.glsl"));
+static HXBG_SHADER_F: &str =
+    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../res/hex_bg.f.glsl"));
+static HXBG_SHADER_V: &str =
+    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../res/hex_bg.v.glsl"));
 
 /// `LoadGlyph` allows for copying a rasterized glyph into graphics memory.
 pub trait LoadGlyph {
@@ -84,7 +90,7 @@ impl Display for Error {
         match self {
             Error::ShaderCreation(err) => {
                 write!(f, "There was an error initializing the shaders: {}", err)
-            },
+            }
         }
     }
 }
@@ -126,7 +132,7 @@ pub struct RectShaderProgram {
     u_color: GLint,
 }
 
-/// Activity Line program
+/// Charts Shader Program
 ///
 /// Uniforms are prefixed with "u"
 #[derive(Debug)]
@@ -135,6 +141,17 @@ pub struct ChartsShaderProgram {
     id: GLuint,
     /// Line color
     u_color: GLint,
+}
+
+/// Hexagon Background Shader Program
+///
+/// Uniforms are prefixed with "u"
+#[derive(Debug)]
+pub struct HexagonShaderProgram {
+    // Program id,
+    id: GLuint,
+    /// The time uniform to be used to change opacity of different regions
+    u_epoch_millis: GLint,
 }
 
 #[derive(Copy, Debug, Clone)]
@@ -431,6 +448,7 @@ pub struct QuadRenderer {
     program: TextShaderProgram,
     rect_program: RectShaderProgram,
     charts_program: ChartsShaderProgram,
+    hex_bg_program: HexagonShaderProgram,
     vao: GLuint,
     ebo: GLuint,
     vbo_instance: GLuint,
@@ -557,6 +575,7 @@ impl QuadRenderer {
         let program = TextShaderProgram::new()?;
         let rect_program = RectShaderProgram::new()?;
         let charts_program = ChartsShaderProgram::new()?;
+        let hex_bg_program = HexagonShaderProgram::new()?;
 
         let mut vao: GLuint = 0;
         let mut ebo: GLuint = 0;
@@ -714,8 +733,8 @@ impl QuadRenderer {
                         | DebouncedEvent::Write(_)
                         | DebouncedEvent::Chmod(_) => {
                             msg_tx.send(Msg::ShaderReload).expect("msg send ok");
-                        },
-                        _ => {},
+                        }
+                        _ => {}
                     }
                 }
             });
@@ -725,6 +744,7 @@ impl QuadRenderer {
             program,
             rect_program,
             charts_program,
+            hex_bg_program,
             vao,
             ebo,
             vbo_instance,
@@ -797,7 +817,75 @@ impl QuadRenderer {
         }
     }
 
-    /// `draw_array` draws an 2D opengl line
+    /// `draw_hex_bg` draws the hexagon background decoration
+    pub fn draw_hex_bg(
+        &mut self,
+        props: &term::SizeInfo,
+        opengl_vecs: &[f32],
+        opengl_colors: &[f32],
+        alpha: f32,
+        mode: DrawArrayMode,
+    ) {
+        if opengl_vecs.len() < 4 {
+            return;
+        }
+        unsafe {
+            // Swap program
+            gl::UseProgram(self.hex_bg_program.id);
+
+            // Remove padding from viewport
+            gl::Viewport(0, 0, props.width as i32, props.height as i32);
+
+            // Change blending strategy
+            gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+
+            // Setup data and buffers
+            gl::BindVertexArray(self.rect_vao);
+            gl::BindBuffer(gl::ARRAY_BUFFER, self.rect_vbo);
+
+            // Position
+            gl::VertexAttribPointer(
+                0,
+                2,
+                gl::FLOAT,
+                gl::FALSE,
+                (size_of::<f32>() * 2) as _,
+                ptr::null(),
+            );
+            gl::EnableVertexAttribArray(0);
+
+            // Load vertex data into array buffer
+            gl::BufferData(
+                gl::ARRAY_BUFFER,
+                (size_of::<f32>() * opengl_vecs.len()) as _,
+                opengl_vecs.as_ptr() as *const _,
+                gl::STATIC_DRAW,
+            );
+        }
+        // Deactivate rectangle program again
+        unsafe {
+            // Draw the incoming array, 2 points per vertex
+            gl::DrawArrays(gl::TRIANGLE_FAN, 0, (opengl_vecs.len() / 2usize) as i32);
+
+            // Reset blending strategy
+            gl::BlendFunc(gl::SRC1_COLOR, gl::ONE_MINUS_SRC1_COLOR);
+
+            // Reset data and buffers
+            gl::BindBuffer(gl::ARRAY_BUFFER, 0);
+            gl::BindVertexArray(0);
+
+            let padding_x = props.padding_x as i32;
+            let padding_y = props.padding_y as i32;
+            let width = props.width as i32;
+            let height = props.height as i32;
+            gl::Viewport(padding_x, padding_y, width - 2 * padding_x, height - 2 * padding_y);
+
+            // Disable program
+            gl::UseProgram(0);
+        }
+    }
+
+    /// `draw_array` draws a vec made of 2D values in a specific mode
     pub fn draw_array(
         &mut self,
         props: &term::SizeInfo,
@@ -814,7 +902,7 @@ impl QuadRenderer {
                 if opengl_vecs.len() < 4 {
                     return;
                 }
-            },
+            }
         };
         // Translate our enum to opengl enum, maybe this can be ommitted?
         // Maybe we can extend the enum with custom classes that end up being like this.
@@ -965,11 +1053,11 @@ impl QuadRenderer {
 
                 info!("... successfully reloaded shaders");
                 (program, rect_program)
-            },
+            }
             (Err(err), _) | (_, Err(err)) => {
                 error!("{}", err);
                 return;
-            },
+            }
         };
 
         self.active_tex = 0;
@@ -1160,7 +1248,7 @@ impl<'a, C> RenderApi<'a, C> {
                 });
                 self.add_render_item(cell, glyph);
                 return;
-            },
+            }
             RenderableCellContent::Chars(chars) => chars,
         };
 
@@ -1229,7 +1317,7 @@ fn load_glyph(
                 atlas.push(new);
             }
             load_glyph(active_tex, atlas, current_atlas, rasterized)
-        },
+        }
         Err(AtlasInsertError::GlyphTooLarge) => Glyph {
             tex_id: atlas[*current_atlas].id,
             colored: false,
@@ -1478,6 +1566,48 @@ impl Drop for ChartsShaderProgram {
         }
     }
 }
+impl HexagonShaderProgram {
+    pub fn new() -> Result<Self, ShaderCreationError> {
+        let (vertex_src, fragment_src) = if cfg!(feature = "live-shader-reload") {
+            (None, None)
+        } else {
+            (Some(HXBG_SHADER_V), Some(HXBG_SHADER_F))
+        };
+        let vertex_shader = create_shader(HXBG_SHADER_V_PATH, gl::VERTEX_SHADER, vertex_src)?;
+        let fragment_shader = create_shader(HXBG_SHADER_F_PATH, gl::FRAGMENT_SHADER, fragment_src)?;
+        let program = create_program(vertex_shader, fragment_shader)?;
+
+        unsafe {
+            gl::DeleteShader(fragment_shader);
+            gl::DeleteShader(vertex_shader);
+            gl::UseProgram(program);
+        }
+
+        // get uniform locations
+        let u_epoch_millis =
+            unsafe { gl::GetUniformLocation(program, b"epoch_millis\0".as_ptr() as *const _) };
+
+        let shader = HexagonShaderProgram { id: program, u_epoch_millis };
+
+        unsafe { gl::UseProgram(0) }
+
+        Ok(shader)
+    }
+
+    fn set_epoch_millis(&self, epoch_millis: f32) {
+        unsafe {
+            gl::Uniform1f(self.u_epoch_millis, epoch_millis);
+        }
+    }
+}
+
+impl Drop for HexagonShaderProgram {
+    fn drop(&mut self) {
+        unsafe {
+            gl::DeleteProgram(self.id);
+        }
+    }
+}
 
 fn create_program(vertex: GLuint, fragment: GLuint) -> Result<GLuint, ShaderCreationError> {
     unsafe {
@@ -1612,7 +1742,7 @@ impl Display for ShaderCreationError {
             ShaderCreationError::Io(err) => write!(f, "Couldn't read shader: {}", err),
             ShaderCreationError::Compile(path, log) => {
                 write!(f, "Failed compiling shader at {}: {}", path.display(), log)
-            },
+            }
             ShaderCreationError::Link(log) => write!(f, "Failed linking shader: {}", log),
         }
     }
@@ -1759,11 +1889,11 @@ impl Atlas {
                 BitmapBuffer::RGB(buf) => {
                     colored = false;
                     (gl::RGB, buf)
-                },
+                }
                 BitmapBuffer::RGBA(buf) => {
                     colored = true;
                     (gl::RGBA, buf)
-                },
+                }
             };
 
             gl::TexSubImage2D(
