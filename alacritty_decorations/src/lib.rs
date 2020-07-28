@@ -28,6 +28,28 @@ impl HexagonGridBackground {
         }
     }
 
+    pub fn create_hexagon_fan(
+        &self,
+        x: f32,
+        y: f32,
+        radius: f32,
+        x_60_degrees_offset: f32,
+        y_60_degrees_offset: f32,
+    ) -> Vec<f32> {
+        let mut res = vec![
+            // Center, to be used for triangle fan
+            self.size_info.scale_x(x),
+            self.size_info.scale_y(self.size_info.term_size.height as f64, y as f64),
+        ];
+        res.append(&mut self.create_hexagon(
+            x,
+            y,
+            radius,
+            x_60_degrees_offset,
+            y_60_degrees_offset,
+        ));
+        res
+    }
     pub fn create_hexagon(
         &self,
         x: f32,
@@ -93,7 +115,7 @@ impl Decoration for HexagonGridBackground {
             }
             while temp_y <= self.size_info.term_size.height {
                 // Inner hexagon:
-                inner_hexagons.append(&mut self.create_hexagon(
+                inner_hexagons.append(&mut self.create_hexagon_fan(
                     current_x_position,
                     temp_y,
                     adjusted_radius,
