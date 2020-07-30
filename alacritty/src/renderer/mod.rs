@@ -817,16 +817,10 @@ impl QuadRenderer {
         }
     }
 
-    /// `draw_hex_bg` draws the hexagon background decoration
-    pub fn draw_hex_bg(
-        &mut self,
-        props: &term::SizeInfo,
-        opengl_vecs: &[f32],
-        opengl_colors: &[f32],
-        alpha: f32,
-        mode: DrawArrayMode,
-    ) {
-        if opengl_vecs.len() < 4 {
+    /// `draw_hex_bg` draws one hexagon for the background
+    pub fn draw_hex_bg(&mut self, props: &term::SizeInfo, opengl_data: &[f32]) {
+        // SEB TODO: This is messy, the function needs to know  how the array was constructed.
+        if opengl_data.len() < 8 {
             return;
         }
         unsafe {
@@ -845,8 +839,8 @@ impl QuadRenderer {
 
             // Position
             gl::VertexAttribPointer(
-                0,
-                2,
+                0, // location=0 is the vertex position
+                2, // position has 2 values: X, Y
                 gl::FLOAT,
                 gl::FALSE,
                 (size_of::<f32>() * 2) as _,
@@ -854,18 +848,29 @@ impl QuadRenderer {
             );
             gl::EnableVertexAttribArray(0);
 
+            // Colors
+            gl::VertexAttribPointer(
+                1, // location=1 is the color
+                4, // Color has 4 items, R, G, B, A
+                gl::FLOAT,
+                gl::FALSE,
+                (size_of::<f32>() * 4) as _,
+                (size_of::<f32>() * 2 /* x, y */ * 7/* center position, plus hexagon vertices */)
+                    as _,
+            );
+            gl::EnableVertexAttribArray(1);
+
             // Load vertex data into array buffer
             gl::BufferData(
                 gl::ARRAY_BUFFER,
-                (size_of::<f32>() * opengl_vecs.len()) as _,
-                opengl_vecs.as_ptr() as *const _,
+                (size_of::<f32>() * opengl_data.len()) as _,
+                opengl_data.as_ptr() as *const _,
                 gl::STATIC_DRAW,
             );
-        }
-        // Deactivate rectangle program again
-        unsafe {
+
+            // Deactivate rectangle program again
             // Draw the incoming array, 2 points per vertex
-            gl::DrawArrays(gl::TRIANGLE_FAN, 0, (opengl_vecs.len() / 2usize) as i32);
+            gl::DrawArrays(gl::TRIANGLE_FAN, 0, (opengl_data.len() / 2usize) as i32);
 
             // Reset blending strategy
             gl::BlendFunc(gl::SRC1_COLOR, gl::ONE_MINUS_SRC1_COLOR);
