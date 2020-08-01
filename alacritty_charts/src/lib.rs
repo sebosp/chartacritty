@@ -439,9 +439,9 @@ impl TimeSeriesSource {
 #[derive(Default, Debug, Serialize, Deserialize, PartialEq, Clone, Copy)]
 pub struct Value2D {
     #[serde(default)]
-    x: f32,
+    pub x: f32,
     #[serde(default)]
-    y: f32,
+    pub y: f32,
 }
 
 /// `ChartSizeInfo` Contains the current chart size information plus the terminal size info
