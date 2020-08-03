@@ -1,6 +1,7 @@
 use alacritty_charts::ChartSizeInfo;
 use alacritty_charts::Value2D;
 use log::*;
+// TODO: Add an array to the renderer mode for new decorations
 pub trait Decoration {
     fn render(self) -> Vec<f32>;
     // fn load_vertex_shader(path: &str) -> bool {
@@ -11,7 +12,36 @@ pub trait Decoration {
     // }
 }
 
-// TODO: Add an array to the renderer mode for new decorations
+pub fn gen_hexagon_vertices(
+    size_info: ChartSizeInfo,
+    x: f32,
+    y: f32,
+    radius: f32,
+    x_60_degrees_offset: f32,
+    y_60_degrees_offset: f32,
+) -> Vec<f32> {
+    vec![
+        // Mid right:
+        size_info.scale_x(x + radius),
+        size_info.scale_y(size_info.term_size.height as f64, y as f64),
+        // Top right:
+        size_info.scale_x(x + x_60_degrees_offset),
+        size_info.scale_y(size_info.term_size.height as f64, (y + y_60_degrees_offset) as f64),
+        // Top left
+        size_info.scale_x(x - x_60_degrees_offset),
+        size_info.scale_y(size_info.term_size.height as f64, (y + y_60_degrees_offset) as f64),
+        // Mid left:
+        size_info.scale_x(x - radius),
+        size_info.scale_y(size_info.term_size.height as f64, y as f64),
+        // Bottom left
+        size_info.scale_x(x - x_60_degrees_offset),
+        size_info.scale_y(size_info.term_size.height as f64, (y - y_60_degrees_offset) as f64),
+        // Bottom Right
+        size_info.scale_x(x + x_60_degrees_offset),
+        size_info.scale_y(size_info.term_size.height as f64, (y - y_60_degrees_offset) as f64),
+    ]
+}
+
 pub struct HexagonLineBackground {
     // shader_vertex_path: String,
     // shader_fragment_path: String,
@@ -19,16 +49,22 @@ pub struct HexagonLineBackground {
     radius: f32,
 }
 
-impl HexagonLineBackground {
+pub struct HexagonFanBackground {
+    // shader_vertex_path: String,
+    // shader_fragment_path: String,
+    size_info: ChartSizeInfo,
+    radius: f32,
+}
+
+impl HexagonFanBackground {
     pub fn new(size_info: ChartSizeInfo, radius: f32) -> Self {
-        HexagonLineBackground {
+        HexagonFanBackground {
             // shader_fragment_path: String::from("Unimplemented"),
             // shader_vertex_path: String::from("Unimplemented"),
             size_info,
             radius,
         }
     }
-
     pub fn create_hexagon_fan(
         &self,
         x: f32,
@@ -42,7 +78,8 @@ impl HexagonLineBackground {
             self.size_info.scale_x(x),
             self.size_info.scale_y(self.size_info.term_size.height as f64, y as f64),
         ];
-        res.append(&mut self.create_hexagon(
+        res.append(&mut gen_hexagon_vertices(
+            self.size_info,
             x,
             y,
             radius,
@@ -51,38 +88,15 @@ impl HexagonLineBackground {
         ));
         res
     }
-    pub fn create_hexagon(
-        &self,
-        x: f32,
-        y: f32,
-        radius: f32,
-        x_60_degrees_offset: f32,
-        y_60_degrees_offset: f32,
-    ) -> Vec<f32> {
-        vec![
-            // Mid right:
-            self.size_info.scale_x(x + radius),
-            self.size_info.scale_y(self.size_info.term_size.height as f64, y as f64),
-            // Top right:
-            self.size_info.scale_x(x + x_60_degrees_offset),
-            self.size_info
-                .scale_y(self.size_info.term_size.height as f64, (y + y_60_degrees_offset) as f64),
-            // Top left
-            self.size_info.scale_x(x - x_60_degrees_offset),
-            self.size_info
-                .scale_y(self.size_info.term_size.height as f64, (y + y_60_degrees_offset) as f64),
-            // Mid left:
-            self.size_info.scale_x(x - radius),
-            self.size_info.scale_y(self.size_info.term_size.height as f64, y as f64),
-            // Bottom left
-            self.size_info.scale_x(x - x_60_degrees_offset),
-            self.size_info
-                .scale_y(self.size_info.term_size.height as f64, (y - y_60_degrees_offset) as f64),
-            // Bottom Right
-            self.size_info.scale_x(x + x_60_degrees_offset),
-            self.size_info
-                .scale_y(self.size_info.term_size.height as f64, (y - y_60_degrees_offset) as f64),
-        ]
+}
+impl HexagonLineBackground {
+    pub fn new(size_info: ChartSizeInfo, radius: f32) -> Self {
+        HexagonLineBackground {
+            // shader_fragment_path: String::from("Unimplemented"),
+            // shader_vertex_path: String::from("Unimplemented"),
+            size_info,
+            radius,
+        }
     }
 }
 
@@ -120,10 +134,28 @@ fn background_fill_hexagon_positions(size: ChartSizeInfo, radius: f32) -> (Value
     (Value2D { x: x_offset, y: y_offset }, res)
 }
 
+impl Decoration for HexagonFanBackground {
+    fn render(self) -> Vec<f32> {
+        let mut hexagons: Vec<f32> = vec![];
+        let inner_hexagon_radius_percent = 0.92f32;
+        let adjusted_radius = self.radius * inner_hexagon_radius_percent;
+        let (offsets, coords) = background_fill_hexagon_positions(self.size_info, self.radius);
+        for coord in coords {
+            hexagons.append(&mut gen_hexagon_vertices(
+                self.size_info,
+                coord.x,
+                coord.y,
+                self.radius,
+                offsets.x,
+                offsets.y,
+            ));
+        }
+        hexagons
+    }
+}
 impl Decoration for HexagonLineBackground {
     fn render(self) -> Vec<f32> {
-        let mut outer_hexagons: Vec<f32> = vec![];
-        let mut inner_hexagons: Vec<f32> = vec![];
+        let mut hexagons: Vec<f32> = vec![];
         // Let's create an adjusted version of the values that is slightly less than the actual
         // position
         let inner_hexagon_radius_percent = 0.92f32;
@@ -131,29 +163,21 @@ impl Decoration for HexagonLineBackground {
         let (offsets, coords) = background_fill_hexagon_positions(self.size_info, self.radius);
         for coord in coords {
             // Inner hexagon:
-            inner_hexagons.append(&mut self.create_hexagon_fan(
+            hexagons.append(&mut gen_hexagon_vertices(
+                self.size_info,
                 coord.x,
                 coord.y,
                 adjusted_radius,
-                coord.x * inner_hexagon_radius_percent,
-                coord.x * inner_hexagon_radius_percent,
-            ));
-            // Outer radius
-            outer_hexagons.append(&mut self.create_hexagon(
-                coord.x,
-                coord.y,
-                self.radius,
-                x_offset,
-                y_offset,
+                offsets.x * inner_hexagon_radius_percent,
+                offsets.y * inner_hexagon_radius_percent,
             ));
         }
-        outer_hexagons.append(&mut inner_hexagons);
         // What is returned:
         // First, the outer(bigger hexagons whos vertices touch the other outer hexagons
         // Then the inner hexagons that are slightly less and:
         // TODO: should in the future become triangle strips and the closer they get to the center
         // the darker.
-        outer_hexagons
+        hexagons
     }
 }
 
