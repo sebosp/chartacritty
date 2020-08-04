@@ -33,14 +33,12 @@ pub use hyper_tls;
 pub use percent_encoding;
 pub use tokio;
 
+use alacritty_common::Rgb;
 use alacritty_common::SizeInfo;
 use decorations::*;
 use log::*;
-use serde::de::Visitor;
-use serde::{Deserialize, Deserializer};
+use serde::Deserialize;
 use std::cmp::Ordering;
-use std::fmt;
-use std::str::FromStr;
 use std::time::UNIX_EPOCH;
 use tracing::{event, span, Level};
 
@@ -217,108 +215,6 @@ pub struct IterTimeSeries<'a> {
     current_item: usize,
 }
 
-/// `Rgb` is a copy of alacritty_terminal/src/term/color.rs
-/// Because we also need to deserialize from yaml
-#[derive(Debug, Eq, PartialEq, Copy, Clone, Default, Serialize)]
-pub struct Rgb {
-    pub r: u8,
-    pub g: u8,
-    pub b: u8,
-}
-
-/// Transform from a hex string, copy from alacritty_terminal/src/term/colors.rs
-impl FromStr for Rgb {
-    type Err = ();
-
-    fn from_str(s: &str) -> ::std::result::Result<Rgb, ()> {
-        let mut chars = s.chars();
-        let mut rgb = Rgb::default();
-
-        macro_rules! component {
-            ($($c:ident),*) => {
-                $(
-                    match chars.next().and_then(|c| c.to_digit(16)) {
-                        Some(val) => rgb.$c = (val as u8) << 4,
-                        None => return Err(())
-                    }
-
-                    match chars.next().and_then(|c| c.to_digit(16)) {
-                        Some(val) => rgb.$c |= val as u8,
-                        None => return Err(())
-                    }
-                )*
-            }
-        }
-
-        match chars.next() {
-            Some('0') => {
-                if chars.next() != Some('x') {
-                    return Err(());
-                }
-            }
-            Some('#') => (),
-            _ => return Err(()),
-        }
-
-        component!(r, g, b);
-
-        Ok(rgb)
-    }
-}
-
-/// Deserialize an Rgb from a hex string, copy from alacritty_terminal/src/term/colors.rs
-impl<'de> Deserialize<'de> for Rgb {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        struct RgbVisitor;
-
-        // Used for deserializing reftests
-        #[derive(Deserialize)]
-        struct RgbDerivedDeser {
-            r: u8,
-            g: u8,
-            b: u8,
-        }
-
-        impl<'a> Visitor<'a> for RgbVisitor {
-            type Value = Rgb;
-
-            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.write_str("hex color like 0xff00ff")
-            }
-
-            fn visit_str<E>(self, value: &str) -> ::std::result::Result<Rgb, E>
-            where
-                E: ::serde::de::Error,
-            {
-                Rgb::from_str(&value[..])
-                    .map_err(|_| E::custom("failed to parse rgb; expected hex color like 0xff00ff"))
-            }
-        }
-
-        // Return an error if the syntax is incorrect
-        let value = serde_yaml::Value::deserialize(deserializer)?;
-
-        // Attempt to deserialize from struct form
-        if let Ok(RgbDerivedDeser { r, g, b }) = RgbDerivedDeser::deserialize(value.clone()) {
-            return Ok(Rgb { r, g, b });
-        }
-
-        // Deserialize from hex notation (either 0xff00ff or #ff00ff)
-        match value.deserialize_str(RgbVisitor) {
-            Ok(rgb) => Ok(rgb),
-            Err(err) => {
-                error!(
-                    "Rgb::deserialize: Problem with config: {}; using color #000000",
-                    err
-                );
-                Ok(Rgb::default())
-            }
-        }
-    }
-}
 /// `ManualTimeSeries` is a basic time series that we feed ourselves, used for internal counters
 /// for example keyboard input, output newlines, loaded items count.
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -453,26 +349,18 @@ pub struct ChartSizeInfo {
 }
 
 impl ChartSizeInfo {
-    /// `scale_x` Scales the value from the current display boundary to
-    /// a cartesian plane from [-1.0, 1.0], where -1.0 is 0px (left-most) and
+    /// `scale_x` Calls the SizeInfo scale_x method, the input value is already a f32 pixel
     /// 1.0 is the `display_width` parameter (right-most), i.e. 1024px.
     pub fn scale_x(&self, input_value: f32) -> f32 {
-        let center_x = self.term_size.width / 2.;
-        let x = self.term_size.padding_x + input_value;
-        (x - center_x) / center_x
+        self.term_size.scale_x(input_value)
     }
 
-    /// `scale_y_to_size` Scales the value from the current display boundary to
-    /// a cartesian plane from [-1.0, 1.0], where 1.0 is 0px (top) and -1.0 is
-    /// the `display_height` parameter (bottom), i.e. 768px.
+    /// `scale_x` Scales an input value considering a max_value that must be set to the height of a
+    /// chart
     pub fn scale_y(&self, max_value: f64, input_value: f64) -> f32 {
-        let center_y = self.term_size.height / 2.;
-        // From the bottom of the chart, what is the position of the input_value:
-        // max_value    = input_value
-        // chart_height   x
-        let y_metric_value = (input_value as f32 * self.chart_height) / max_value as f32;
-        let y = self.term_size.height - 2. * self.term_size.padding_y - y_metric_value;
-        -(y - center_y) / center_y
+        // Scale the metric value so that the max_value is the chart height
+        let scaled_metric_value = (input_value as f32 * self.chart_height) / max_value as f32;
+        self.term_size.scale_y(scaled_metric_value)
     }
 }
 
