@@ -1,5 +1,6 @@
 use alacritty_charts::ChartSizeInfo;
 use alacritty_charts::Value2D;
+use alacritty_common::Rgb;
 use log::*;
 // TODO: Add an array to the renderer mode for new decorations
 pub trait Decoration {
@@ -10,6 +11,32 @@ pub trait Decoration {
     // fn load_fragment_shader(path: &str) -> bool{
     // include_str!(path)
     // }
+}
+
+/// DecorationLines represents a line of x,y points.
+pub struct DecorationLines {
+    color: Rgb,
+    vecs: Vec<f32>,
+}
+
+/// DecorationPoints represents a line of x,y points.
+pub struct DecorationPoints {
+    color: Rgb,
+    vecs: Vec<f32>,
+}
+
+/// DecorationFans represents OpenGL Triangle Fan of x,y points.
+pub struct DecorationFans {
+    center_color: Rgb,
+    color: Rgb,
+    vecs: Vec<f32>,
+}
+
+/// DecorationGLPrimitives Allows grouping of
+pub enum DecorationTypes {
+    Lines(DecorationLines),
+    Fans(DecorationFans), // Number of triangles per turn
+    Points(DecorationPoints),
 }
 
 pub fn gen_hexagon_vertices(
@@ -138,7 +165,6 @@ impl Decoration for HexagonFanBackground {
     fn render(self) -> Vec<f32> {
         let mut hexagons: Vec<f32> = vec![];
         let inner_hexagon_radius_percent = 0.92f32;
-        let adjusted_radius = self.radius * inner_hexagon_radius_percent;
         let (offsets, coords) = background_fill_hexagon_positions(self.size_info, self.radius);
         for coord in coords {
             hexagons.append(&mut gen_hexagon_vertices(
