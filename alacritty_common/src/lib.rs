@@ -6,6 +6,7 @@ pub mod index;
 pub mod renderer;
 
 pub use crate::index::*;
+use log::error;
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::cmp::min;
