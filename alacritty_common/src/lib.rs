@@ -6,14 +6,14 @@ pub mod index;
 pub mod renderer;
 
 pub use crate::index::*;
-use log::error;
+use log::{error, trace};
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::cmp::min;
 use std::fmt;
+use std::ops::Mul;
 use std::str::FromStr;
 
-// TODO: SEB: width and height should be screen_width and screen_size
 /// Terminal size info.
 #[derive(Default, Serialize, Deserialize, Debug, Copy, Clone, PartialEq)]
 pub struct SizeInfo {
@@ -101,56 +101,34 @@ impl SizeInfo {
     }
 }
 
-/// `Rgb` is a copy of alacritty_terminal/src/term/color.rs
 #[derive(Debug, Eq, PartialEq, Copy, Clone, Default, Serialize)]
 pub struct Rgb {
-    // TODO: Move to alacalacritty_common
     pub r: u8,
     pub g: u8,
     pub b: u8,
 }
 
-/// Transform from a hex string, copy from alacritty_terminal/src/term/colors.rs
-impl FromStr for Rgb {
-    type Err = ();
+// A multiply function for Rgb, as the default dim is just *2/3.
+impl Mul<f32> for Rgb {
+    type Output = Rgb;
 
-    fn from_str(s: &str) -> ::std::result::Result<Rgb, ()> {
-        let mut chars = s.chars();
-        let mut rgb = Rgb::default();
+    fn mul(self, rhs: f32) -> Rgb {
+        let result = Rgb {
+            r: (f32::from(self.r) * rhs).max(0.0).min(255.0) as u8,
+            g: (f32::from(self.g) * rhs).max(0.0).min(255.0) as u8,
+            b: (f32::from(self.b) * rhs).max(0.0).min(255.0) as u8,
+        };
 
-        macro_rules! component {
-            ($($c:ident),*) => {
-                $(
-                    match chars.next().and_then(|c| c.to_digit(16)) {
-                        Some(val) => rgb.$c = (val as u8) << 4,
-                        None => return Err(())
-                    }
+        trace!("Scaling RGB by {} from {:?} to {:?}", rhs, self, result);
 
-                    match chars.next().and_then(|c| c.to_digit(16)) {
-                        Some(val) => rgb.$c |= val as u8,
-                        None => return Err(())
-                    }
-                )*
-            }
-        }
-
-        match chars.next() {
-            Some('0') => {
-                if chars.next() != Some('x') {
-                    return Err(());
-                }
-            }
-            Some('#') => (),
-            _ => return Err(()),
-        }
-
-        component!(r, g, b);
-
-        Ok(rgb)
+        result
     }
 }
 
-/// Deserialize an Rgb from a hex string, copy from alacritty_terminal/src/term/colors.rs
+/// Deserialize an Rgb from a hex string.
+///
+/// This is *not* the deserialize impl for Rgb since we want a symmetric
+/// serialize/deserialize impl for ref tests.
 impl<'de> Deserialize<'de> for Rgb {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -158,7 +136,7 @@ impl<'de> Deserialize<'de> for Rgb {
     {
         struct RgbVisitor;
 
-        // Used for deserializing reftests
+        // Used for deserializing reftests.
         #[derive(Deserialize)]
         struct RgbDerivedDeser {
             r: u8,
@@ -170,33 +148,63 @@ impl<'de> Deserialize<'de> for Rgb {
             type Value = Rgb;
 
             fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.write_str("hex color like 0xff00ff")
+                f.write_str("hex color like #ff00ff")
             }
 
             fn visit_str<E>(self, value: &str) -> ::std::result::Result<Rgb, E>
             where
-                E: ::serde::de::Error,
+                E: serde::de::Error,
             {
-                Rgb::from_str(&value[..])
-                    .map_err(|_| E::custom("failed to parse rgb; expected hex color like 0xff00ff"))
+                Rgb::from_str(&value[..]).map_err(|_| {
+                    E::custom(format!(
+                        "failed to parse rgb color {}; expected hex color like #ff00ff",
+                        value
+                    ))
+                })
             }
         }
 
-        // Return an error if the syntax is incorrect
+        // Return an error if the syntax is incorrect.
         let value = serde_yaml::Value::deserialize(deserializer)?;
 
-        // Attempt to deserialize from struct form
+        // Attempt to deserialize from struct form.
         if let Ok(RgbDerivedDeser { r, g, b }) = RgbDerivedDeser::deserialize(value.clone()) {
             return Ok(Rgb { r, g, b });
         }
 
-        // Deserialize from hex notation (either 0xff00ff or #ff00ff)
+        // Deserialize from hex notation (either 0xff00ff or #ff00ff).
         match value.deserialize_str(RgbVisitor) {
             Ok(rgb) => Ok(rgb),
             Err(err) => {
-                error!("Rgb::deserialize: Problem with config: {}; using color #000000", err);
+                error!("Problem with config: {}; using color #000000", err);
                 Ok(Rgb::default())
             }
+        }
+    }
+}
+
+impl FromStr for Rgb {
+    type Err = ();
+
+    fn from_str(s: &str) -> std::result::Result<Rgb, ()> {
+        let chars = if s.starts_with("0x") && s.len() == 8 {
+            &s[2..]
+        } else if s.starts_with('#') && s.len() == 7 {
+            &s[1..]
+        } else {
+            return Err(());
+        };
+
+        match u32::from_str_radix(chars, 16) {
+            Ok(mut color) => {
+                let b = (color & 0xff) as u8;
+                color >>= 8;
+                let g = (color & 0xff) as u8;
+                color >>= 8;
+                let r = color as u8;
+                Ok(Rgb { r, g, b })
+            }
+            Err(_) => Err(()),
         }
     }
 }
