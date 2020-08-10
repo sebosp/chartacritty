@@ -1,6 +1,6 @@
-use alacritty_charts::ChartSizeInfo;
 use alacritty_charts::Value2D;
 use alacritty_common::Rgb;
+use alacritty_common::SizeInfo;
 use log::*;
 // TODO: Add an array to the renderer mode for new decorations
 pub trait Decoration {
@@ -14,22 +14,19 @@ pub trait Decoration {
 }
 
 /// DecorationLines represents a line of x,y points.
-pub struct DecorationLines {
-    color: Rgb,
-    vecs: Vec<f32>,
+pub enum DecorationLines {
+    Hexagon(HexagonLineBackground),
 }
 
 /// DecorationPoints represents a line of x,y points.
-pub struct DecorationPoints {
-    color: Rgb,
-    vecs: Vec<f32>,
+pub enum DecorationPoints {
+    Hexagon(HexagonPointBackground),
 }
 
 /// DecorationFans represents OpenGL Triangle Fan of x,y points.
-pub struct DecorationFans {
-    center_color: Rgb,
-    color: Rgb,
-    vecs: Vec<f32>,
+/// The usize represents the number of coordinates that make up one fan
+pub enum DecorationFans {
+    Hexagon((HexagonFanBackground, usize)),
 }
 
 /// DecorationGLPrimitives Allows grouping of
@@ -39,8 +36,43 @@ pub enum DecorationTypes {
     Points(DecorationPoints),
 }
 
+pub fn create_hexagon_line(
+    color: Rgb,
+    alpha: f32,
+    size_info: SizeInfo,
+    radius: f32,
+) -> DecorationTypes {
+    DecorationTypes::Lines(DecorationLines::Hexagon(HexagonLineBackground::new(
+        color, alpha, size_info, radius,
+    )))
+}
+
+pub fn create_hexagon_fan(
+    vertex_color: Rgb,
+    center_color: Rgb,
+    alpha: f32,
+    size_info: SizeInfo,
+    radius: f32,
+) -> DecorationTypes {
+    let num_vertices: usize = 7usize * 2usize; // 6 vertices plus the center for the hexagon fan.
+    DecorationTypes::Fans(DecorationFans::Hexagon((
+        HexagonFanBackground::new(vertex_color, center_color, alpha, size_info, radius),
+        num_vertices,
+    )))
+}
+
+pub fn create_hexagon_points(
+    color: Rgb,
+    alpha: f32,
+    size_info: SizeInfo,
+    radius: f32,
+) -> DecorationTypes {
+    DecorationTypes::Points(DecorationPoints::Hexagon(HexagonPointBackground::new(
+        color, alpha, size_info, radius,
+    )))
+}
 pub fn gen_hexagon_vertices(
-    size_info: ChartSizeInfo,
+    size_info: SizeInfo,
     x: f32,
     y: f32,
     radius: f32,
@@ -50,49 +82,75 @@ pub fn gen_hexagon_vertices(
     vec![
         // Mid right:
         size_info.scale_x(x + radius),
-        size_info.scale_y(size_info.term_size.height as f64, y as f64),
+        size_info.scale_y(y),
         // Top right:
         size_info.scale_x(x + x_60_degrees_offset),
-        size_info.scale_y(size_info.term_size.height as f64, (y + y_60_degrees_offset) as f64),
+        size_info.scale_y(y + y_60_degrees_offset),
         // Top left
         size_info.scale_x(x - x_60_degrees_offset),
-        size_info.scale_y(size_info.term_size.height as f64, (y + y_60_degrees_offset) as f64),
+        size_info.scale_y(y + y_60_degrees_offset),
         // Mid left:
         size_info.scale_x(x - radius),
-        size_info.scale_y(size_info.term_size.height as f64, y as f64),
+        size_info.scale_y(y),
         // Bottom left
         size_info.scale_x(x - x_60_degrees_offset),
-        size_info.scale_y(size_info.term_size.height as f64, (y - y_60_degrees_offset) as f64),
+        size_info.scale_y(y - y_60_degrees_offset),
         // Bottom Right
         size_info.scale_x(x + x_60_degrees_offset),
-        size_info.scale_y(size_info.term_size.height as f64, (y - y_60_degrees_offset) as f64),
+        size_info.scale_y(y - y_60_degrees_offset),
     ]
 }
 
+pub struct HexagonPointBackground {
+    // shader_vertex_path: String,
+    // shader_fragment_path: String,
+    pub color: Rgb,
+    pub alpha: f32,
+    size_info: SizeInfo,
+    radius: f32,
+    pub vecs: Vec<f32>,
+}
 pub struct HexagonLineBackground {
     // shader_vertex_path: String,
     // shader_fragment_path: String,
-    size_info: ChartSizeInfo,
+    pub color: Rgb,
+    pub alpha: f32,
+    size_info: SizeInfo,
     radius: f32,
+    pub vecs: Vec<f32>,
 }
 
 pub struct HexagonFanBackground {
     // shader_vertex_path: String,
     // shader_fragment_path: String,
-    size_info: ChartSizeInfo,
+    pub vertex_color: Rgb,
+    pub center_color: Rgb,
+    pub alpha: f32,
+    size_info: SizeInfo,
     radius: f32,
+    pub vecs: Vec<f32>,
 }
 
 impl HexagonFanBackground {
-    pub fn new(size_info: ChartSizeInfo, radius: f32) -> Self {
+    pub fn new(
+        vertex_color: Rgb,
+        center_color: Rgb,
+        alpha: f32,
+        size_info: SizeInfo,
+        radius: f32,
+    ) -> Self {
         HexagonFanBackground {
             // shader_fragment_path: String::from("Unimplemented"),
             // shader_vertex_path: String::from("Unimplemented"),
+            vertex_color,
+            center_color,
+            alpha,
             size_info,
             radius,
+            vecs: vec![],
         }
     }
-    pub fn create_hexagon_fan(
+    pub fn update(
         &self,
         x: f32,
         y: f32,
@@ -103,7 +161,7 @@ impl HexagonFanBackground {
         let mut res = vec![
             // Center, to be used for triangle fan
             self.size_info.scale_x(x),
-            self.size_info.scale_y(self.size_info.term_size.height as f64, y as f64),
+            self.size_info.scale_y(y),
         ];
         res.append(&mut gen_hexagon_vertices(
             self.size_info,
@@ -117,20 +175,57 @@ impl HexagonFanBackground {
     }
 }
 impl HexagonLineBackground {
-    pub fn new(size_info: ChartSizeInfo, radius: f32) -> Self {
+    pub fn new(color: Rgb, alpha: f32, size_info: SizeInfo, radius: f32) -> Self {
         HexagonLineBackground {
             // shader_fragment_path: String::from("Unimplemented"),
             // shader_vertex_path: String::from("Unimplemented"),
+            color,
+            alpha,
             size_info,
             radius,
+            vecs: vec![],
         }
+    }
+    pub fn update(
+        &self,
+        x: f32,
+        y: f32,
+        radius: f32,
+        x_60_degrees_offset: f32,
+        y_60_degrees_offset: f32,
+    ) -> Vec<f32> {
+        gen_hexagon_vertices(self.size_info, x, y, radius, x_60_degrees_offset, y_60_degrees_offset)
+    }
+}
+
+impl HexagonPointBackground {
+    pub fn new(color: Rgb, alpha: f32, size_info: SizeInfo, radius: f32) -> Self {
+        HexagonPointBackground {
+            // shader_fragment_path: String::from("Unimplemented"),
+            // shader_vertex_path: String::from("Unimplemented"),
+            color,
+            alpha,
+            size_info,
+            radius,
+            vecs: vec![],
+        }
+    }
+    pub fn update(
+        &self,
+        x: f32,
+        y: f32,
+        radius: f32,
+        x_60_degrees_offset: f32,
+        y_60_degrees_offset: f32,
+    ) -> Vec<f32> {
+        gen_hexagon_vertices(self.size_info, x, y, radius, x_60_degrees_offset, y_60_degrees_offset)
     }
 }
 
 /// Creates a vector with x,y coordinates in which new hexagons can be drawn
 /// The offsets (x,y) to the first 60 degrees point are alse returned as the hexagon is pretty
 /// symmetric, this should probably be changed...
-fn background_fill_hexagon_positions(size: ChartSizeInfo, radius: f32) -> (Value2D, Vec<Value2D>) {
+fn background_fill_hexagon_positions(size: SizeInfo, radius: f32) -> (Value2D, Vec<Value2D>) {
     // We only care for the 60 degrees X,Y, the rest we can calculate from this distance.
     // For the degrees at 0, X is the radius, and Y is 0.
     // let angle = 60.0f32; // Hexagon degrees
@@ -145,13 +240,13 @@ fn background_fill_hexagon_positions(size: ChartSizeInfo, radius: f32) -> (Value
     let mut current_x_position = 0f32;
     let mut half_offset = true; // When true, we will add half radius to Y to make sure the hexagons do not overlap
     let mut res = vec![];
-    while current_x_position <= size.term_size.width {
+    while current_x_position <= size.width {
         let current_y_position = 0f32;
         let mut temp_y = current_y_position;
         if half_offset {
             temp_y += y_offset;
         }
-        while temp_y <= size.term_size.height {
+        while temp_y <= size.height {
             res.push(Value2D { x: current_x_position, y: temp_y });
             temp_y += y_offset * 2f32;
         }
@@ -171,7 +266,7 @@ impl Decoration for HexagonFanBackground {
                 self.size_info,
                 coord.x,
                 coord.y,
-                self.radius,
+                self.radius * inner_hexagon_radius_percent,
                 offsets.x,
                 offsets.y,
             ));
