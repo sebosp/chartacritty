@@ -16,7 +16,7 @@ use glutin::event_loop::EventLoop;
 #[cfg(not(any(target_os = "macos", windows)))]
 use glutin::platform::unix::EventLoopWindowTargetExtUnix;
 use glutin::window::CursorIcon;
-use log::{debug, error, info, warn};
+use log::{debug, error, info};
 use parking_lot::MutexGuard;
 #[cfg(not(any(target_os = "macos", windows)))]
 use wayland_client::{Display as WaylandDisplay, EventQueue};
@@ -26,14 +26,14 @@ use font::set_font_smoothing;
 use font::{self, Rasterize};
 
 use alacritty_common::index::Line;
+use alacritty_common::Rgb;
 use alacritty_common::SizeInfo;
-use alacritty_decorations::{Decoration, DecorationFans, DecorationLines, DecorationTypes};
+use alacritty_decorations::{Decoration, DecorationTypes};
 use alacritty_terminal::config::{Font, StartupMode};
 use alacritty_terminal::event::OnResize;
 use alacritty_terminal::message_bar::MessageBuffer;
 use alacritty_terminal::meter::Meter;
 use alacritty_terminal::selection::Selection;
-use alacritty_terminal::term::color::Rgb; // SEB TODO: Move this to alacritty_common Rgb
 use alacritty_terminal::term::{RenderableCell, Term, TermMode};
 
 use crate::config::Config;
@@ -260,33 +260,27 @@ impl Display {
             StartupMode::Maximized => window.set_maximized(true),
             _ => (),
         }
-
         let hexagon_radius = 100f32;
-        let hexagon_line_decorator = DecorationTypes::Lines(DecorationLines {
-            vecs: alacritty_decorations::HexagonLineBackground::new(
-                alacritty_charts::ChartSizeInfo {
-                    term_size: size_info,
-                    chart_width: size_info.width,
-                    chart_height: size_info.height,
-                },
-                hexagon_radius,
-            )
-            .render(),
-            color: Rgb::default(), // TODO: use
-        });
-        let hexagon_fan_decorator = DecorationTypes::Fans(DecorationFans {
-            vecs: alacritty_decorations::HexagonFanBackground::new(
-                alacritty_charts::ChartSizeInfo {
-                    term_size: size_info,
-                    chart_width: size_info.width,
-                    chart_height: size_info.height,
-                },
-                hexagon_radius,
-            )
-            .render(),
-            color: Rgb::default(), // TODO: use
-            center_color: Rgb { r: 0, g: 0, b: 0 },
-        });
+        let hexagon_color = Rgb { r: 25, g: 88, b: 167 };
+        let hexagon_line_decorator = alacritty_decorations::create_hexagon_line(
+            hexagon_color,
+            0.3f32,
+            size_info,
+            hexagon_radius,
+        );
+        let hexagon_fan_decorator = alacritty_decorations::create_hexagon_fan(
+            hexagon_color,
+            Rgb { r: 0, g: 0, b: 0 },
+            0.5f32,
+            size_info,
+            hexagon_radius,
+        );
+        let hexagon_point_decorator = alacritty_decorations::create_hexagon_points(
+            hexagon_color,
+            0.9f32,
+            size_info,
+            hexagon_radius,
+        );
         Ok(Self {
             window,
             renderer,
@@ -300,7 +294,11 @@ impl Display {
             is_x11,
             #[cfg(not(any(target_os = "macos", windows)))]
             wayland_event_queue,
-            decorations: vec![hexagon_line_decorator, hexagon_fan_decorator],
+            decorations: vec![
+                hexagon_line_decorator,
+                hexagon_fan_decorator,
+                hexagon_point_decorator,
+            ],
         })
     }
 
@@ -454,16 +452,29 @@ impl Display {
             }
         });
         self.renderer.resize(&self.size_info);
+        let hexagon_color = Rgb { r: 25, g: 88, b: 167 };
         let hexagon_radius = 100f32;
-        let hexagon_grid_decorator = alacritty_decorations::HexagonLineBackground::new(
-            alacritty_charts::ChartSizeInfo {
-                term_size: self.size_info,
-                chart_width: self.size_info.width,
-                chart_height: self.size_info.height,
-            },
+        let hexagon_line_decorator = alacritty_decorations::create_hexagon_line(
+            hexagon_color,
+            0.3f32,
+            self.size_info,
             hexagon_radius,
         );
-        self.hexagon_grid_decoration = hexagon_grid_decorator.render();
+        let hexagon_fan_decorator = alacritty_decorations::create_hexagon_fan(
+            hexagon_color,
+            Rgb { r: 0, g: 0, b: 0 },
+            0.5f32,
+            self.size_info,
+            hexagon_radius,
+        );
+        let hexagon_point_decorator = alacritty_decorations::create_hexagon_points(
+            hexagon_color,
+            0.9f32,
+            self.size_info,
+            hexagon_radius,
+        );
+        self.decorations =
+            vec![hexagon_line_decorator, hexagon_fan_decorator, hexagon_point_decorator];
     }
 
     /// Draw the screen.
