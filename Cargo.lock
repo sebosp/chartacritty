@@ -80,6 +80,7 @@ dependencies = [
 name = "alacritty_common"
 version = "0.1.0"
 dependencies = [
+ "log 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde 1.0.111 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde_yaml 0.8.12 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
