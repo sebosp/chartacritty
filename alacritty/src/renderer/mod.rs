@@ -820,51 +820,10 @@ impl QuadRenderer {
     /// `draw_hex_bg` draws one hexagon for the background
     pub fn draw_hex_bg(
         &mut self,
-        hexagon_grid_decorator: alacritty_decorations::HexagonGridBackground,
+        hexagon_grid_decorator: alacritty_decorations::HexagonFanBackground,
         props: &term::SizeInfo,
-        opengl_data: &Vec<[f32]>,
+        opengl_data: &Vec<Vec<f32>>,
     ) {
-        // TODO: Consider sending the alacritty_decorations struct here
-        // TODO move this calculation to Term init and from there build the array only once.
-        // We only care for the 60 degrees X,Y, the rest we can calculate from this distance.
-        // For the degrees at 0, X is the radius, and Y is 0.
-        // let angle = 60.0f32; // Hexagon degrees
-        // let cos_60 =  angle.to_radians().cos();
-        // let sin_60 =  angle.to_radians().sin();
-        // let x_offset = angle.to_radians().cos() * radius;
-        // let y_offset = angle.to_radians().sin() * radius;
-        let cos_60 = 0.49999997f32;
-        let sin_60 = 0.86602545f32;
-        let radius = 100f32;
-        let x_offset = cos_60 * radius;
-        let y_offset = sin_60 * radius;
-        // Let's create an adjusted version of the values that is slightly less than the actual
-        // position
-        let adjusted_radius = radius * 0.92;
-        let adjusted_x_offset = x_offset * 0.92;
-        let adjusted_y_offset = y_offset * 0.92;
-        let mut current_x_position = 0f32;
-        let mut half_offset = true; // When true, we will add half radius to Y to make sure the hexagons do not overlap
-        let mut inner_hexagons: Vec<f32> = vec![];
-        while current_x_position <= props.width {
-            let current_y_position = 0f32;
-            let mut temp_y = current_y_position;
-            if half_offset {
-                temp_y += y_offset;
-            }
-            while temp_y <= props.height {
-                inner_hexagons.append(&mut hexagon_grid_decorator.create_hexagon_fan(
-                    current_x_position,
-                    temp_y,
-                    adjusted_radius,
-                    adjusted_x_offset,
-                    adjusted_y_offset,
-                ));
-                temp_y += y_offset * 2f32;
-            }
-            half_offset = !half_offset;
-            current_x_position += x_offset * 3f32;
-        }
         unsafe {
             // Swap program
             gl::UseProgram(self.hex_bg_program.id);
