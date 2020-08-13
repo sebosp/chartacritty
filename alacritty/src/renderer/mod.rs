@@ -489,9 +489,9 @@ pub enum DrawArrayMode {
     GlPoints,
     GlLineStrip,
     GlLineLoop,
+    GlTriangleFan,
     /* GlLines,
      * GlTriangleStrip,
-     * GlTriangleFan,
      * GlTriangles,
      * GlQuadStrip, // Unsupported
      * GlQuads,
