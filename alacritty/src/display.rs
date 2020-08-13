@@ -28,7 +28,9 @@ use font::{self, Rasterize};
 use alacritty_common::index::Line;
 use alacritty_common::Rgb;
 use alacritty_common::SizeInfo;
-use alacritty_decorations::{Decoration, DecorationTypes};
+use alacritty_decorations::{
+    Decoration, DecorationFans, DecorationLines, DecorationPoints, DecorationTypes,
+};
 use alacritty_terminal::config::{Font, StartupMode};
 use alacritty_terminal::event::OnResize;
 use alacritty_terminal::message_bar::MessageBuffer;
@@ -692,48 +694,73 @@ impl Display {
             // 0.0 u                         0.25 u                             0.5
             // 0.0 seconds                    15 seconds                        15 seconds
             // Every 15 seconds the opacity should go back to 100% of out top
-
-            // Draw chunks of 12, since it's 2 points (x,y) per coordinate
-            let mut outer_hexagon_limit = self.hexagon_grid_decoration.len() / 2;
             let max_hexagon_opacity = 0.25f32;
             let wind_screen_size = 0.5f32;
             let x_move_in_time = (curr_second_cycle * wind_screen_size) / seconds_cycle;
-            for opengl_data in self.hexagon_grid_decoration.chunks(12) {
-                // Mid-left is the 6th in the array
-                let curr_opacity = (((opengl_data[6] + x_move_in_time) % wind_screen_size)
-                    / wind_screen_size)
-                    * max_hexagon_opacity;
-                if outer_hexagon_limit == self.hexagon_grid_decoration.len() / 2 {
-                    info!(
-                        "draw: secs: {} opengl_data[6]: {}, opacity: {},  now: {:?}, duration_since: {:?}, as_secs: {:?}, as f32: {:?}",
-                        curr_second_cycle,
-                        opengl_data[6],
-                        curr_opacity,
-                        std::time::SystemTime::now(),
-                        std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH),
-                        std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH).unwrap().as_secs(),
-                        (std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH).unwrap().as_secs() % (seconds_cycle as u64)) as f32,
 
-                    );
-                }
-                self.renderer.draw_array(
-                    &size_info,
-                    &opengl_data,
-                    Rgb { r: 25, g: 88, b: 167 },
-                    curr_opacity.abs(),
-                    renderer::DrawArrayMode::GlLineLoop,
-                );
-                if outer_hexagon_limit > 0 {
-                    // Create some "dust"
-                    self.renderer.draw_array(
-                        &size_info,
-                        &opengl_data,
-                        Rgb { r: 25, g: 88, b: 167 },
-                        0.9f32,
-                        renderer::DrawArrayMode::GlPoints,
-                    );
-                } else {
-                    outer_hexagon_limit -= 12;
+            for decoration in &self.decorations {
+                debug!("Traversing Decorations");
+                match decoration {
+                    DecorationTypes::Lines(line_decor) => match line_decor {
+                        DecorationLines::Hexagon(hex_lines) => {
+                            debug!("- Drawing hexagon lines");
+                            // Draw chunks of 12, since it's 2 points (x,y) per coordinate
+                            for opengl_data in hex_lines.vecs.chunks(12) {
+                                // Mid-left is the 6th in the array
+                                let curr_opacity = (((opengl_data[6] + x_move_in_time)
+                                    % wind_screen_size)
+                                    / wind_screen_size)
+                                    * max_hexagon_opacity;
+                                self.renderer.draw_array(
+                                    &size_info,
+                                    &opengl_data,
+                                    Rgb { r: 25, g: 88, b: 167 },
+                                    curr_opacity.abs(),
+                                    renderer::DrawArrayMode::GlLineLoop,
+                                );
+                            }
+                        }
+                    },
+                    DecorationTypes::Fans(fan_decor) => match fan_decor {
+                        DecorationFans::Hexagon((hex_fans, number_vertices)) => {
+                            debug!("- Drawing hexagon fans");
+                            // Triangle fans decorators contain the number of sides
+                            for opengl_data in hex_fans.vecs.chunks(*number_vertices) {
+                                // Mid-left is the 6th in the array
+                                let curr_opacity = (((opengl_data[6] + x_move_in_time)
+                                    % wind_screen_size)
+                                    / wind_screen_size)
+                                    * max_hexagon_opacity;
+                                self.renderer.draw_array(
+                                    &size_info,
+                                    &opengl_data,
+                                    Rgb { r: 25, g: 88, b: 167 },
+                                    curr_opacity.abs(),
+                                    renderer::DrawArrayMode::GlTriangleFan,
+                                );
+                            }
+                        }
+                    },
+                    DecorationTypes::Points(point_decor) => match point_decor {
+                        DecorationPoints::Hexagon(hex_points) => {
+                            debug!("- Drawing hexagon points");
+                            // Draw chunks of 2, since it's 2 points (x,y) per coordinate
+                            for opengl_data in hex_points.vecs.chunks(2) {
+                                // Mid-left is the 6th in the array
+                                let curr_opacity = (((opengl_data[6] + x_move_in_time)
+                                    % wind_screen_size)
+                                    / wind_screen_size)
+                                    * max_hexagon_opacity;
+                                self.renderer.draw_array(
+                                    &size_info,
+                                    &opengl_data,
+                                    Rgb { r: 25, g: 88, b: 167 },
+                                    curr_opacity.abs(),
+                                    renderer::DrawArrayMode::GlPoints,
+                                );
+                            }
+                        }
+                    },
                 }
             }
         } else {
