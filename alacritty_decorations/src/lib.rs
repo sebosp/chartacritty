@@ -2,7 +2,10 @@ use alacritty_charts::Value2D;
 use alacritty_common::Rgb;
 use alacritty_common::SizeInfo;
 use log::*;
-// TODO: Add an array to the renderer mode for new decorations
+
+const cos_60: f32 = 0.49999997f32;
+const sin_60: f32 = 0.86602545f32;
+
 pub trait Decoration {
     fn render(self) -> Vec<f32>;
     // fn load_vertex_shader(path: &str) -> bool {
@@ -71,14 +74,12 @@ pub fn create_hexagon_points(
         color, alpha, size_info, radius,
     )))
 }
-pub fn gen_hexagon_vertices(
-    size_info: SizeInfo,
-    x: f32,
-    y: f32,
-    radius: f32,
-    x_60_degrees_offset: f32,
-    y_60_degrees_offset: f32,
-) -> Vec<f32> {
+
+/// `gen_hexagon_vertices` Returns the vertices for an hexagon created at center x,y with a
+/// specific spacing_radius
+pub fn gen_hexagon_vertices(size_info: SizeInfo, x: f32, y: f32, radius: f32) -> Vec<f32> {
+    let x_60_degrees_offset = cos_60 * radius;
+    let y_60_degrees_offset = sin_60 * radius;
     vec![
         // Mid right:
         size_info.scale_x(x + radius),
@@ -150,27 +151,13 @@ impl HexagonFanBackground {
             vecs: vec![],
         }
     }
-    pub fn update(
-        &self,
-        x: f32,
-        y: f32,
-        radius: f32,
-        x_60_degrees_offset: f32,
-        y_60_degrees_offset: f32,
-    ) -> Vec<f32> {
+    pub fn update_opengl_vecs(&mut self, x: f32, y: f32, radius: f32) -> Vec<f32> {
         let mut res = vec![
             // Center, to be used for triangle fan
             self.size_info.scale_x(x),
             self.size_info.scale_y(y),
         ];
-        res.append(&mut gen_hexagon_vertices(
-            self.size_info,
-            x,
-            y,
-            radius,
-            x_60_degrees_offset,
-            y_60_degrees_offset,
-        ));
+        res.append(&mut gen_hexagon_vertices(self.size_info, x, y, radius));
         res
     }
 }
@@ -186,15 +173,8 @@ impl HexagonLineBackground {
             vecs: vec![],
         }
     }
-    pub fn update(
-        &self,
-        x: f32,
-        y: f32,
-        radius: f32,
-        x_60_degrees_offset: f32,
-        y_60_degrees_offset: f32,
-    ) -> Vec<f32> {
-        gen_hexagon_vertices(self.size_info, x, y, radius, x_60_degrees_offset, y_60_degrees_offset)
+    pub fn update(&self, x: f32, y: f32, radius: f32) -> Vec<f32> {
+        gen_hexagon_vertices(self.size_info, x, y, radius)
     }
 }
 
@@ -210,22 +190,15 @@ impl HexagonPointBackground {
             vecs: vec![],
         }
     }
-    pub fn update(
-        &self,
-        x: f32,
-        y: f32,
-        radius: f32,
-        x_60_degrees_offset: f32,
-        y_60_degrees_offset: f32,
-    ) -> Vec<f32> {
-        gen_hexagon_vertices(self.size_info, x, y, radius, x_60_degrees_offset, y_60_degrees_offset)
+    pub fn update(&self, x: f32, y: f32, radius: f32) -> Vec<f32> {
+        gen_hexagon_vertices(self.size_info, x, y, radius)
     }
 }
 
 /// Creates a vector with x,y coordinates in which new hexagons can be drawn
-/// The offsets (x,y) to the first 60 degrees point are alse returned as the hexagon is pretty
+/// The offsets (x,y) to the first 60 degrees point are also returned as the hexagon is pretty
 /// symmetric, this should probably be changed...
-fn background_fill_hexagon_positions(size: SizeInfo, radius: f32) -> (Value2D, Vec<Value2D>) {
+fn background_fill_hexagon_positions(size: SizeInfo, radius: f32) -> Vec<Value2D> {
     // We only care for the 60 degrees X,Y, the rest we can calculate from this distance.
     // For the degrees at 0, X is the radius, and Y is 0.
     // let angle = 60.0f32; // Hexagon degrees
@@ -233,8 +206,6 @@ fn background_fill_hexagon_positions(size: SizeInfo, radius: f32) -> (Value2D, V
     // let sin_60 =  angle.to_radians().sin();
     // let x_offset = angle.to_radians().cos() * radius;
     // let y_offset = angle.to_radians().sin() * radius;
-    let cos_60 = 0.49999997f32;
-    let sin_60 = 0.86602545f32;
     let x_offset = cos_60 * radius;
     let y_offset = sin_60 * radius;
     let mut current_x_position = 0f32;
@@ -244,6 +215,9 @@ fn background_fill_hexagon_positions(size: SizeInfo, radius: f32) -> (Value2D, V
         let current_y_position = 0f32;
         let mut temp_y = current_y_position;
         if half_offset {
+            // shift the y position in alternate fashion that the positions look like:
+            // x   x   x   x
+            //   x   x   x
             temp_y += y_offset;
         }
         while temp_y <= size.height {
@@ -253,22 +227,20 @@ fn background_fill_hexagon_positions(size: SizeInfo, radius: f32) -> (Value2D, V
         half_offset = !half_offset;
         current_x_position += x_offset * 3f32;
     }
-    (Value2D { x: x_offset, y: y_offset }, res)
+    res
 }
 
 impl Decoration for HexagonFanBackground {
     fn render(self) -> Vec<f32> {
         let mut hexagons: Vec<f32> = vec![];
         let inner_hexagon_radius_percent = 0.92f32;
-        let (offsets, coords) = background_fill_hexagon_positions(self.size_info, self.radius);
+        let coords = background_fill_hexagon_positions(self.size_info, self.radius);
         for coord in coords {
             hexagons.append(&mut gen_hexagon_vertices(
                 self.size_info,
                 coord.x,
                 coord.y,
                 self.radius * inner_hexagon_radius_percent,
-                offsets.x,
-                offsets.y,
             ));
         }
         hexagons
@@ -279,25 +251,16 @@ impl Decoration for HexagonLineBackground {
         let mut hexagons: Vec<f32> = vec![];
         // Let's create an adjusted version of the values that is slightly less than the actual
         // position
-        let inner_hexagon_radius_percent = 0.92f32;
-        let adjusted_radius = self.radius * inner_hexagon_radius_percent;
-        let (offsets, coords) = background_fill_hexagon_positions(self.size_info, self.radius);
+        let coords = background_fill_hexagon_positions(self.size_info, self.radius);
         for coord in coords {
-            // Inner hexagon:
             hexagons.append(&mut gen_hexagon_vertices(
                 self.size_info,
                 coord.x,
                 coord.y,
-                adjusted_radius,
-                offsets.x * inner_hexagon_radius_percent,
-                offsets.y * inner_hexagon_radius_percent,
+                self.radius,
             ));
         }
         // What is returned:
-        // First, the outer(bigger hexagons whos vertices touch the other outer hexagons
-        // Then the inner hexagons that are slightly less and:
-        // TODO: should in the future become triangle strips and the closer they get to the center
-        // the darker.
         hexagons
     }
 }
