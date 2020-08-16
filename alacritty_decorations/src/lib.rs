@@ -233,6 +233,7 @@ fn background_fill_hexagon_positions(size: SizeInfo, radius: f32) -> Vec<Value2D
 impl Decoration for HexagonFanBackground {
     fn render(self) -> Vec<f32> {
         let mut hexagons: Vec<f32> = vec![];
+        // To avoid colliding with the HexagonLines, the fans ocupy a radius a bit smaller
         let inner_hexagon_radius_percent = 0.92f32;
         let coords = background_fill_hexagon_positions(self.size_info, self.radius);
         for coord in coords {
