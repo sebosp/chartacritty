@@ -3,8 +3,8 @@ use alacritty_common::Rgb;
 use alacritty_common::SizeInfo;
 use log::*;
 
-const cos_60: f32 = 0.49999997f32;
-const sin_60: f32 = 0.86602545f32;
+const COS_60: f32 = 0.49999997f32;
+const SIN_60: f32 = 0.86602545f32;
 
 pub trait Decoration {
     fn render(self) -> Vec<f32>;
@@ -78,8 +78,8 @@ pub fn create_hexagon_points(
 /// `gen_hexagon_vertices` Returns the vertices for an hexagon created at center x,y with a
 /// specific spacing_radius
 pub fn gen_hexagon_vertices(size_info: SizeInfo, x: f32, y: f32, radius: f32) -> Vec<f32> {
-    let x_60_degrees_offset = cos_60 * radius;
-    let y_60_degrees_offset = sin_60 * radius;
+    let x_60_degrees_offset = COS_60 * radius;
+    let y_60_degrees_offset = SIN_60 * radius;
     vec![
         // Mid right:
         size_info.scale_x(x + radius),
@@ -206,8 +206,8 @@ fn background_fill_hexagon_positions(size: SizeInfo, radius: f32) -> Vec<Value2D
     // let sin_60 =  angle.to_radians().sin();
     // let x_offset = angle.to_radians().cos() * radius;
     // let y_offset = angle.to_radians().sin() * radius;
-    let x_offset = cos_60 * radius;
-    let y_offset = sin_60 * radius;
+    let x_offset = COS_60 * radius;
+    let y_offset = SIN_60 * radius;
     let mut current_x_position = 0f32;
     let mut half_offset = true; // When true, we will add half radius to Y to make sure the hexagons do not overlap
     let mut res = vec![];
