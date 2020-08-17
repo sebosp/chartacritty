@@ -76,10 +76,18 @@ pub fn create_hexagon_points(
 }
 
 /// `gen_hexagon_vertices` Returns the vertices for an hexagon created at center x,y with a
-/// specific spacing_radius
+/// specific radius
 pub fn gen_hexagon_vertices(size_info: SizeInfo, x: f32, y: f32, radius: f32) -> Vec<f32> {
     let x_60_degrees_offset = COS_60 * radius;
     let y_60_degrees_offset = SIN_60 * radius;
+    // Order of vertices:
+    //    3------2
+    //   /        \
+    //  /          \
+    // 4            1
+    //  \          /
+    //   \        /
+    //    5------6
     vec![
         // Mid right:
         size_info.scale_x(x + radius),
@@ -151,13 +159,13 @@ impl HexagonFanBackground {
             vecs: vec![],
         }
     }
-    pub fn update_opengl_vecs(&mut self, x: f32, y: f32, radius: f32) -> Vec<f32> {
+    pub fn update_opengl_vecs(&mut self, x: f32, y: f32) -> Vec<f32> {
         let mut res = vec![
             // Center, to be used for triangle fan
             self.size_info.scale_x(x),
             self.size_info.scale_y(y),
         ];
-        res.append(&mut gen_hexagon_vertices(self.size_info, x, y, radius));
+        res.append(&mut gen_hexagon_vertices(self.size_info, x, y, self.radius));
         res
     }
 }
@@ -173,8 +181,8 @@ impl HexagonLineBackground {
             vecs: vec![],
         }
     }
-    pub fn update(&self, x: f32, y: f32, radius: f32) -> Vec<f32> {
-        gen_hexagon_vertices(self.size_info, x, y, radius)
+    pub fn update(&self, x: f32, y: f32) -> Vec<f32> {
+        gen_hexagon_vertices(self.size_info, x, y, self.radius)
     }
 }
 
@@ -190,14 +198,12 @@ impl HexagonPointBackground {
             vecs: vec![],
         }
     }
-    pub fn update(&self, x: f32, y: f32, radius: f32) -> Vec<f32> {
-        gen_hexagon_vertices(self.size_info, x, y, radius)
+    pub fn update(&self, x: f32, y: f32) -> Vec<f32> {
+        gen_hexagon_vertices(self.size_info, x, y, self.radius)
     }
 }
 
 /// Creates a vector with x,y coordinates in which new hexagons can be drawn
-/// The offsets (x,y) to the first 60 degrees point are also returned as the hexagon is pretty
-/// symmetric, this should probably be changed...
 fn background_fill_hexagon_positions(size: SizeInfo, radius: f32) -> Vec<Value2D> {
     // We only care for the 60 degrees X,Y, the rest we can calculate from this distance.
     // For the degrees at 0, X is the radius, and Y is 0.
