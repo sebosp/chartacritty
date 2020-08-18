@@ -159,14 +159,22 @@ impl HexagonFanBackground {
             vecs: vec![],
         }
     }
-    pub fn update_opengl_vecs(&mut self, x: f32, y: f32) -> Vec<f32> {
-        let mut res = vec![
-            // Center, to be used for triangle fan
-            self.size_info.scale_x(x),
-            self.size_info.scale_y(y),
-        ];
-        res.append(&mut gen_hexagon_vertices(self.size_info, x, y, self.radius));
-        res
+    pub fn update_opengl_vecs(&mut self) {
+        let mut hexagons = vec![];
+        // To avoid colliding with the HexagonLines, the fans ocupy a radius a bit smaller
+        let inner_hexagon_radius_percent = 0.92f32; // XXX: Maybe this can be a field?
+        let coords = background_fill_hexagon_positions(self.size_info, self.radius);
+        for coord in coords {
+            hexagons.push(self.size_info.scale_x(coord.x));
+            hexagons.push(self.size_info.scale_y(coord.y));
+            hexagons.append(&mut gen_hexagon_vertices(
+                self.size_info,
+                coord.x,
+                coord.y,
+                self.radius * inner_hexagon_radius_percent,
+            ));
+        }
+        self.vecs = hexagons;
     }
 }
 impl HexagonLineBackground {
@@ -181,8 +189,18 @@ impl HexagonLineBackground {
             vecs: vec![],
         }
     }
-    pub fn update(&self, x: f32, y: f32) -> Vec<f32> {
-        gen_hexagon_vertices(self.size_info, x, y, self.radius)
+    pub fn update_opengl_vecs(&mut self) {
+        let mut hexagons = vec![];
+        let coords = background_fill_hexagon_positions(self.size_info, self.radius);
+        for coord in coords {
+            hexagons.append(&mut gen_hexagon_vertices(
+                self.size_info,
+                coord.x,
+                coord.y,
+                self.radius,
+            ));
+        }
+        self.vecs = hexagons;
     }
 }
 
@@ -198,8 +216,18 @@ impl HexagonPointBackground {
             vecs: vec![],
         }
     }
-    pub fn update(&self, x: f32, y: f32) -> Vec<f32> {
-        gen_hexagon_vertices(self.size_info, x, y, self.radius)
+    pub fn update_opengl_vecs(&mut self) {
+        let mut hexagons = vec![];
+        let coords = background_fill_hexagon_positions(self.size_info, self.radius);
+        for coord in coords {
+            hexagons.append(&mut gen_hexagon_vertices(
+                self.size_info,
+                coord.x,
+                coord.y,
+                self.radius,
+            ));
+        }
+        self.vecs = hexagons;
     }
 }
 
@@ -236,23 +264,6 @@ fn background_fill_hexagon_positions(size: SizeInfo, radius: f32) -> Vec<Value2D
     res
 }
 
-impl Decoration for HexagonFanBackground {
-    fn render(self) -> Vec<f32> {
-        let mut hexagons: Vec<f32> = vec![];
-        // To avoid colliding with the HexagonLines, the fans ocupy a radius a bit smaller
-        let inner_hexagon_radius_percent = 0.92f32;
-        let coords = background_fill_hexagon_positions(self.size_info, self.radius);
-        for coord in coords {
-            hexagons.append(&mut gen_hexagon_vertices(
-                self.size_info,
-                coord.x,
-                coord.y,
-                self.radius * inner_hexagon_radius_percent,
-            ));
-        }
-        hexagons
-    }
-}
 impl Decoration for HexagonLineBackground {
     fn render(self) -> Vec<f32> {
         let mut hexagons: Vec<f32> = vec![];
