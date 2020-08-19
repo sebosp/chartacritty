@@ -818,12 +818,7 @@ impl QuadRenderer {
     }
 
     /// `draw_hex_bg` draws one hexagon for the background
-    pub fn draw_hex_bg(
-        &mut self,
-        hexagon_grid_decorator: alacritty_decorations::HexagonFanBackground,
-        props: &term::SizeInfo,
-        opengl_data: &Vec<Vec<f32>>,
-    ) {
+    pub fn draw_hex_bg(&mut self, props: &term::SizeInfo, opengl_data: &Vec<Vec<f32>>) {
         unsafe {
             // Swap program
             gl::UseProgram(self.hex_bg_program.id);
@@ -917,12 +912,12 @@ impl QuadRenderer {
             DrawArrayMode::GlPoints => gl::POINTS,
             DrawArrayMode::GlLineStrip => gl::LINE_STRIP,
             DrawArrayMode::GlLineLoop => gl::LINE_LOOP,
-            DrawArrayMode::GlQuads => gl::QUADS,
+            DrawArrayMode::GlTriangleFan => gl::TRIANGLE_FAN,
             /* DrawArrayMode::GlLines => gl::LINES,
              * DrawArrayMode::GlTriangleStrip => gl::TRIANGLE_STRIP,
-             * DrawArrayMode::GlTriangleFan => gl::TRIANGLE_FAN,
              * DrawArrayMode::GlTriangles => gl::TRIANGLES,
              * DrawArrayMode::GlQuadStrip => gl::QUAD_STRIP, // Unsupported?
+             * DrawArrayMode::GlQuads => gl::QUADS,
              * DrawArrayMode::GlPolygon => gl::POLYGON_MODE, */
         };
         // TODO: Use the Charts Shader Program (For now a copy of rect)
