@@ -28,9 +28,7 @@ use font::{self, Rasterize};
 use alacritty_common::index::Line;
 use alacritty_common::Rgb;
 use alacritty_common::SizeInfo;
-use alacritty_decorations::{
-    Decoration, DecorationFans, DecorationLines, DecorationPoints, DecorationTypes,
-};
+use alacritty_decorations::{DecorationFans, DecorationLines, DecorationPoints, DecorationTypes};
 use alacritty_terminal::config::{Font, StartupMode};
 use alacritty_terminal::event::OnResize;
 use alacritty_terminal::message_bar::MessageBuffer;
@@ -731,10 +729,10 @@ impl Display {
                                     % wind_screen_size)
                                     / wind_screen_size)
                                     * max_hexagon_opacity;
-                                self.renderer.draw_array(
+                                self.renderer.draw_hex_bg(
                                     &size_info,
                                     &opengl_data,
-                                    Rgb { r: 25, g: 88, b: 167 },
+                                    /*Rgb { r: 25, g: 88, b: 167 },*/
                                     curr_opacity.abs(),
                                     renderer::DrawArrayMode::GlTriangleFan,
                                 );
