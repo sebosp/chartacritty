@@ -732,9 +732,9 @@ impl Display {
                                 self.renderer.draw_hex_bg(
                                     &size_info,
                                     &opengl_data,
-                                    /*Rgb { r: 25, g: 88, b: 167 },*/
+                                    /*Rgb { r: 25, g: 88, b: 167 },
                                     curr_opacity.abs(),
-                                    renderer::DrawArrayMode::GlTriangleFan,
+                                    renderer::DrawArrayMode::GlTriangleFan,*/
                                 );
                             }
                         }
