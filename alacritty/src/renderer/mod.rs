@@ -818,7 +818,9 @@ impl QuadRenderer {
     }
 
     /// `draw_hex_bg` draws one hexagon for the background
-    pub fn draw_hex_bg(&mut self, props: &term::SizeInfo, opengl_data: &Vec<Vec<f32>>) {
+    pub fn draw_hex_bg(&mut self, props: &term::SizeInfo, opengl_data: &[f32]) {
+        // This function expects a vector that contains first 7 vertices (center plus hexagon
+        // vertices) and then followed by that it's the color RGBA for each of these 7 vertices.
         unsafe {
             // Swap program
             gl::UseProgram(self.hex_bg_program.id);
@@ -839,7 +841,8 @@ impl QuadRenderer {
                 2, // position has 2 values: X, Y
                 gl::FLOAT,
                 gl::FALSE,
-                (size_of::<f32>() * 2) as _,
+                /* 7 vertices with data (x,y) + 7 vertices with data (R, G, B, A)*/
+                ((size_of::<f32>() * 2 * 7) + (size_of::<f32>() * 4 * 7)) as _,
                 ptr::null(),
             );
             gl::EnableVertexAttribArray(0);
@@ -850,9 +853,10 @@ impl QuadRenderer {
                 4, // Color has 4 items, R, G, B, A
                 gl::FLOAT,
                 gl::FALSE,
-                (size_of::<f32>() * 4) as _,
-                (size_of::<f32>() * 2 /* x, y */ * 7/* center position, plus hexagon vertices */)
-                    as _,
+                /* 7 vertices with data (x,y) + 7 vertices with data (R, G, B, A)*/
+                ((size_of::<f32>() * 2 * 7) + (size_of::<f32>() * 4 * 7)) as _,
+                /* 7 vertices with data (x,y) + 7 vertices with data (R, G, B, A)*/
+                ((size_of::<f32>() * 2 * 7) + (size_of::<f32>() * 4 * 7)) as _,
             );
             gl::EnableVertexAttribArray(1);
 
@@ -912,8 +916,8 @@ impl QuadRenderer {
             DrawArrayMode::GlPoints => gl::POINTS,
             DrawArrayMode::GlLineStrip => gl::LINE_STRIP,
             DrawArrayMode::GlLineLoop => gl::LINE_LOOP,
-            DrawArrayMode::GlTriangleFan => gl::TRIANGLE_FAN,
-            /* DrawArrayMode::GlLines => gl::LINES,
+            /* DrawArrayMode::GlTriangleFan => gl::TRIANGLE_FAN,
+             * DrawArrayMode::GlLines => gl::LINES,
              * DrawArrayMode::GlTriangleStrip => gl::TRIANGLE_STRIP,
              * DrawArrayMode::GlTriangles => gl::TRIANGLES,
              * DrawArrayMode::GlQuadStrip => gl::QUAD_STRIP, // Unsupported?
