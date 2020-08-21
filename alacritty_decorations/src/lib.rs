@@ -164,7 +164,22 @@ impl HexagonFanBackground {
         // To avoid colliding with the HexagonLines, the fans ocupy a radius a bit smaller
         let inner_hexagon_radius_percent = 0.92f32; // XXX: Maybe this can be a field?
         let coords = background_fill_hexagon_positions(self.size_info, self.radius);
+        let mut color_vecs = vec![];
+        // Center color:
+        color_vecs.push(f32::from(self.center_color.r) / 255.);
+        color_vecs.push(f32::from(self.center_color.g) / 255.);
+        color_vecs.push(f32::from(self.center_color.b) / 255.);
+        // TODO: The alpha should be calculated inside the shaders
+        color_vecs.push(self.alpha / 255.);
+        for _ in 0..6 {
+            color_vecs.push(f32::from(self.vertex_color.r) / 255.);
+            color_vecs.push(f32::from(self.vertex_color.g) / 255.);
+            color_vecs.push(f32::from(self.vertex_color.b) / 255.);
+            // TODO: The alpha should be calculated inside the shaders
+            color_vecs.push(self.alpha / 255.);
+        }
         for coord in coords {
+            // The first pair of coordinates are the center of the hexagon
             hexagons.push(self.size_info.scale_x(coord.x));
             hexagons.push(self.size_info.scale_y(coord.y));
             hexagons.append(&mut gen_hexagon_vertices(
@@ -173,6 +188,7 @@ impl HexagonFanBackground {
                 coord.y,
                 self.radius * inner_hexagon_radius_percent,
             ));
+            hexagons.append(&mut color_vecs.clone());
         }
         self.vecs = hexagons;
     }
