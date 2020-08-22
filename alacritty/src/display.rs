@@ -692,10 +692,9 @@ impl Display {
             // 0.0 u                         0.25 u                             0.5
             // 0.0 seconds                    15 seconds                        15 seconds
             // Every 15 seconds the opacity should go back to 100% of out top
-            let max_hexagon_opacity = 0.25f32;
+            let max_hexagon_opacity = 0.5f32;
             let wind_screen_size = 0.5f32;
             let x_move_in_time = (curr_second_cycle * wind_screen_size) / seconds_cycle;
-
             for decoration in &self.decorations {
                 debug!("Traversing Decorations");
                 match decoration {
@@ -721,14 +720,10 @@ impl Display {
                     },
                     DecorationTypes::Fans(fan_decor) => match fan_decor {
                         DecorationFans::Hexagon((hex_fans, number_vertices)) => {
-                            debug!("- Drawing hexagon fans");
+                            info!("- Drawing hexagon fans");
+                            info!("- - Decorations Hexagon Fans: {:?}", hex_fans.vecs);
                             // Triangle fans decorators contain the number of sides
                             for opengl_data in hex_fans.vecs.chunks(*number_vertices) {
-                                // Mid-left is the 6th in the array
-                                let curr_opacity = (((opengl_data[6] + x_move_in_time)
-                                    % wind_screen_size)
-                                    / wind_screen_size)
-                                    * max_hexagon_opacity;
                                 self.renderer.draw_hex_bg(
                                     &size_info,
                                     &opengl_data,
@@ -743,20 +738,13 @@ impl Display {
                         DecorationPoints::Hexagon(hex_points) => {
                             debug!("- Drawing hexagon points");
                             // Draw chunks of 2, since it's 2 points (x,y) per coordinate
-                            for opengl_data in hex_points.vecs.chunks(2) {
-                                // Mid-left is the 6th in the array
-                                let curr_opacity = (((opengl_data[6] + x_move_in_time)
-                                    % wind_screen_size)
-                                    / wind_screen_size)
-                                    * max_hexagon_opacity;
-                                self.renderer.draw_array(
-                                    &size_info,
-                                    &opengl_data,
-                                    Rgb { r: 25, g: 88, b: 167 },
-                                    curr_opacity.abs(),
-                                    renderer::DrawArrayMode::GlPoints,
-                                );
-                            }
+                            self.renderer.draw_array(
+                                &size_info,
+                                &hex_points.vecs,
+                                Rgb { r: 25, g: 88, b: 167 },
+                                0.7f32,
+                                renderer::DrawArrayMode::GlPoints,
+                            );
                         }
                     },
                 }
