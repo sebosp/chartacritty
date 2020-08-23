@@ -179,7 +179,7 @@ pub fn load_http_response(
             {
                 match prom.load_prometheus_response(data) {
                     Ok(num_records) => {
-                        event!(Level::INFO,
+                        event!(Level::DEBUG,
                             "load_http_response:(Chart: {}, Series: {}) {} records from {} into TimeSeries",
                             response.chart_index, response.series_index, num_records, response.source_url
                         );
