@@ -45,9 +45,9 @@ pub fn create_hexagon_line(
     size_info: SizeInfo,
     radius: f32,
 ) -> DecorationTypes {
-    DecorationTypes::Lines(DecorationLines::Hexagon(HexagonLineBackground::new(
-        color, alpha, size_info, radius,
-    )))
+    let mut hexagon_line_background = HexagonLineBackground::new(color, alpha, size_info, radius);
+    //hexagon_line_background.update_opengl_vecs();
+    DecorationTypes::Lines(DecorationLines::Hexagon(hexagon_line_background))
 }
 
 pub fn create_hexagon_fan(
@@ -58,10 +58,10 @@ pub fn create_hexagon_fan(
     radius: f32,
 ) -> DecorationTypes {
     let num_vertices: usize = 7usize * 2usize; // 6 vertices plus the center for the hexagon fan.
-    DecorationTypes::Fans(DecorationFans::Hexagon((
-        HexagonFanBackground::new(vertex_color, center_color, alpha, size_info, radius),
-        num_vertices,
-    )))
+    let mut hexagon_fan_background =
+        HexagonFanBackground::new(vertex_color, center_color, alpha, size_info, radius);
+    hexagon_fan_background.update_opengl_vecs();
+    DecorationTypes::Fans(DecorationFans::Hexagon((hexagon_fan_background, num_vertices)))
 }
 
 pub fn create_hexagon_points(
@@ -70,9 +70,9 @@ pub fn create_hexagon_points(
     size_info: SizeInfo,
     radius: f32,
 ) -> DecorationTypes {
-    DecorationTypes::Points(DecorationPoints::Hexagon(HexagonPointBackground::new(
-        color, alpha, size_info, radius,
-    )))
+    let mut hexagon_point_bakcground = HexagonPointBackground::new(color, alpha, size_info, radius);
+    //hexagon_point_bakcground.update_opengl_vecs();
+    DecorationTypes::Points(DecorationPoints::Hexagon(hexagon_point_bakcground))
 }
 
 /// `gen_hexagon_vertices` Returns the vertices for an hexagon created at center x,y with a
