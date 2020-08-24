@@ -480,7 +480,7 @@ impl TimeSeriesChart {
         // Get the opengl representation of the vector
         let opengl_vecs_capacity = self.sources[series_idx].series().active_items;
         event!(
-            Level::INFO,
+            Level::DEBUG,
             "self: {:?}, self.opengl_vecs.capacity(): {}, self.sources.capacity(): {}, series_idx: {}",
             self,
             self.opengl_vecs.capacity(),
