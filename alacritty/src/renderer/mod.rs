@@ -821,6 +821,14 @@ impl QuadRenderer {
     pub fn draw_hex_bg(&mut self, props: &term::SizeInfo, opengl_data: &[f32]) {
         // This function expects a vector that contains first 7 vertices (center plus hexagon
         // vertices) and then followed by that it's the color RGBA for each of these 7 vertices.
+        let opengl_data = vec![
+            0.5f32, 0.5f32, // x, y
+            1.0f32, 0.0f32, 0.0f32, 1.0f32, // RGBA
+            0.8f32, 0.8f32, // x, y
+            0.0f32, 1.0f32, 0.0f32, 1.0f32, // RGBA
+            0.7f32, 0.3f32, // x, y
+            0.0f32, 0.0f32, 1.0f32, 1.0f32, // RGBA
+        ];
         unsafe {
             // Swap program
             gl::UseProgram(self.hex_bg_program.id);
@@ -836,29 +844,28 @@ impl QuadRenderer {
             gl::BindBuffer(gl::ARRAY_BUFFER, self.rect_vbo);
 
             // Position
+            gl::EnableVertexAttribArray(0);
             gl::VertexAttribPointer(
                 0, // location=0 is the vertex position
                 2, // position has 2 values: X, Y
                 gl::FLOAT,
                 gl::FALSE,
                 /* 7 vertices with data (x,y) + 7 vertices with data (R, G, B, A)*/
-                ((size_of::<f32>() * 2 * 7) + (size_of::<f32>() * 4 * 7)) as _,
+                (size_of::<f32>() * 6 * 7) as _,
                 ptr::null(),
             );
-            gl::EnableVertexAttribArray(0);
 
             // Colors
+            gl::EnableVertexAttribArray(1);
             gl::VertexAttribPointer(
                 1, // location=1 is the color
                 4, // Color has 4 items, R, G, B, A
                 gl::FLOAT,
                 gl::FALSE,
                 /* 7 vertices with data (x,y) + 7 vertices with data (R, G, B, A)*/
-                ((size_of::<f32>() * 2 * 7) + (size_of::<f32>() * 4 * 7)) as _,
-                /* 7 vertices with data (x,y) + 7 vertices with data (R, G, B, A)*/
-                ((size_of::<f32>() * 2 * 7) + (size_of::<f32>() * 4 * 7)) as _,
+                (size_of::<f32>() * 6 * 7) as _,
+                (size_of::<f32>() * 6 * 7) as _,
             );
-            gl::EnableVertexAttribArray(1);
 
             // Load vertex data into array buffer
             gl::BufferData(
@@ -869,8 +876,9 @@ impl QuadRenderer {
             );
 
             // Deactivate rectangle program again
-            // Draw the incoming array, 2 points per vertex
-            gl::DrawArrays(gl::TRIANGLE_FAN, 0, (opengl_data.len() / 2usize) as i32);
+            // Draw the incoming array, opengl_data contains:
+            // [2(x,y) * 7 + 4(r,g,b,a) * 7 ] -> 6 * 7
+            gl::DrawArrays(gl::TRIANGLES, 0, 1i32); /*(opengl_data.len() / (6usize * 7usize)) as i32);*/
 
             // Reset blending strategy
             gl::BlendFunc(gl::SRC1_COLOR, gl::ONE_MINUS_SRC1_COLOR);
@@ -916,8 +924,8 @@ impl QuadRenderer {
             DrawArrayMode::GlPoints => gl::POINTS,
             DrawArrayMode::GlLineStrip => gl::LINE_STRIP,
             DrawArrayMode::GlLineLoop => gl::LINE_LOOP,
-            /* DrawArrayMode::GlTriangleFan => gl::TRIANGLE_FAN,
-             * DrawArrayMode::GlLines => gl::LINES,
+            DrawArrayMode::GlTriangleFan => gl::TRIANGLE_FAN,
+            /* DrawArrayMode::GlLines => gl::LINES,
              * DrawArrayMode::GlTriangleStrip => gl::TRIANGLE_STRIP,
              * DrawArrayMode::GlTriangles => gl::TRIANGLES,
              * DrawArrayMode::GlQuadStrip => gl::QUAD_STRIP, // Unsupported?
@@ -964,7 +972,7 @@ impl QuadRenderer {
 
         // Deactivate rectangle program again
         unsafe {
-            // Draw the incoming array, 2 points per vertex
+            // Draw the incoming array, opengl_vecs contains 2 points per vertex:
             gl::DrawArrays(gl_mode, 0, (opengl_vecs.len() / 2usize) as i32);
 
             // Reset blending strategy
