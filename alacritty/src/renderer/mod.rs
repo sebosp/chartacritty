@@ -851,7 +851,7 @@ impl QuadRenderer {
                 gl::FLOAT,
                 gl::FALSE,
                 /* 7 vertices with data (x,y) + 7 vertices with data (R, G, B, A)*/
-                (size_of::<f32>() * 6 * 7) as _,
+                (size_of::<f32>() * 6) as _,
                 ptr::null(),
             );
 
@@ -863,8 +863,8 @@ impl QuadRenderer {
                 gl::FLOAT,
                 gl::FALSE,
                 /* 7 vertices with data (x,y) + 7 vertices with data (R, G, B, A)*/
-                (size_of::<f32>() * 6 * 7) as _,
-                (size_of::<f32>() * 6 * 7) as _,
+                (size_of::<f32>() * 6) as _,
+                (size_of::<f32>() * 2) as _,
             );
 
             // Load vertex data into array buffer
@@ -874,11 +874,15 @@ impl QuadRenderer {
                 opengl_data.as_ptr() as *const _,
                 gl::STATIC_DRAW,
             );
+        }
 
+        self.hex_bg_program.set_epoch_millis(0.0f32);
+
+        unsafe {
             // Deactivate rectangle program again
             // Draw the incoming array, opengl_data contains:
             // [2(x,y) * 7 + 4(r,g,b,a) * 7 ] -> 6 * 7
-            gl::DrawArrays(gl::TRIANGLES, 0, 1i32); /*(opengl_data.len() / (6usize * 7usize)) as i32);*/
+            gl::DrawArrays(gl::TRIANGLES, 0, (opengl_data.len() / 6usize) as i32);
 
             // Reset blending strategy
             gl::BlendFunc(gl::SRC1_COLOR, gl::ONE_MINUS_SRC1_COLOR);
