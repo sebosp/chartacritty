@@ -57,7 +57,11 @@ pub fn create_hexagon_fan(
     size_info: SizeInfo,
     radius: f32,
 ) -> DecorationTypes {
-    let num_vertices: usize = 7usize * 2usize; // 6 vertices plus the center for the hexagon fan.
+    // Each vertex has 6 data points, x, y, r, g, b, a
+    // To draw the hexagons, it needs to build 6 triangles
+    // each vertex contains x,y,r,g,b,a
+    // TODO: This is for now unused
+    let num_vertices: usize = 6usize * 6usize * 3;
     let mut hexagon_fan_background =
         HexagonFanBackground::new(vertex_color, center_color, alpha, size_info, radius);
     hexagon_fan_background.update_opengl_vecs();
@@ -71,7 +75,7 @@ pub fn create_hexagon_points(
     radius: f32,
 ) -> DecorationTypes {
     let mut hexagon_point_bakcground = HexagonPointBackground::new(color, alpha, size_info, radius);
-    //hexagon_point_bakcground.update_opengl_vecs();
+    hexagon_point_bakcground.update_opengl_vecs();
     DecorationTypes::Points(DecorationPoints::Hexagon(hexagon_point_bakcground))
 }
 
@@ -81,13 +85,13 @@ pub fn gen_hexagon_vertices(size_info: SizeInfo, x: f32, y: f32, radius: f32) ->
     let x_60_degrees_offset = COS_60 * radius;
     let y_60_degrees_offset = SIN_60 * radius;
     // Order of vertices:
-    //    3------2
-    //   /        \
-    //  /          \
-    // 4            1
-    //  \          /
-    //   \        /
-    //    5------6
+    //    3-------2
+    //   /         \
+    //  /           \
+    // 4             1
+    //  \           /
+    //   \         /
+    //    5-------6
     vec![
         // Mid right:
         size_info.scale_x(x + radius),
@@ -129,6 +133,7 @@ pub struct HexagonLineBackground {
     pub vecs: Vec<f32>,
 }
 
+// TODO: This is no longer a FAN, but a set of triangles
 pub struct HexagonFanBackground {
     // shader_vertex_path: String,
     // shader_fragment_path: String,
@@ -160,45 +165,91 @@ impl HexagonFanBackground {
         }
     }
     pub fn update_opengl_vecs(&mut self) {
-        let mut hexagons = vec![];
+        let mut res = vec![];
         // To avoid colliding with the HexagonLines, the fans ocupy a radius a bit smaller
         let inner_hexagon_radius_percent = 0.92f32; // XXX: Maybe this can be a field?
         let coords = background_fill_hexagon_positions(self.size_info, self.radius);
         // TODO: The alpha should be calculated inside the shaders
-        let mut hexagon_vecs = vec![
-            0f32,
-            0f32, // center
+        //          N
+        //      3-------2
+        //     /         \
+        //    /           \
+        // W 4      0      1 E
+        //    \           /
+        //     \         /
+        //      5-------6
+        //          S
+        let mut center = vec![
+            0f32, // x
+            0f32, // y
             f32::from(self.center_color.r) / 255.,
             f32::from(self.center_color.g) / 255.,
             f32::from(self.center_color.b) / 255.,
-            self.alpha / 255.,
+            0.0f32,
         ];
-        for _ in 0..6 {
-            hexagon_vecs.append(vec![
-                0f32,
-                0f32, // x,y
-                f32::from(self.vertex_color.r) / 255.,
-                f32::from(self.vertex_color.g) / 255.,
-                f32::from(self.vertex_color.b) / 255.,
-                self.alpha / 255.,
-            ]);
-        }
+        let sides = vec![
+            0f32, // x
+            0f32, // y
+            f32::from(self.vertex_color.r) / 255.,
+            f32::from(self.vertex_color.g) / 255.,
+            f32::from(self.vertex_color.b) / 255.,
+            self.alpha,
+        ];
+        let mut east = sides.clone();
+        let mut northeast = sides.clone();
+        let mut northwest = sides.clone();
+        let mut west = sides.clone();
+        let mut southwest = sides.clone();
+        let mut southeast = sides;
         for coord in coords {
             // The first pair of coordinates are the center of the hexagon
-            hexagons.push(self.size_info.scale_x(coord.x));
-            hexagons.push(self.size_info.scale_y(coord.y));
-            hexagons.append(&mut inside_color_vecs.clone());
+            center[0] = self.size_info.scale_x(coord.x);
+            center[1] = self.size_info.scale_y(coord.y);
             let hexagon_vertices = gen_hexagon_vertices(
                 self.size_info,
                 coord.x,
                 coord.y,
                 self.radius * inner_hexagon_radius_percent,
             );
-            for vec_data in hexagon_vertices.chunks(2) {
-                hexagons.append(&mut color_vecs.clone());
-            }
+            // Overwrite the positions
+            east[0] = hexagon_vertices[0];
+            east[1] = hexagon_vertices[1];
+            northeast[0] = hexagon_vertices[2];
+            northeast[1] = hexagon_vertices[3];
+            northwest[0] = hexagon_vertices[4];
+            northwest[1] = hexagon_vertices[5];
+            west[0] = hexagon_vertices[6];
+            west[1] = hexagon_vertices[7];
+            southwest[0] = hexagon_vertices[8];
+            southwest[1] = hexagon_vertices[9];
+            southeast[0] = hexagon_vertices[10];
+            southeast[1] = hexagon_vertices[11];
+            // 0, 1, 2, // North-East triangle
+            res.append(&mut center.clone());
+            res.append(&mut east.clone());
+            res.append(&mut northeast.clone());
+            // 0, 2, 3, North triangle
+            res.append(&mut center.clone());
+            res.append(&mut northeast.clone());
+            res.append(&mut northwest.clone());
+            // 0, 3, 4, North-West triangle
+            res.append(&mut center.clone());
+            res.append(&mut northwest.clone());
+            res.append(&mut west.clone());
+            // 0, 4, 5, South-West triangle
+            res.append(&mut center.clone());
+            res.append(&mut west.clone());
+            res.append(&mut southwest.clone());
+            // 0, 5, 6, South triangle
+            res.append(&mut center.clone());
+            res.append(&mut southwest.clone());
+            res.append(&mut southeast.clone());
+            // 0, 6, 1, South-East triangle
+            res.append(&mut center.clone());
+            res.append(&mut southeast.clone());
+            res.append(&mut east.clone());
         }
-        self.vecs = hexagons;
+        self.vecs = res;
     }
 }
 impl HexagonLineBackground {
@@ -269,16 +320,16 @@ fn background_fill_hexagon_positions(size: SizeInfo, radius: f32) -> Vec<Value2D
     let mut current_x_position = 0f32;
     let mut half_offset = true; // When true, we will add half radius to Y to make sure the hexagons do not overlap
     let mut res = vec![];
-    while current_x_position <= size.width {
+    while current_x_position <= (size.width + radius * 2f32) {
         let current_y_position = 0f32;
         let mut temp_y = current_y_position;
         if half_offset {
             // shift the y position in alternate fashion that the positions look like:
-            // x   x   x   x
             //   x   x   x
-            temp_y += y_offset;
+            // x   x   x   x
+            temp_y -= y_offset;
         }
-        while temp_y <= size.height {
+        while temp_y <= (size.height + radius * 2f32) {
             res.push(Value2D { x: current_x_position, y: temp_y });
             temp_y += y_offset * 2f32;
         }
@@ -302,15 +353,6 @@ impl Decoration for HexagonLineBackground {
                 self.radius,
             ));
         }
-        // What is returned:
         hexagons
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
     }
 }
