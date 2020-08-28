@@ -271,13 +271,13 @@ impl Display {
         let hexagon_fan_decorator = alacritty_decorations::create_hexagon_fan(
             hexagon_color,
             Rgb { r: 0, g: 0, b: 0 },
-            0.5f32,
+            0.05f32,
             size_info,
             hexagon_radius,
         );
         let hexagon_point_decorator = alacritty_decorations::create_hexagon_points(
             hexagon_color,
-            0.9f32,
+            0.4f32,
             size_info,
             hexagon_radius,
         );
@@ -463,13 +463,13 @@ impl Display {
         let hexagon_fan_decorator = alacritty_decorations::create_hexagon_fan(
             hexagon_color,
             Rgb { r: 0, g: 0, b: 0 },
-            0.5f32,
+            0.05f32,
             self.size_info,
             hexagon_radius,
         );
         let hexagon_point_decorator = alacritty_decorations::create_hexagon_points(
             hexagon_color,
-            0.9f32,
+            0.4f32,
             self.size_info,
             hexagon_radius,
         );
@@ -719,19 +719,11 @@ impl Display {
                         }
                     },
                     DecorationTypes::Fans(fan_decor) => match fan_decor {
-                        DecorationFans::Hexagon((hex_fans, number_vertices)) => {
+                        DecorationFans::Hexagon((hex_fans, _number_vertices)) => {
                             info!("- Drawing hexagon fans");
                             info!("- - Decorations Hexagon Fans: {:?}", hex_fans.vecs);
                             // Triangle fans decorators contain the number of sides
-                            for opengl_data in hex_fans.vecs.chunks(*number_vertices) {
-                                self.renderer.draw_hex_bg(
-                                    &size_info,
-                                    &opengl_data,
-                                    /*Rgb { r: 25, g: 88, b: 167 },
-                                    curr_opacity.abs(),
-                                    renderer::DrawArrayMode::GlTriangleFan,*/
-                                );
-                            }
+                            self.renderer.draw_hex_bg(&size_info, &hex_fans.vecs);
                         }
                     },
                     DecorationTypes::Points(point_decor) => match point_decor {
