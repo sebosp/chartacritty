@@ -585,6 +585,7 @@ impl QuadRenderer {
         let mut rect_vao: GLuint = 0;
         let mut rect_vbo: GLuint = 0;
         let mut rect_ebo: GLuint = 0;
+        //let mut hex_ebo: GLuint = 0;
 
         unsafe {
             gl::Enable(gl::BLEND);
@@ -702,6 +703,37 @@ impl QuadRenderer {
                 indices.as_ptr() as *const _,
                 gl::STATIC_DRAW,
             );
+            /* TODO: figure out how to use indices for DrawElements
+            // ---------------------
+            // Filled Hexagon Setup
+            // ---------------------
+            // Order of vertices:
+            //          N
+            //      3-------2
+            //     /         \
+            //    /           \
+            // W 4      0      1 E
+            //    \           /
+            //     \         /
+            //      5-------6
+            //          S
+            gl::GenBuffers(1, &mut hex_ebo);
+            let indices: [u32; 18] = [
+                0, 1, 2, // North-East
+                0, 2, 3, // North
+                0, 3, 4, // North-West
+                0, 4, 5, // South-West
+                0, 5, 6, // South
+                0, 6, 1, // South-East
+            ];
+
+            gl::BindBuffer(gl::ELEMENT_ARRAY_BUFFER, hex_ebo);
+            gl::BufferData(
+                gl::ELEMENT_ARRAY_BUFFER,
+                (indices.len() * size_of::<u32>()) as isize,
+                indices.as_ptr() as *const _,
+                gl::STATIC_DRAW,
+            );*/
 
             // Cleanup.
             gl::BindVertexArray(0);
@@ -819,16 +851,16 @@ impl QuadRenderer {
 
     /// `draw_hex_bg` draws one hexagon for the background
     pub fn draw_hex_bg(&mut self, props: &term::SizeInfo, opengl_data: &[f32]) {
-        // This function expects a vector that contains first 7 vertices (center plus hexagon
-        // vertices) and then followed by that it's the color RGBA for each of these 7 vertices.
-        let opengl_data = vec![
+        // This function expects a vector that contains 6 data points per vertex:
+        // 2 are x,y position and the other 4 are the r,g,b,a
+        /*let opengl_data = vec![
             0.5f32, 0.5f32, // x, y
             1.0f32, 0.0f32, 0.0f32, 1.0f32, // RGBA
             0.8f32, 0.8f32, // x, y
             0.0f32, 1.0f32, 0.0f32, 1.0f32, // RGBA
             0.7f32, 0.3f32, // x, y
             0.0f32, 0.0f32, 1.0f32, 1.0f32, // RGBA
-        ];
+        ];*/
         unsafe {
             // Swap program
             gl::UseProgram(self.hex_bg_program.id);
@@ -850,7 +882,7 @@ impl QuadRenderer {
                 2, // position has 2 values: X, Y
                 gl::FLOAT,
                 gl::FALSE,
-                /* 7 vertices with data (x,y) + 7 vertices with data (R, G, B, A)*/
+                // [2(x,y) + 4(r,g,b,a) ] -> 6
                 (size_of::<f32>() * 6) as _,
                 ptr::null(),
             );
@@ -862,8 +894,9 @@ impl QuadRenderer {
                 4, // Color has 4 items, R, G, B, A
                 gl::FLOAT,
                 gl::FALSE,
-                /* 7 vertices with data (x,y) + 7 vertices with data (R, G, B, A)*/
+                // [2(x,y) + 4(r,g,b,a) ] -> 6
                 (size_of::<f32>() * 6) as _,
+                // The colors are offset by 2 (x,y) points
                 (size_of::<f32>() * 2) as _,
             );
 
@@ -881,7 +914,7 @@ impl QuadRenderer {
         unsafe {
             // Deactivate rectangle program again
             // Draw the incoming array, opengl_data contains:
-            // [2(x,y) * 7 + 4(r,g,b,a) * 7 ] -> 6 * 7
+            // [2(x,y) + 4(r,g,b,a) ] -> 6
             gl::DrawArrays(gl::TRIANGLES, 0, (opengl_data.len() / 6usize) as i32);
 
             // Reset blending strategy
