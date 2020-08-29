@@ -2,7 +2,8 @@ use std::borrow::Cow;
 use std::fmt::{self, Debug, Formatter};
 use std::sync::Arc;
 
-use crate::term::{ClipboardType, SizeInfo};
+use crate::term::ClipboardType;
+use alacritty_common::SizeInfo;
 
 #[derive(Clone)]
 pub enum Event {

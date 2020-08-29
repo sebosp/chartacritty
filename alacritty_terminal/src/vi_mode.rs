@@ -4,9 +4,9 @@ use serde::Deserialize;
 
 use crate::event::EventListener;
 use crate::grid::{GridCell, Scroll};
-use crate::index::{Column, Line, Point};
 use crate::term::cell::Flags;
 use crate::term::{Search, Term};
+use alacritty_common::index::{Column, Line, Point};
 
 /// Possible vi mode motion movements.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Deserialize)]
@@ -414,8 +414,9 @@ mod tests {
 
     use crate::config::MockConfig;
     use crate::event::Event;
-    use crate::index::{Column, Line};
-    use crate::term::{SizeInfo, Term};
+    use crate::term::Term;
+    use alacritty_common::index::{Column, Line};
+    use alacritty_common::SizeInfo;
 
     struct Mock;
     impl EventListener for Mock {

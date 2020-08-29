@@ -19,8 +19,8 @@ use crate::cursor;
 use crate::gl;
 use crate::gl::types::*;
 use crate::renderer::rects::RenderRect;
+use alacritty_common::index::{Column, Line};
 use alacritty_terminal::config::{self, Config, Delta, Font, StartupMode};
-use alacritty_terminal::index::{Column, Line};
 use alacritty_terminal::term::cell::{self, Flags};
 use alacritty_terminal::term::color::Rgb;
 use alacritty_terminal::term::{self, CursorKey, RenderableCell, RenderableCellContent, SizeInfo};
@@ -36,6 +36,8 @@ static RECT_SHADER_F_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../res/r
 static RECT_SHADER_V_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../res/rect.v.glsl");
 static CHRT_SHADER_F_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../res/rect.f.glsl");
 static CHRT_SHADER_V_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../res/rect.v.glsl");
+static HXBG_SHADER_F_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../res/hex_bg.f.glsl");
+static HXBG_SHADER_V_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../res/hex_bg.v.glsl");
 
 // Shader source which is used when live-shader-reload feature is disable.
 static TEXT_SHADER_F: &str =
@@ -50,6 +52,10 @@ static CHRT_SHADER_F: &str =
     include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../res/rect.f.glsl"));
 static CHRT_SHADER_V: &str =
     include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../res/rect.v.glsl"));
+static HXBG_SHADER_F: &str =
+    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../res/hex_bg.f.glsl"));
+static HXBG_SHADER_V: &str =
+    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../res/hex_bg.v.glsl"));
 
 /// `LoadGlyph` allows for copying a rasterized glyph into graphics memory.
 pub trait LoadGlyph {
@@ -84,7 +90,7 @@ impl Display for Error {
         match self {
             Error::ShaderCreation(err) => {
                 write!(f, "There was an error initializing the shaders: {}", err)
-            },
+            }
         }
     }
 }
@@ -126,7 +132,7 @@ pub struct RectShaderProgram {
     u_color: GLint,
 }
 
-/// Activity Line program
+/// Charts Shader Program
 ///
 /// Uniforms are prefixed with "u"
 #[derive(Debug)]
@@ -135,6 +141,17 @@ pub struct ChartsShaderProgram {
     id: GLuint,
     /// Line color
     u_color: GLint,
+}
+
+/// Hexagon Background Shader Program
+///
+/// Uniforms are prefixed with "u"
+#[derive(Debug)]
+pub struct HexagonShaderProgram {
+    // Program id,
+    id: GLuint,
+    /// The time uniform to be used to change opacity of different regions
+    u_epoch_millis: GLint,
 }
 
 #[derive(Copy, Debug, Clone)]
@@ -431,6 +448,7 @@ pub struct QuadRenderer {
     program: TextShaderProgram,
     rect_program: RectShaderProgram,
     charts_program: ChartsShaderProgram,
+    hex_bg_program: HexagonShaderProgram,
     vao: GLuint,
     ebo: GLuint,
     vbo_instance: GLuint,
@@ -464,6 +482,20 @@ pub struct LoaderApi<'a> {
 pub struct Batch {
     tex: GLuint,
     instances: Vec<InstanceData>,
+}
+
+#[derive(Debug)]
+pub enum DrawArrayMode {
+    GlPoints,
+    GlLineStrip,
+    GlLineLoop,
+    GlTriangleFan,
+    /* GlLines,
+     * GlTriangleStrip,
+     * GlTriangles,
+     * GlQuadStrip, // Unsupported
+     * GlQuads,
+     * GlPolygon, */
 }
 
 impl Batch {
@@ -543,6 +575,7 @@ impl QuadRenderer {
         let program = TextShaderProgram::new()?;
         let rect_program = RectShaderProgram::new()?;
         let charts_program = ChartsShaderProgram::new()?;
+        let hex_bg_program = HexagonShaderProgram::new()?;
 
         let mut vao: GLuint = 0;
         let mut ebo: GLuint = 0;
@@ -552,6 +585,7 @@ impl QuadRenderer {
         let mut rect_vao: GLuint = 0;
         let mut rect_vbo: GLuint = 0;
         let mut rect_ebo: GLuint = 0;
+        //let mut hex_ebo: GLuint = 0;
 
         unsafe {
             gl::Enable(gl::BLEND);
@@ -669,6 +703,37 @@ impl QuadRenderer {
                 indices.as_ptr() as *const _,
                 gl::STATIC_DRAW,
             );
+            /* TODO: figure out how to use indices for DrawElements
+            // ---------------------
+            // Filled Hexagon Setup
+            // ---------------------
+            // Order of vertices:
+            //          N
+            //      3-------2
+            //     /         \
+            //    /           \
+            // W 4      0      1 E
+            //    \           /
+            //     \         /
+            //      5-------6
+            //          S
+            gl::GenBuffers(1, &mut hex_ebo);
+            let indices: [u32; 18] = [
+                0, 1, 2, // North-East
+                0, 2, 3, // North
+                0, 3, 4, // North-West
+                0, 4, 5, // South-West
+                0, 5, 6, // South
+                0, 6, 1, // South-East
+            ];
+
+            gl::BindBuffer(gl::ELEMENT_ARRAY_BUFFER, hex_ebo);
+            gl::BufferData(
+                gl::ELEMENT_ARRAY_BUFFER,
+                (indices.len() * size_of::<u32>()) as isize,
+                indices.as_ptr() as *const _,
+                gl::STATIC_DRAW,
+            );*/
 
             // Cleanup.
             gl::BindVertexArray(0);
@@ -700,8 +765,8 @@ impl QuadRenderer {
                         | DebouncedEvent::Write(_)
                         | DebouncedEvent::Chmod(_) => {
                             msg_tx.send(Msg::ShaderReload).expect("msg send ok");
-                        },
-                        _ => {},
+                        }
+                        _ => {}
                     }
                 }
             });
@@ -711,6 +776,7 @@ impl QuadRenderer {
             program,
             rect_program,
             charts_program,
+            hex_bg_program,
             vao,
             ebo,
             vbo_instance,
@@ -783,18 +849,126 @@ impl QuadRenderer {
         }
     }
 
-    /// `draw_charts_line` draws an opengl line that contains the data from the metrics
-    pub fn draw_charts_line(
+    /// `draw_hex_bg` draws one hexagon for the background
+    pub fn draw_hex_bg(&mut self, props: &term::SizeInfo, opengl_data: &[f32]) {
+        // This function expects a vector that contains 6 data points per vertex:
+        // 2 are x,y position and the other 4 are the r,g,b,a
+        /*let opengl_data = vec![
+            0.5f32, 0.5f32, // x, y
+            1.0f32, 0.0f32, 0.0f32, 1.0f32, // RGBA
+            0.8f32, 0.8f32, // x, y
+            0.0f32, 1.0f32, 0.0f32, 1.0f32, // RGBA
+            0.7f32, 0.3f32, // x, y
+            0.0f32, 0.0f32, 1.0f32, 1.0f32, // RGBA
+        ];*/
+        unsafe {
+            // Swap program
+            gl::UseProgram(self.hex_bg_program.id);
+
+            // Remove padding from viewport
+            gl::Viewport(0, 0, props.width as i32, props.height as i32);
+
+            // Change blending strategy
+            gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+
+            // Setup data and buffers
+            gl::BindVertexArray(self.rect_vao);
+            gl::BindBuffer(gl::ARRAY_BUFFER, self.rect_vbo);
+
+            // Position
+            gl::EnableVertexAttribArray(0);
+            gl::VertexAttribPointer(
+                0, // location=0 is the vertex position
+                2, // position has 2 values: X, Y
+                gl::FLOAT,
+                gl::FALSE,
+                // [2(x,y) + 4(r,g,b,a) ] -> 6
+                (size_of::<f32>() * 6) as _,
+                ptr::null(),
+            );
+
+            // Colors
+            gl::EnableVertexAttribArray(1);
+            gl::VertexAttribPointer(
+                1, // location=1 is the color
+                4, // Color has 4 items, R, G, B, A
+                gl::FLOAT,
+                gl::FALSE,
+                // [2(x,y) + 4(r,g,b,a) ] -> 6
+                (size_of::<f32>() * 6) as _,
+                // The colors are offset by 2 (x,y) points
+                (size_of::<f32>() * 2) as _,
+            );
+
+            // Load vertex data into array buffer
+            gl::BufferData(
+                gl::ARRAY_BUFFER,
+                (size_of::<f32>() * opengl_data.len()) as _,
+                opengl_data.as_ptr() as *const _,
+                gl::STATIC_DRAW,
+            );
+        }
+
+        self.hex_bg_program.set_epoch_millis(0.0f32);
+
+        unsafe {
+            // Deactivate rectangle program again
+            // Draw the incoming array, opengl_data contains:
+            // [2(x,y) + 4(r,g,b,a) ] -> 6
+            gl::DrawArrays(gl::TRIANGLES, 0, (opengl_data.len() / 6usize) as i32);
+
+            // Reset blending strategy
+            gl::BlendFunc(gl::SRC1_COLOR, gl::ONE_MINUS_SRC1_COLOR);
+
+            // Reset data and buffers
+            gl::BindBuffer(gl::ARRAY_BUFFER, 0);
+            gl::BindVertexArray(0);
+
+            let padding_x = props.padding_x as i32;
+            let padding_y = props.padding_y as i32;
+            let width = props.width as i32;
+            let height = props.height as i32;
+            gl::Viewport(padding_x, padding_y, width - 2 * padding_x, height - 2 * padding_y);
+
+            // Disable program
+            gl::UseProgram(0);
+        }
+    }
+
+    /// `draw_array` draws a vec made of 2D values in a specific mode
+    pub fn draw_array(
         &mut self,
         props: &term::SizeInfo,
         opengl_vecs: &[f32],
         color: Rgb,
         alpha: f32,
+        mode: DrawArrayMode,
     ) {
-        // A line should have at least 2 points, so [x1, y1, x2, y2]
-        if opengl_vecs.len() < 4 {
-            return;
-        }
+        match mode {
+            DrawArrayMode::GlPoints => (),
+            _ =>
+            // All types, except for Points, need at least 2 x,y coordinates to work on
+            {
+                if opengl_vecs.len() < 4 {
+                    return;
+                }
+            }
+        };
+        // Translate our enum to opengl enum, maybe this can be ommitted?
+        // Maybe we can extend the enum with custom classes that end up being like this.
+        // So then it should become a trait
+        let gl_mode = match mode {
+            DrawArrayMode::GlPoints => gl::POINTS,
+            DrawArrayMode::GlLineStrip => gl::LINE_STRIP,
+            DrawArrayMode::GlLineLoop => gl::LINE_LOOP,
+            DrawArrayMode::GlTriangleFan => gl::TRIANGLE_FAN,
+            /* DrawArrayMode::GlLines => gl::LINES,
+             * DrawArrayMode::GlTriangleStrip => gl::TRIANGLE_STRIP,
+             * DrawArrayMode::GlTriangles => gl::TRIANGLES,
+             * DrawArrayMode::GlQuadStrip => gl::QUAD_STRIP, // Unsupported?
+             * DrawArrayMode::GlQuads => gl::QUADS,
+             * DrawArrayMode::GlPolygon => gl::POLYGON_MODE, */
+        };
         // TODO: Use the Charts Shader Program (For now a copy of rect)
         unsafe {
             // Swap program
@@ -835,8 +1009,8 @@ impl QuadRenderer {
 
         // Deactivate rectangle program again
         unsafe {
-            // Draw the Activity Line, 2 points per vertex
-            gl::DrawArrays(gl::LINE_STRIP, 0, (opengl_vecs.len() / 2usize) as i32);
+            // Draw the incoming array, opengl_vecs contains 2 points per vertex:
+            gl::DrawArrays(gl_mode, 0, (opengl_vecs.len() / 2usize) as i32);
 
             // Reset blending strategy
             gl::BlendFunc(gl::SRC1_COLOR, gl::ONE_MINUS_SRC1_COLOR);
@@ -929,11 +1103,11 @@ impl QuadRenderer {
 
                 info!("... successfully reloaded shaders");
                 (program, rect_program)
-            },
+            }
             (Err(err), _) | (_, Err(err)) => {
                 error!("{}", err);
                 return;
-            },
+            }
         };
 
         self.active_tex = 0;
@@ -1124,7 +1298,7 @@ impl<'a, C> RenderApi<'a, C> {
                 });
                 self.add_render_item(cell, glyph);
                 return;
-            },
+            }
             RenderableCellContent::Chars(chars) => chars,
         };
 
@@ -1193,7 +1367,7 @@ fn load_glyph(
                 atlas.push(new);
             }
             load_glyph(active_tex, atlas, current_atlas, rasterized)
-        },
+        }
         Err(AtlasInsertError::GlyphTooLarge) => Glyph {
             tex_id: atlas[*current_atlas].id,
             colored: false,
@@ -1442,6 +1616,48 @@ impl Drop for ChartsShaderProgram {
         }
     }
 }
+impl HexagonShaderProgram {
+    pub fn new() -> Result<Self, ShaderCreationError> {
+        let (vertex_src, fragment_src) = if cfg!(feature = "live-shader-reload") {
+            (None, None)
+        } else {
+            (Some(HXBG_SHADER_V), Some(HXBG_SHADER_F))
+        };
+        let vertex_shader = create_shader(HXBG_SHADER_V_PATH, gl::VERTEX_SHADER, vertex_src)?;
+        let fragment_shader = create_shader(HXBG_SHADER_F_PATH, gl::FRAGMENT_SHADER, fragment_src)?;
+        let program = create_program(vertex_shader, fragment_shader)?;
+
+        unsafe {
+            gl::DeleteShader(fragment_shader);
+            gl::DeleteShader(vertex_shader);
+            gl::UseProgram(program);
+        }
+
+        // get uniform locations
+        let u_epoch_millis =
+            unsafe { gl::GetUniformLocation(program, b"epoch_millis\0".as_ptr() as *const _) };
+
+        let shader = HexagonShaderProgram { id: program, u_epoch_millis };
+
+        unsafe { gl::UseProgram(0) }
+
+        Ok(shader)
+    }
+
+    fn set_epoch_millis(&self, epoch_millis: f32) {
+        unsafe {
+            gl::Uniform1f(self.u_epoch_millis, epoch_millis);
+        }
+    }
+}
+
+impl Drop for HexagonShaderProgram {
+    fn drop(&mut self) {
+        unsafe {
+            gl::DeleteProgram(self.id);
+        }
+    }
+}
 
 fn create_program(vertex: GLuint, fragment: GLuint) -> Result<GLuint, ShaderCreationError> {
     unsafe {
@@ -1576,7 +1792,7 @@ impl Display for ShaderCreationError {
             ShaderCreationError::Io(err) => write!(f, "Couldn't read shader: {}", err),
             ShaderCreationError::Compile(path, log) => {
                 write!(f, "Failed compiling shader at {}: {}", path.display(), log)
-            },
+            }
             ShaderCreationError::Link(log) => write!(f, "Failed linking shader: {}", log),
         }
     }
@@ -1723,11 +1939,11 @@ impl Atlas {
                 BitmapBuffer::RGB(buf) => {
                     colored = false;
                     (gl::RGB, buf)
-                },
+                }
                 BitmapBuffer::RGBA(buf) => {
                     colored = true;
                     (gl::RGBA, buf)
-                },
+                }
             };
 
             gl::TexSubImage2D(

@@ -2,8 +2,8 @@
 
 use super::{BidirectionalIterator, Grid};
 use crate::grid::GridCell;
-use crate::index::{Column, Line, Point};
 use crate::term::cell::{Cell, Flags};
+use alacritty_common::index::{Column, Line, Point};
 
 impl GridCell for usize {
     fn is_empty(&self) -> bool {

@@ -6,8 +6,8 @@ use std::ops::{Deref, Index, IndexMut, Range, RangeFrom, RangeFull, RangeTo};
 use serde::{Deserialize, Serialize};
 
 use crate::ansi::{CharsetIndex, StandardCharset};
-use crate::index::{Column, IndexRange, Line, Point};
 use crate::term::cell::{Cell, Flags};
+use alacritty_common::index::{Column, IndexRange, Line, Point};
 
 pub mod resize;
 mod row;

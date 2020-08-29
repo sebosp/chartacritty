@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use clap::{crate_authors, crate_description, crate_name, crate_version, App, Arg};
 use log::{self, error, LevelFilter};
 
+use alacritty_common::index::{Column, Line};
 use alacritty_terminal::config::{Delta, Dimensions, Program, DEFAULT_NAME};
-use alacritty_terminal::index::{Column, Line};
 
 use crate::config::Config;
 

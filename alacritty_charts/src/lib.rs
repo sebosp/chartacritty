@@ -32,15 +32,13 @@ pub use hyper;
 pub use hyper_tls;
 pub use percent_encoding;
 pub use tokio;
-pub use tokio_core;
 
+use alacritty_common::Rgb;
+use alacritty_common::SizeInfo;
 use decorations::*;
 use log::*;
-use serde::de::Visitor;
-use serde::{Deserialize, Deserializer};
-use serde_yaml;
-use std::fmt;
-use std::str::FromStr;
+use serde::Deserialize;
+use std::cmp::Ordering;
 use std::time::UNIX_EPOCH;
 use tracing::{event, span, Level};
 
@@ -203,18 +201,6 @@ pub struct TimeSeries {
 
     /// How many items are active in our circular buffer
     pub active_items: usize,
-
-    /// The previous to current metric snapshot, for debug purposes
-    /// TODO: drop when upsert is sttable
-    pub prev_snapshot: Vec<(u64, Option<f64>)>,
-
-    /// The previous value inserted
-    /// TODO: drop when upsert is stable
-    pub prev_value: (u64, Option<f64>),
-
-    /// The last upsert type
-    /// TODO: drop when upsert is stable
-    pub upsert_type: UpsertType,
 }
 
 /// `IterTimeSeries` provides the Iterator Trait for TimeSeries metrics.
@@ -229,108 +215,6 @@ pub struct IterTimeSeries<'a> {
     current_item: usize,
 }
 
-/// `Rgb` is a copy of alacritty_terminal/src/term/color.rs
-/// Because we also need to deserialize from yaml
-#[derive(Debug, Eq, PartialEq, Copy, Clone, Default, Serialize)]
-pub struct Rgb {
-    pub r: u8,
-    pub g: u8,
-    pub b: u8,
-}
-
-/// Transform from a hex string, copy from alacritty_terminal/src/term/colors.rs
-impl FromStr for Rgb {
-    type Err = ();
-
-    fn from_str(s: &str) -> ::std::result::Result<Rgb, ()> {
-        let mut chars = s.chars();
-        let mut rgb = Rgb::default();
-
-        macro_rules! component {
-            ($($c:ident),*) => {
-                $(
-                    match chars.next().and_then(|c| c.to_digit(16)) {
-                        Some(val) => rgb.$c = (val as u8) << 4,
-                        None => return Err(())
-                    }
-
-                    match chars.next().and_then(|c| c.to_digit(16)) {
-                        Some(val) => rgb.$c |= val as u8,
-                        None => return Err(())
-                    }
-                )*
-            }
-        }
-
-        match chars.next() {
-            Some('0') => {
-                if chars.next() != Some('x') {
-                    return Err(());
-                }
-            }
-            Some('#') => (),
-            _ => return Err(()),
-        }
-
-        component!(r, g, b);
-
-        Ok(rgb)
-    }
-}
-
-/// Deserialize an Rgb from a hex string, copy from alacritty_terminal/src/term/colors.rs
-impl<'de> Deserialize<'de> for Rgb {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        struct RgbVisitor;
-
-        // Used for deserializing reftests
-        #[derive(Deserialize)]
-        struct RgbDerivedDeser {
-            r: u8,
-            g: u8,
-            b: u8,
-        }
-
-        impl<'a> Visitor<'a> for RgbVisitor {
-            type Value = Rgb;
-
-            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.write_str("hex color like 0xff00ff")
-            }
-
-            fn visit_str<E>(self, value: &str) -> ::std::result::Result<Rgb, E>
-            where
-                E: ::serde::de::Error,
-            {
-                Rgb::from_str(&value[..])
-                    .map_err(|_| E::custom("failed to parse rgb; expected hex color like 0xff00ff"))
-            }
-        }
-
-        // Return an error if the syntax is incorrect
-        let value = serde_yaml::Value::deserialize(deserializer)?;
-
-        // Attempt to deserialize from struct form
-        if let Ok(RgbDerivedDeser { r, g, b }) = RgbDerivedDeser::deserialize(value.clone()) {
-            return Ok(Rgb { r, g, b });
-        }
-
-        // Deserialize from hex notation (either 0xff00ff or #ff00ff)
-        match value.deserialize_str(RgbVisitor) {
-            Ok(rgb) => Ok(rgb),
-            Err(err) => {
-                error!(
-                    "Rgb::deserialize: Problem with config: {}; using color #000000",
-                    err
-                );
-                Ok(Rgb::default())
-            }
-        }
-    }
-}
 /// `ManualTimeSeries` is a basic time series that we feed ourselves, used for internal counters
 /// for example keyboard input, output newlines, loaded items count.
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -451,45 +335,32 @@ impl TimeSeriesSource {
 #[derive(Default, Debug, Serialize, Deserialize, PartialEq, Clone, Copy)]
 pub struct Value2D {
     #[serde(default)]
-    x: f32,
+    pub x: f32,
     #[serde(default)]
-    y: f32,
+    pub y: f32,
 }
 
-/// `SizeInfo` is a copy of the Alacritty SizeInfo, XXX: remove on merge.
+/// `ChartSizeInfo` Contains the current chart size information plus the terminal size info
 #[derive(Default, Debug, Serialize, Deserialize, PartialEq, Clone, Copy)]
-pub struct SizeInfo {
-    pub width: f32,
-    pub height: f32,
+pub struct ChartSizeInfo {
+    pub term_size: SizeInfo,
     pub chart_width: f32,
     pub chart_height: f32,
-    pub cell_width: f32,
-    pub cell_height: f32,
-    pub padding_x: f32,
-    pub padding_y: f32,
 }
 
-impl SizeInfo {
-    /// `scale_x` Scales the value from the current display boundary to
-    /// a cartesian plane from [-1.0, 1.0], where -1.0 is 0px (left-most) and
+impl ChartSizeInfo {
+    /// `scale_x` Calls the SizeInfo scale_x method, the input value is already a f32 pixel
     /// 1.0 is the `display_width` parameter (right-most), i.e. 1024px.
     pub fn scale_x(&self, input_value: f32) -> f32 {
-        let center_x = self.width / 2.;
-        let x = self.padding_x + input_value;
-        (x - center_x) / center_x
+        self.term_size.scale_x(input_value)
     }
 
-    /// `scale_y_to_size` Scales the value from the current display boundary to
-    /// a cartesian plane from [-1.0, 1.0], where 1.0 is 0px (top) and -1.0 is
-    /// the `display_height` parameter (bottom), i.e. 768px.
+    /// `scale_x` Scales an input value considering a max_value that must be set to the height of a
+    /// chart
     pub fn scale_y(&self, max_value: f64, input_value: f64) -> f32 {
-        let center_y = self.height / 2.;
-        // From the bottom of the chart, what is the position of the input_value:
-        // max_value    = input_value
-        // chart_height   x
-        let y_metric_value = (input_value as f32 * self.chart_height) / max_value as f32;
-        let y = self.height - 2. * self.padding_y - y_metric_value;
-        -(y - center_y) / center_y
+        // Scale the metric value so that the max_value is the chart height
+        let scaled_metric_value = (input_value as f32 * self.chart_height) / max_value as f32;
+        self.term_size.scale_y(scaled_metric_value)
     }
 }
 
@@ -578,7 +449,7 @@ pub struct TimeSeriesChart {
 impl TimeSeriesChart {
     /// `update_series_opengl_vecs` Represents the activity levels values in a
     /// drawable vector for opengl, for a specific index in the series array
-    pub fn update_series_opengl_vecs(&mut self, series_idx: usize, display_size: SizeInfo) {
+    pub fn update_series_opengl_vecs(&mut self, series_idx: usize, display_size: ChartSizeInfo) {
         let span = span!(
             Level::TRACE,
             "update_series_opengl_vecs",
@@ -589,12 +460,12 @@ impl TimeSeriesChart {
         if series_idx >= self.sources.len() {
             event!(
                 Level::ERROR,
-                "update_series_opengl_vecs: Request for out of bound series index: {}",
+                "update_series_opengl_vecs: Request for index out of bounds: {}",
                 series_idx
             );
             return;
         }
-        while self.opengl_vecs.capacity() <= self.sources.capacity() {
+        while self.opengl_vecs.len() <= self.sources.len() {
             self.opengl_vecs.push(vec![]);
         }
         let mut display_size = display_size;
@@ -608,6 +479,14 @@ impl TimeSeriesChart {
         }
         // Get the opengl representation of the vector
         let opengl_vecs_capacity = self.sources[series_idx].series().active_items;
+        event!(
+            Level::DEBUG,
+            "self: {:?}, self.opengl_vecs.capacity(): {}, self.sources.capacity(): {}, series_idx: {}",
+            self,
+            self.opengl_vecs.capacity(),
+            self.sources.capacity(),
+            series_idx,
+        );
         if opengl_vecs_capacity > self.opengl_vecs[series_idx].capacity() {
             let missing_capacity = opengl_vecs_capacity - self.opengl_vecs[series_idx].capacity();
             self.opengl_vecs[series_idx].reserve(missing_capacity);
@@ -620,6 +499,8 @@ impl TimeSeriesChart {
             display_size,
             self.position,
         );
+        // For every timeseries in the current chart, we should calculate what are the max, min,
+        // etc values so that we can draw them all together sensibly
         for source in &mut self.sources {
             if source.series().stats.is_dirty {
                 event!(
@@ -630,6 +511,8 @@ impl TimeSeriesChart {
                 source.series_mut().calculate_stats();
             }
         }
+        // Join all the stats max/min/etc, this time not for individual metrics but from them
+        // together
         self.calculate_stats();
         let mut decorations_space = 0f32;
         for decoration in &self.decorations {
@@ -704,7 +587,7 @@ impl TimeSeriesChart {
 
     /// `update_all_series_opengl_vecs` Represents the activity levels values in a
     /// drawable vector for opengl for all the available series in the current chart
-    pub fn update_all_series_opengl_vecs(&mut self, display_size: SizeInfo) {
+    pub fn update_all_series_opengl_vecs(&mut self, display_size: ChartSizeInfo) {
         let span = span!(
             Level::TRACE,
             "update_all_series_opengl_vecs",
@@ -871,9 +754,6 @@ impl Default for TimeSeries {
             missing_values_policy: MissingValuesPolicy::default(),
             first_idx: 0,
             active_items: 0,
-            prev_snapshot: Vec::with_capacity(default_capacity),
-            prev_value: (0, None),
-            upsert_type: UpsertType::default(),
         }
     }
 }
@@ -900,8 +780,7 @@ impl TimeSeries {
             "first" => MissingValuesPolicy::First,
             _ => {
                 // TODO: Implement FromStr somehow
-                MissingValuesPolicy::fixed(policy_type.clone())
-                    .unwrap_or(MissingValuesPolicy::default())
+                MissingValuesPolicy::fixed(policy_type.clone()).unwrap_or_default()
             }
         };
         self
@@ -1001,11 +880,11 @@ impl TimeSeries {
         } else {
             let target_idx = (self.first_idx + self.active_items) % self.metrics_capacity;
             self.metrics[target_idx] = input;
-            if self.active_items < self.metrics_capacity {
-                self.active_items += 1;
-            } else if self.active_items == self.metrics_capacity {
-                self.first_idx = (self.first_idx + 1) % self.metrics_capacity;
-            }
+            match self.active_items.cmp(&self.active_items) {
+                Ordering::Less => self.active_items += 1,
+                Ordering::Equal => self.first_idx = (self.first_idx + 1) % self.metrics_capacity,
+                Ordering::Greater => unreachable!(),
+            };
         }
         self.stats.is_dirty = true;
     }
@@ -1023,19 +902,6 @@ impl TimeSeries {
             % self.metrics.len() as i64) as usize
     }
 
-    fn sync_prev_snapshot(&mut self) {
-        if self.metrics.len() != self.prev_snapshot.len() {
-            self.prev_snapshot
-                .push(self.metrics[self.metrics.len() - 1]);
-        } else {
-            for item_num in 0..self.metrics.len() {
-                if self.prev_snapshot[item_num] != self.metrics[item_num] {
-                    self.prev_snapshot[item_num] = self.metrics[item_num];
-                }
-            }
-        }
-    }
-
     /// `upsert` Adds values to the circular buffer adding empty entries for
     /// missing entries, may invalidate the buffer if all data is outdated
     /// it returns the number of inserted records
@@ -1045,8 +911,6 @@ impl TimeSeries {
         let _enter = span.enter();
         if self.metrics.is_empty() {
             self.circular_push(input);
-            self.upsert_type = UpsertType::Empty;
-            self.prev_value = input;
             return 1;
         }
         if !self.sanity_check() {
@@ -1060,8 +924,6 @@ impl TimeSeries {
             // i.e. if the date of the computer needs to go back in time
             // we would need to restart the terminal to see metrics
             // XXX: What about timezones?
-            self.upsert_type = UpsertType::TooOld;
-            self.prev_value = input;
             return 0;
         }
         // as_vec() is 5, 6, 7, 3, 4
@@ -1071,13 +933,10 @@ impl TimeSeries {
         let inactive_time = input.0 as i64 - self.metrics[last_idx].0 as i64;
         if inactive_time > self.metrics_capacity as i64 {
             // The whole vector should be discarded
-            self.sync_prev_snapshot();
             self.first_idx = 0;
             self.metrics[0] = input;
             self.active_items = 1;
-            self.upsert_type = UpsertType::VectorDiscarded;
-            self.prev_value = input;
-            return 1;
+            1
         } else if inactive_time < 0 {
             // We have a metric for an epoch in the past.
             let current_min_epoch = self.metrics[self.first_idx].0;
@@ -1090,7 +949,6 @@ impl TimeSeries {
                 // XXX: This is wrong, we should add as many padding_items as possible without
                 // breaking the metrics_capacity.
                 if self.metrics.len() + 1 < self.metrics_capacity {
-                    self.sync_prev_snapshot();
                     // The vector is not full, let's shift the items to the right
                     // The array items have not been allocated at this point:
                     self.metrics.insert(0, input);
@@ -1098,11 +956,8 @@ impl TimeSeries {
                         self.metrics.insert(idx, (input.0 + idx as u64, None));
                     }
                     self.active_items += padding_items;
-                    self.upsert_type = UpsertType::PrevEpochInputVecNotFull;
-                    self.prev_value = input;
-                    return padding_items;
+                    padding_items
                 } else {
-                    self.sync_prev_snapshot();
                     // The vector is full, write the new epoch at first_idx and then fill the rest
                     // up to current_min value with None
                     let previous_min_epoch = self.metrics[self.first_idx].0;
@@ -1118,18 +973,16 @@ impl TimeSeries {
                     for fill_epoch in (input.0 + 1)..previous_min_epoch {
                         self.circular_push((fill_epoch, None));
                     }
-                    self.upsert_type = UpsertType::PrevEpochInputVecFull;
-                    self.prev_value = input;
                     // XXX: make sure this doesn't go above the metrics_capacity
                     self.active_items += previous_active_items;
-                    return (previous_min_epoch - input.0) as usize;
+                    (previous_min_epoch - input.0) as usize
                 }
             } else {
                 // The input epoch has already been inserted in our array
                 let target_idx = self.get_tail_backwards_offset_idx(inactive_time);
                 if self.metrics[target_idx].0 != input.0 {
                     event!(Level::ERROR,
-                        "upsert: lost synchrony len: {}, first_idx: {}, last_idx: {}, target_idx: {}, inactive_time: {}, input: {}, target_idx data: {}, prev_value: {:?}, upsert_type: {:?}, prev_snapshot: {:?}, metrics: {:?}",
+                        "upsert: lost synchrony len: {}, first_idx: {}, last_idx: {}, target_idx: {}, inactive_time: {}, input: {}, target_idx data: {}, metrics: {:?}",
                         self.metrics.len(),
                         self.first_idx,
                         last_idx,
@@ -1137,35 +990,24 @@ impl TimeSeries {
                         inactive_time,
                         input.0,
                         self.metrics[target_idx].0,
-                        self.prev_value,
-                        self.upsert_type,
-                        self.prev_snapshot,
                         self.metrics
                     );
-                    self.sync_prev_snapshot();
                     // Let's reset the whole vector if we lost synchrony
                     self.first_idx = 0;
                     self.metrics[0] = input;
                     self.active_items = 1;
                 } else {
-                    self.sync_prev_snapshot();
                     self.metrics[target_idx].1 =
                         self.resolve_metric_collision(self.metrics[target_idx].1, input.1);
                 }
-                self.upsert_type = UpsertType::OverwritePrevEpoch;
-                self.prev_value = input;
-                return 0;
+                0
             }
         } else if inactive_time == 0 {
-            self.sync_prev_snapshot();
             // We have a metric for the last indexed epoch
             self.metrics[last_idx].1 =
                 self.resolve_metric_collision(self.metrics[last_idx].1, input.1);
-            self.upsert_type = UpsertType::OverwriteLastEpoch;
-            self.prev_value = input;
-            return 0;
+            0
         } else {
-            self.sync_prev_snapshot();
             // The input epoch is in the future
             let max_epoch = self.metrics[last_idx].0;
             // Fill missing entries with None
@@ -1173,9 +1015,7 @@ impl TimeSeries {
                 self.circular_push((fill_epoch, None));
             }
             self.circular_push(input);
-            self.upsert_type = UpsertType::NewEpoch;
-            self.prev_value = input;
-            return 1;
+            1
         }
     }
 
@@ -1228,7 +1068,7 @@ impl TimeSeries {
         }
         let mut res: Vec<(u64, Option<f64>)> = Vec::with_capacity(self.metrics_capacity);
         for entry in self.iter() {
-            res.push(entry.clone());
+            res.push(*entry)
         }
         res
     }
@@ -1800,12 +1640,15 @@ mod tests {
 
     #[test]
     fn it_gets_deduped_opengl_vecs() {
-        let size_test = SizeInfo {
-            padding_x: 0.,
-            padding_y: 0.,
-            height: 200., // Display Height: 200px test
-            width: 200.,  // Display Width: 200px test
-            ..SizeInfo::default()
+        let size_test = ChartSizeInfo {
+            term_size: SizeInfo {
+                padding_x: 0.,
+                padding_y: 0.,
+                height: 200., // Display Height: 200px test
+                width: 200.,  // Display Width: 200px test
+                ..SizeInfo::default()
+            },
+            ..ChartSizeInfo::default()
         };
         let mut all_dups = TimeSeriesChart::default();
         all_dups.sources.push(TimeSeriesSource::default());
@@ -1944,12 +1787,15 @@ mod tests {
 
     #[test]
     fn it_scales_x_to_display_size() {
-        let mut test = SizeInfo {
-            padding_x: 0.,
-            padding_y: 0.,
-            height: 100.,
-            width: 100.,
-            ..SizeInfo::default()
+        let mut test = ChartSizeInfo {
+            term_size: SizeInfo {
+                padding_x: 0.,
+                padding_y: 0.,
+                height: 100.,
+                width: 100.,
+                ..SizeInfo::default()
+            },
+            ..ChartSizeInfo::default()
         };
         // display size: 100 px, input the value: 0, padding_x: 0
         // The value should return should be left-most: -1.0
@@ -1963,7 +1809,7 @@ mod tests {
         // The value should return should be the center: 0.0
         let mid = test.scale_x(50f32);
         assert_eq!(mid, 0.0f32);
-        test.padding_x = 50.;
+        test.term_size.padding_x = 50.;
         // display size: 100 px, input the value: 50, padding_x: 50px
         // The value returned should be the right-most: 1.0
         let mid = test.scale_x(50f32);
@@ -1972,12 +1818,15 @@ mod tests {
 
     #[test]
     fn it_scales_y_to_display_size() {
-        let mut size_test = SizeInfo {
-            padding_x: 0.,
-            padding_y: 0.,
-            height: 100.,
+        let mut size_test = ChartSizeInfo {
+            term_size: SizeInfo {
+                padding_x: 0.,
+                padding_y: 0.,
+                height: 100.,
+                ..SizeInfo::default()
+            },
             chart_height: 100.,
-            ..SizeInfo::default()
+            ..ChartSizeInfo::default()
         };
         let mut chart_test = TimeSeriesChart::default();
         // To make testing easy, let's make three values equivalent:
@@ -1997,7 +1846,7 @@ mod tests {
         // The value should return should be the center: 0.0
         let mid = size_test.scale_y(100f64, 50f64);
         assert_eq!(mid, 0.0f32);
-        size_test.padding_y = 25.;
+        size_test.term_size.padding_y = 25.;
         // display size: 100 px, input the value: 50, padding_y: 25
         // The value returned should be upper-most: 1.0
         // In this case, the chart (100px) is bigger than the display,
@@ -2007,14 +1856,17 @@ mod tests {
         assert_eq!(mid, 1.0f32);
     }
 
-    fn simple_chart_setup_with_none() -> (SizeInfo, TimeSeriesChart) {
+    fn simple_chart_setup_with_none() -> (ChartSizeInfo, TimeSeriesChart) {
         init_log();
-        let size_test = SizeInfo {
-            padding_x: 0.,
-            padding_y: 0.,
-            height: 200., // Display Height: 200px test
-            width: 200.,  // Display Width: 200px test
-            ..SizeInfo::default()
+        let size_test = ChartSizeInfo {
+            term_size: SizeInfo {
+                padding_x: 0.,
+                padding_y: 0.,
+                height: 200., // Display Height: 200px test
+                width: 200.,  // Display Width: 200px test
+                ..SizeInfo::default()
+            },
+            ..ChartSizeInfo::default()
         };
         let mut chart_test = TimeSeriesChart::default();
         chart_test.sources.push(TimeSeriesSource::default());
@@ -2323,7 +2175,7 @@ mod tests {
         chart_config.charts.push(chart_test.clone());
         chart_config.charts.push(chart_test.clone());
         chart_config.charts.push(chart_test.clone());
-        chart_config.charts.push(chart_test.clone());
+        chart_config.charts.push(chart_test);
         chart_config.setup_chart_spacing();
         assert_eq!(
             chart_config.charts[0].dimensions,
@@ -2374,9 +2226,6 @@ mod tests {
             missing_values_policy: MissingValuesPolicy::default(),
             stats: TimeSeriesStats::default(),
             first_idx: 0,
-            prev_snapshot: vec![],
-            upsert_type: UpsertType::default(),
-            prev_value: (0, None),
         };
         assert_eq!(bad.sanity_check(), false);
         let good = TimeSeries {
@@ -2392,9 +2241,6 @@ mod tests {
             missing_values_policy: MissingValuesPolicy::default(),
             stats: TimeSeriesStats::default(),
             first_idx: 0,
-            prev_snapshot: vec![],
-            upsert_type: UpsertType::default(),
-            prev_value: (0, None),
         };
         assert_eq!(good.sanity_check(), true);
     }
@@ -2472,9 +2318,6 @@ mod tests {
             missing_values_policy: MissingValuesPolicy::default(),
             stats: TimeSeriesStats::default(),
             first_idx: 0,
-            prev_snapshot: Vec::with_capacity(25),
-            upsert_type: UpsertType::default(),
-            prev_value: (0, None),
         };
         let previous_min_epoch = corrupt.metrics[corrupt.first_idx].0;
         assert_eq!(previous_min_epoch, 65916);

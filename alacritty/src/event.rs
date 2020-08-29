@@ -27,12 +27,12 @@ use serde_json as json;
 use font::set_font_smoothing;
 use font::{self, Size};
 
+use alacritty_common::index::{Column, Line, Point, Side};
 use alacritty_terminal::config::Font;
 use alacritty_terminal::config::LOG_TARGET_CONFIG;
 use alacritty_terminal::event::OnResize;
 use alacritty_terminal::event::{Event as TerminalEvent, EventListener, Notify};
 use alacritty_terminal::grid::Scroll;
-use alacritty_terminal::index::{Column, Line, Point, Side};
 use alacritty_terminal::message_bar::{Message, MessageBuffer};
 use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::sync::FairMutex;
@@ -52,8 +52,7 @@ use crate::scheduler::Scheduler;
 use crate::url::{Url, Urls};
 use crate::window::Window;
 
-use futures::sync::mpsc as futures_mpsc;
-use tokio::runtime::current_thread;
+use tokio::sync::mpsc as tokio_mpsc;
 
 /// Events dispatched through the UI event loop.
 #[derive(Debug, Clone)]
@@ -402,8 +401,8 @@ pub struct Processor<N> {
     message_buffer: MessageBuffer,
     display: Display,
     font_size: Size,
-    tokio_handle: current_thread::Handle,
-    charts_tx: futures_mpsc::Sender<alacritty_charts::async_utils::AsyncChartTask>,
+    tokio_handle: tokio::runtime::Handle,
+    charts_tx: tokio_mpsc::Sender<alacritty_charts::async_utils::AsyncChartTask>,
     event_queue: Vec<GlutinEvent<'static, Event>>,
 }
 
@@ -416,8 +415,8 @@ impl<N: Notify + OnResize> Processor<N> {
         message_buffer: MessageBuffer,
         config: Config,
         display: Display,
-        tokio_handle: current_thread::Handle,
-        charts_tx: futures_mpsc::Sender<alacritty_charts::async_utils::AsyncChartTask>,
+        tokio_handle: tokio::runtime::Handle,
+        charts_tx: tokio_mpsc::Sender<alacritty_charts::async_utils::AsyncChartTask>,
     ) -> Processor<N> {
         #[cfg(not(any(target_os = "macos", windows)))]
         let clipboard = Clipboard::new(display.window.wayland_display());
@@ -586,8 +585,6 @@ impl<N: Notify + OnResize> Processor<N> {
                     &self.config,
                     &self.mouse,
                     self.modifiers,
-                    self.tokio_handle.clone(),
-                    self.charts_tx.clone(),
                 );
             }
         });

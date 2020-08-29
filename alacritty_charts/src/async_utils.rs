@@ -5,18 +5,16 @@
 //! channel that may contain new data, may request OpenGL data or increment
 //! internal counters.
 use crate::prometheus;
-use crate::SizeInfo;
+use crate::ChartSizeInfo;
 use crate::TimeSeriesChart;
 use crate::TimeSeriesSource;
-use futures::future::lazy;
-use futures::sync::{mpsc, oneshot};
+use alacritty_common::SizeInfo;
 use log::*;
 use std::thread;
+use std::time::Duration;
 use std::time::UNIX_EPOCH;
-use std::time::{Duration, Instant};
-use tokio::prelude::*;
-use tokio::runtime::current_thread;
-use tokio::timer::Interval;
+use tokio::sync::{mpsc, oneshot};
+use tokio::time::interval_at;
 use tracing::{event, span, Level};
 
 /// `MetricRequest` defines remote data sources that should be loaded regularly
@@ -46,23 +44,23 @@ pub enum AsyncChartTask {
 /// `get_last_updated_chart_epoch` Sends a request to the async_coordinator to
 /// get the latest update epoch of all the charts. This is used so that we know
 /// if the charts should be redrawn or not. XXX: This is not used yet.
-pub fn get_last_updated_chart_epoch(
-    charts_tx: mpsc::Sender<AsyncChartTask>,
-    tokio_handle: current_thread::Handle,
+pub async fn get_last_updated_chart_epoch(
+    charts_tx: &mut mpsc::Sender<AsyncChartTask>,
+    tokio_handle: tokio::runtime::Handle,
 ) -> u64 {
-    let (chart_tx, chart_rx) = oneshot::channel();
-    let get_latest_update_epoch = charts_tx
-        .send(AsyncChartTask::SendLastUpdatedEpoch(chart_tx))
-        .map_err(|e| error!("Sending SendLastUpdatedEpoch Task: err={:?}", e))
-        .and_then(move |_res| {
-            debug!("Sent Request for SendLastUpdatedEpoch");
-            Ok(())
-        });
-    tokio_handle
-        .spawn(lazy(move || get_latest_update_epoch))
-        .expect("Unable to queue async task for get_latest_update_epoch");
-    let chart_rx = chart_rx.map(|x| x);
-    match chart_rx.wait() {
+    let mut charts_tx = charts_tx.clone();
+    let (last_updated_epoch_tx, last_updated_epoch_rx) = oneshot::channel();
+    tokio_handle.spawn(async move {
+        let get_latest_update_epoch = charts_tx
+            .send(AsyncChartTask::SendLastUpdatedEpoch(last_updated_epoch_tx))
+            .await;
+        match get_latest_update_epoch {
+            Ok(_res) => debug!("Sent Request for SendLastUpdatedEpoch"),
+            Err(e) => error!("Sending SendLastUpdatedEpoch Task: err={:?}", e),
+        };
+    });
+    //.expect("Unable to queue async task for get_latest_update_epoch");
+    match last_updated_epoch_rx.await {
         Ok(data) => {
             debug!("Got response from SendLastUpdatedEpoch Task: {:?}", data);
             data
@@ -81,7 +79,7 @@ pub fn increment_internal_counter(
     counter_type: &'static str,
     epoch: u64,
     value: f64,
-    size: SizeInfo,
+    size: ChartSizeInfo,
 ) {
     for chart in charts {
         let mut chart_updated = false;
@@ -160,7 +158,7 @@ pub fn send_last_updated_epoch(charts: &mut Vec<TimeSeriesChart>, channel: onesh
 pub fn load_http_response(
     charts: &mut Vec<TimeSeriesChart>,
     response: MetricRequest,
-    size: SizeInfo,
+    size: ChartSizeInfo,
 ) {
     let span = span!(
         Level::DEBUG,
@@ -181,7 +179,7 @@ pub fn load_http_response(
             {
                 match prom.load_prometheus_response(data) {
                     Ok(num_records) => {
-                        event!(Level::INFO,
+                        event!(Level::DEBUG,
                             "load_http_response:(Chart: {}, Series: {}) {} records from {} into TimeSeries",
                             response.chart_index, response.series_index, num_records, response.source_url
                         );
@@ -308,7 +306,7 @@ pub fn send_decorations_opengl_data(
 /// until the size is stabilized.
 pub fn change_display_size(
     charts: &mut Vec<TimeSeriesChart>,
-    size: &mut SizeInfo,
+    size: &mut ChartSizeInfo,
     height: f32,
     width: f32,
     padding_y: f32,
@@ -323,10 +321,10 @@ pub fn change_display_size(
         padding_y,
         padding_x
     );
-    size.height = height;
-    size.width = width;
-    size.padding_y = padding_y;
-    size.padding_x = padding_x;
+    size.term_size.height = height;
+    size.term_size.width = width;
+    size.term_size.padding_y = padding_y;
+    size.term_size.padding_x = padding_x;
     for chart in charts {
         // Update the OpenGL representation when the display changes
         chart.update_all_series_opengl_vecs(*size);
@@ -348,14 +346,14 @@ pub fn change_display_size(
 /// `async_coordinator` receives messages from the tasks about data loaded from
 /// the network, it owns the charts array and is the single point by which data can
 /// be loaded or requested. XXX: Config updates are not possible yet.
-pub fn async_coordinator(
-    rx: mpsc::Receiver<AsyncChartTask>,
+pub async fn async_coordinator(
+    mut rx: mpsc::Receiver<AsyncChartTask>,
     mut chart_config: crate::ChartsConfig,
     height: f32,
     width: f32,
     padding_y: f32,
     padding_x: f32,
-) -> impl Future<Item = (), Error = ()> {
+) {
     event!(
         Level::DEBUG,
         "async_coordinator: Starting, terminal height: {}, width: {}, padding_y: {}, padding_x {}",
@@ -366,7 +364,7 @@ pub fn async_coordinator(
     );
     chart_config.setup_chart_spacing();
     for chart in &mut chart_config.charts {
-        // Caculate the spacing between charts
+        // Calculate the spacing between charts
         event!(
             Level::DEBUG,
             "Finishing setup for sources in chart: '{}'",
@@ -376,14 +374,17 @@ pub fn async_coordinator(
             series.init();
         }
     }
-    let mut size = SizeInfo {
-        height,
-        width,
-        padding_y,
-        padding_x,
-        ..SizeInfo::default()
+    let mut size = ChartSizeInfo {
+        term_size: SizeInfo {
+            height,
+            width,
+            padding_y,
+            padding_x,
+            ..SizeInfo::default()
+        },
+        ..ChartSizeInfo::default()
     };
-    rx.for_each(move |message| {
+    while let Some(message) = rx.recv().await {
         event!(Level::DEBUG, "async_coordinator: message: {:?}", message);
         match message {
             AsyncChartTask::LoadResponse(req) => {
@@ -421,15 +422,18 @@ pub fn async_coordinator(
                 send_last_updated_epoch(&mut chart_config.charts, channel);
             }
         };
-        Ok(())
-    })
+    }
+    event!(
+        Level::ERROR,
+        "async_coordinator: Exiting. This shouldn't happen"
+    );
 }
 /// `fetch_prometheus_response` gets data from prometheus and once data is ready
 /// it sends the results to the coordinator.
-fn fetch_prometheus_response(
+async fn fetch_prometheus_response(
     item: MetricRequest,
-    tx: mpsc::Sender<AsyncChartTask>,
-) -> impl Future<Item = (), Error = ()> {
+    mut tx: mpsc::Sender<AsyncChartTask>,
+) -> Result<(), ()> {
     event!(
         Level::DEBUG,
         "fetch_prometheus_response:(Chart: {}, Series: {}) Starting",
@@ -441,52 +445,64 @@ fn fetch_prometheus_response(
     let url_copy = item.source_url.clone();
     let chart_index = item.chart_index;
     let series_index = item.series_index;
-    prometheus::get_from_prometheus(url.clone())
-        .timeout(Duration::from_secs(item.pull_interval))
-        .or_else(move |e| {
-            if e.is_elapsed() {
-            event!(
-                Level::INFO,
-                "fetch_prometheus_response:(Chart: {}, Series: {}) TimeOut accesing: {}", chart_index, series_index, url_copy);
+    let prom_res =
+        prometheus::get_from_prometheus(url.clone(), Some(Duration::from_secs(item.pull_interval)))
+            .await;
+    match prom_res {
+        Err(e) => {
+            // e contains (Uri, Err)
+            let (uri, error) = e;
+            if error.is_timeout() {
+                event!(
+                    Level::INFO,
+                    "fetch_prometheus_response:(Chart: {}, Series: {}) TimeOut accesing: {}",
+                    chart_index,
+                    series_index,
+                    url_copy
+                );
             } else {
-            event!(
-                Level::INFO,
-                "fetch_prometheus_response:(Chart: {}, Series: {}) err={:?}", chart_index, series_index, e);
+                event!(
+                    Level::INFO,
+                    "fetch_prometheus_response:(Chart: {}, Series: {}) url={:?}, err={:?}",
+                    chart_index,
+                    series_index,
+                    uri,
+                    error
+                );
             };
             // Instead of an error, return this so we can retry later.
             // XXX: Maybe exponential retries in the future.
-            Ok(hyper::Chunk::from(
-                r#"{ "status":"error","data":{"resultType":"scalar","result":[]}}"#,
-            ))
-        })
-        .and_then(move |value| {
+            Ok(())
+        }
+        Ok(value) => {
             event!(
                 Level::DEBUG,
                 "fetch_prometheus_response:(Chart: {}, Series: {}) Prometheus raw value={:?}",
-                chart_index, series_index, value
+                chart_index,
+                series_index,
+                value
             );
             let res = prometheus::parse_json(&item.source_url, &value);
-            tx.send(AsyncChartTask::LoadResponse(MetricRequest {
-                source_url: item.source_url.clone(),
-                chart_index: item.chart_index,
-                series_index: item.series_index,
-                pull_interval: item.pull_interval,
-                data: res.clone(),
-                capacity: item.capacity,
-            }))
-            .map_err(move |e| {
-            event!(
+            let tx_res = tx
+                .send(AsyncChartTask::LoadResponse(MetricRequest {
+                    source_url: item.source_url.clone(),
+                    chart_index: item.chart_index,
+                    series_index: item.series_index,
+                    pull_interval: item.pull_interval,
+                    data: res.clone(),
+                    capacity: item.capacity,
+                }))
+                .await;
+            if let Err(err) = tx_res {
+                event!(
                 Level::ERROR,
                     "fetch_prometheus_response:(Chart: {}, Series: {}) unable to send data back to coordinator; err={:?}",
-                    chart_index, series_index, e
+                    chart_index, series_index, err
                 )
-            })
-            .and_then(|_| Ok(()))
-        })
-        .map_err(|_| {
-            // This error is quite meaningless and get_from_prometheus already
-            // has shown the error message that contains the actual failure.
-        })
+            }
+            Ok(())
+        }
+    }
 }
 
 /// `spawn_charts_intervals` iterates over the charts and sources
@@ -495,7 +511,7 @@ fn fetch_prometheus_response(
 pub fn spawn_charts_intervals(
     charts: Vec<TimeSeriesChart>,
     charts_tx: mpsc::Sender<AsyncChartTask>,
-    tokio_handle: current_thread::Handle,
+    tokio_handle: tokio::runtime::Handle,
 ) {
     let mut chart_index = 0usize;
     for chart in charts {
@@ -518,11 +534,9 @@ pub fn spawn_charts_intervals(
                     data: None,
                 };
                 let charts_tx = charts_tx.clone();
-                tokio_handle
-                    .spawn(lazy(move || {
-                        spawn_datasource_interval_polls(&data_request, charts_tx)
-                    }))
-                    .expect(&format!("spawn_charts_intervals:(Chart: {}, Series: {}) Error spawning datasource internal polls", chart_index, series_index));
+                tokio_handle.spawn(async move {
+                    spawn_datasource_interval_polls(&data_request, charts_tx).await.unwrap_or_else(|_| panic!("spawn_charts_intervals:(Chart: {}, Series: {}) Error spawning datasource internal polls", chart_index, series_index));
+                });
             }
             series_index += 1;
         }
@@ -531,10 +545,10 @@ pub fn spawn_charts_intervals(
 }
 /// `spawn_datasource_interval_polls` creates intervals for each series requested
 /// Each series will have to reply to a mspc tx with the data
-pub fn spawn_datasource_interval_polls(
+pub async fn spawn_datasource_interval_polls(
     item: &MetricRequest,
     tx: mpsc::Sender<AsyncChartTask>,
-) -> impl Future<Item = (), Error = ()> {
+) -> Result<(), ()> {
     event!(
         Level::DEBUG,
         "spawn_datasource_interval_polls:(Chart: {}, Series: {}) Starting for item={:?}",
@@ -542,111 +556,116 @@ pub fn spawn_datasource_interval_polls(
         item.series_index,
         item
     );
-    Interval::new(Instant::now(), Duration::from_secs(item.pull_interval))
-        //.take(10) //  Test 10 times first
-        .map_err(|e| panic!("interval errored; err={:?}", e))
-        .fold(
-            MetricRequest {
-                source_url: item.source_url.clone(),
-                chart_index: item.chart_index,
-                series_index: item.series_index,
-                pull_interval: item.pull_interval,
-                data: None,
-                capacity: item.capacity,
-            },
-            move |async_metric_item, instant| {
-            event!(
-                Level::DEBUG,
-                    "spawn_datasource_interval_polls:(Chart: {}, Series: {}) Interval triggered for {:?} at instant={:?}",
-                    async_metric_item.chart_index, async_metric_item.series_index, async_metric_item.source_url, instant
+    let mut interval = interval_at(
+        tokio::time::Instant::now(),
+        Duration::from_secs(item.pull_interval),
+    );
+    loop {
+        interval.tick().await;
+        let async_metric_item = MetricRequest {
+            source_url: item.source_url.clone(),
+            chart_index: item.chart_index,
+            series_index: item.series_index,
+            pull_interval: item.pull_interval,
+            data: None,
+            capacity: item.capacity,
+        };
+        event!(
+            Level::DEBUG,
+            "spawn_datasource_interval_polls:(Chart: {}, Series: {}) Interval triggered for {:?}",
+            async_metric_item.chart_index,
+            async_metric_item.series_index,
+            async_metric_item.source_url
+        );
+        match fetch_prometheus_response(async_metric_item.clone(), tx.clone()).await {
+            Ok(res) => {
+                event!(
+                    Level::DEBUG,
+                    "spawn_datasource_interval_polls:(Chart: {}, Series: {}) Response {:?}",
+                    async_metric_item.chart_index,
+                    async_metric_item.series_index,
+                    res
                 );
-                fetch_prometheus_response(async_metric_item.clone(), tx.clone()).and_then(|res| {
-            event!(
-                Level::DEBUG,
-                    "spawn_datasource_interval_polls:(Chart: {}, Series: {}) Response {:?}", async_metric_item.chart_index, async_metric_item.series_index, res);
-                    Ok(async_metric_item)
-                })
-            },
-        )
-        .map(|_| ())
+            }
+            Err(()) => return Err(()),
+        }
+    }
+    // How do we return Ok(())?
 }
 
 /// `get_metric_opengl_data` generates a oneshot::channel to communicate
 /// with the async coordinator and request the vectors of the metric_data
 /// or the decorations vertices, along with its alpha
 pub fn get_metric_opengl_data(
-    charts_tx: mpsc::Sender<AsyncChartTask>,
+    mut charts_tx: mpsc::Sender<AsyncChartTask>,
     chart_idx: usize,
     series_idx: usize,
     request_type: &'static str,
-    tokio_handle: current_thread::Handle,
+    tokio_handle: tokio::runtime::Handle,
 ) -> (Vec<f32>, f32) {
     let (opengl_tx, opengl_rx) = oneshot::channel();
-    let get_opengl_task = charts_tx
-        .clone()
-        .send(if request_type == "metric_data" {
+    let chart_idx_bkp = chart_idx;
+    tokio_handle.spawn(async move {
+        let get_metric_request = charts_tx.send(if request_type == "metric_data" {
             AsyncChartTask::SendMetricsOpenGLData(chart_idx, series_idx, opengl_tx)
         } else {
             AsyncChartTask::SendDecorationsOpenGLData(chart_idx, series_idx, opengl_tx)
-        })
-        .map_err(move |e| {
-            event!(
+        });
+        match get_metric_request.await {
+            Err(e) => event!(
                 Level::ERROR,
                 "get_metric_opengl_data:(Chart: {}, Series: {}) Sending {} Task. err={:?}",
                 chart_idx,
                 series_idx,
                 request_type,
                 e
-            )
-        })
-        .and_then(move |_res| {
-            event!(
+            ),
+            Ok(_) => event!(
                 Level::DEBUG,
                 "get_metric_opengl_data:(Chart: {}, Series: {}) Sent Request for {} Task",
                 chart_idx,
                 series_idx,
                 request_type
-            );
-            Ok(())
-        });
-    tokio_handle
-        .spawn(lazy(move || get_opengl_task))
-        .expect(&format!(
-            "get_metric_opengl_data:(Chart: {}, Series: {}) Unable to spawn get_opengl_task",
-            chart_idx, series_idx
-        ));
-    let opengl_rx = opengl_rx.map(|x| x);
-    match opengl_rx.wait() {
-        Ok(data) => {
-            event!(
-                Level::DEBUG,
-                "get_metric_opengl_data:(Chart: {}, Series: {}) Response from {} Task: {:?}",
-                chart_idx,
-                series_idx,
-                request_type,
+            ),
+        }
+    });
+    /*.expect(&format!(
+        "get_metric_opengl_data:(Chart: {}, Series: {}) Unable to spawn get_opengl_task",
+        chart_idx, series_idx
+    ));*/
+    tokio_handle.block_on(async {
+        match opengl_rx.await {
+            Ok(data) => {
+                event!(
+                    Level::DEBUG,
+                    "get_metric_opengl_data:(Chart: {}, Series: {}) Response from {} Task: {:?}",
+                    chart_idx_bkp,
+                    series_idx,
+                    request_type,
+                    data
+                );
                 data
-            );
-            data
+            }
+            Err(err) => {
+                event!(
+                    Level::ERROR,
+                    "get_metric_opengl_data:(Chart: {}, Series: {}) Error from {} Task: {:?}",
+                    chart_idx_bkp,
+                    series_idx,
+                    request_type,
+                    err
+                );
+                (vec![], 0f32)
+            }
         }
-        Err(err) => {
-            event!(
-                Level::ERROR,
-                "get_metric_opengl_data:(Chart: {}, Series: {}) Error from {} Task: {:?}",
-                chart_idx,
-                series_idx,
-                request_type,
-                err
-            );
-            (vec![], 0f32)
-        }
-    }
+    })
 }
 
 /// `tokio_default_setup` creates a default channels and handles, this should be used mostly for testing
 /// to avoid having to create all the tokio boilerplate, I would like to return a struct but
 /// the ownership and cloning and moving of the separate parts does not seem possible then
 pub fn tokio_default_setup() -> (
-    current_thread::Handle,
+    tokio::runtime::Handle,
     mpsc::Sender<AsyncChartTask>,
     oneshot::Sender<()>,
 ) {
@@ -663,7 +682,7 @@ pub fn tokio_default_setup() -> (
         charts_tx.clone(),
         charts_rx,
         handle_tx,
-        SizeInfo::default(),
+        ChartSizeInfo::default(),
     );
     let tokio_handle = handle_rx
         .recv()
@@ -677,47 +696,47 @@ pub fn spawn_async_tasks(
     chart_config: Option<crate::ChartsConfig>,
     charts_tx: mpsc::Sender<AsyncChartTask>,
     charts_rx: mpsc::Receiver<AsyncChartTask>,
-    handle_tx: std::sync::mpsc::Sender<current_thread::Handle>,
-    charts_size_info: SizeInfo,
+    handle_tx: std::sync::mpsc::Sender<tokio::runtime::Handle>,
+    charts_size_info: ChartSizeInfo,
 ) -> (thread::JoinHandle<()>, oneshot::Sender<()>) {
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let tokio_thread = ::std::thread::Builder::new()
         .name("async I/O".to_owned())
         .spawn(move || {
             let mut tokio_runtime =
-                current_thread::Runtime::new().expect("Failed to start new tokio Runtime");
+                tokio::runtime::Runtime::new().expect("Failed to start new tokio Runtime");
             info!("Tokio runtime created.");
 
             // Give a handle to the runtime back to the main thread.
             handle_tx
-                .send(tokio_runtime.handle())
+                .send(tokio_runtime.handle().clone())
                 .expect("Unable to give runtime handle to the main thread");
             let mut chart_array: Vec<TimeSeriesChart> = vec![];
             if let Some(chart_config) = &chart_config {
                 chart_array = chart_config.charts.clone();
                 let async_chart_config = chart_config.clone();
-                tokio_runtime.spawn(lazy(move || {
+                tokio_runtime.spawn(async move {
                     async_coordinator(
                         charts_rx,
                         async_chart_config,
-                        charts_size_info.height,
-                        charts_size_info.width,
-                        charts_size_info.padding_y,
-                        charts_size_info.padding_x,
+                        charts_size_info.term_size.height,
+                        charts_size_info.term_size.width,
+                        charts_size_info.term_size.padding_y,
+                        charts_size_info.term_size.padding_x,
                     )
-                }));
+                    .await;
+                });
             }
             let tokio_handle = tokio_runtime.handle().clone();
-            tokio_runtime.spawn(lazy(move || {
-                spawn_charts_intervals(chart_array.clone(), charts_tx, tokio_handle);
-                Ok(())
-            }));
-            tokio_runtime.spawn({
-                shutdown_rx
-                    .map(|_x| info!("Got shutdown signal for Tokio"))
-                    .map_err(|err| error!("Error on the tokio shutdown channel: {:?}", err))
+            tokio_runtime.spawn(async {
+                spawn_charts_intervals(chart_array, charts_tx, tokio_handle);
             });
-            tokio_runtime.run().expect("Unable to run Tokio tasks");
+            tokio_runtime.block_on(async {
+                match shutdown_rx.await {
+                    Ok(_) => info!("Got shutdown signal for Tokio"),
+                    Err(err) => error!("Error on the tokio shutdown channel: {:?}", err),
+                }
+            });
             info!("Tokio runtime finished.");
         })
         .expect("Unable to start async I/O thread");
@@ -726,15 +745,18 @@ pub fn spawn_async_tasks(
 
 /// `run` is an example use of the crate without drawing the data.
 pub fn run(config: crate::config::Config) {
-    let charts_size_info = SizeInfo {
-        width: 100.,
-        height: 100.,
+    let charts_size_info = ChartSizeInfo {
+        term_size: SizeInfo {
+            width: 100.,
+            height: 100.,
+            cell_width: 0.,
+            cell_height: 0.,
+            padding_x: 0.,
+            padding_y: 0.,
+            ..SizeInfo::default()
+        },
         chart_width: 100.,
         chart_height: 100.,
-        cell_width: 0.,
-        cell_height: 0.,
-        padding_x: 0.,
-        padding_y: 0.,
     };
     // Create the channel that is used to communicate with the
     // charts background task.
@@ -745,8 +767,8 @@ pub fn run(config: crate::config::Config) {
     // Start the Async I/O runtime, this needs to run in a background thread because in OSX, only
     // the main thread can write to the graphics card.
     let (tokio_thread, tokio_shutdown) = spawn_async_tasks(
-        config.charts.clone(),
-        charts_tx.clone(),
+        config.charts,
+        charts_tx,
         charts_rx,
         handle_tx,
         charts_size_info,

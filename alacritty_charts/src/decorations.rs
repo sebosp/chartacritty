@@ -48,7 +48,7 @@ impl Default for Decoration {
 
 impl Decoration {
     /// Calls the internal methods to get the top_value
-    pub fn init(&mut self, display_size: SizeInfo) {
+    pub fn init(&mut self, display_size: ChartSizeInfo) {
         match self {
             Decoration::Reference(ref mut d) => d.init(display_size),
             Decoration::Alert(ref mut d) => d.init(display_size),
@@ -58,7 +58,7 @@ impl Decoration {
     /// Calls the internal methods to update the opengl values
     pub fn update_opengl_vecs(
         &mut self,
-        display_size: SizeInfo,
+        display_size: ChartSizeInfo,
         offset: Value2D,
         stats: &TimeSeriesStats,
         sources: &[TimeSeriesSource],
@@ -161,12 +161,12 @@ impl Decoration {
 
 /// `Decorate` defines functions that a struct must implement to be drawable
 pub trait Decorate {
-    fn init(&mut self, _display_size: SizeInfo) {}
+    fn init(&mut self, _display_size: ChartSizeInfo) {}
     /// Every decoration will implement a different update_opengl_vecs
     /// This method is called every time it needs to be redrawn.
     fn update_opengl_vecs(
         &mut self,
-        _display_size: SizeInfo,
+        _display_size: ChartSizeInfo,
         _offset: Value2D,
         _stats: &TimeSeriesStats,
         _sources: &[TimeSeriesSource],
@@ -277,7 +277,7 @@ impl Decorate for ReferencePointDecoration {
     /// reference.
     fn update_opengl_vecs(
         &mut self,
-        display_size: SizeInfo,
+        display_size: ChartSizeInfo,
         offset: Value2D,
         stats: &TimeSeriesStats,
         _sources: &[TimeSeriesSource],
@@ -424,7 +424,7 @@ impl Decorate for ActiveAlertUnderLineDecoration {
     /// to show an alarm
     fn update_opengl_vecs(
         &mut self,
-        display_size: SizeInfo,
+        display_size: ChartSizeInfo,
         offset: Value2D,
         stats: &TimeSeriesStats,
         sources: &[TimeSeriesSource],
@@ -506,9 +506,12 @@ impl ActiveAlertUnderLineDecoration {
         for series in sources {
             if series.name() == self.target {
                 event!(Level::DEBUG, "Matching target series: {}", series.name());
+                let minimum_difference_equality = 0.00001f64; // Accept less than this much difference as equality
                 match self.comparator {
                     AlertComparator::Equal => {
-                        if series.series().stats.last == self.threshold {
+                        if (series.series().stats.last - self.threshold).abs()
+                            < minimum_difference_equality
+                        {
                             return true;
                         }
                     }

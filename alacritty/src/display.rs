@@ -1,8 +1,7 @@
 //! The display subsystem including window management, font rasterization, and
 //! GPU drawing.
-use futures::future::lazy;
-use futures::sync::mpsc as futures_mpsc;
-use futures::sync::oneshot;
+use tokio::sync::mpsc as futures_mpsc;
+use tokio::sync::oneshot;
 
 use std::f64;
 use std::fmt::{self, Formatter};
@@ -10,8 +9,6 @@ use std::fmt::{self, Formatter};
 use std::sync::atomic::Ordering;
 use std::time::Instant;
 use std::time::UNIX_EPOCH;
-use tokio::prelude::*;
-use tokio::runtime::current_thread;
 
 use glutin::dpi::{PhysicalPosition, PhysicalSize};
 use glutin::event::ModifiersState;
@@ -28,14 +25,16 @@ use wayland_client::{Display as WaylandDisplay, EventQueue};
 use font::set_font_smoothing;
 use font::{self, Rasterize};
 
+use alacritty_common::index::Line;
+use alacritty_common::Rgb;
+use alacritty_common::SizeInfo;
+use alacritty_decorations::{DecorationFans, DecorationLines, DecorationPoints, DecorationTypes};
 use alacritty_terminal::config::{Font, StartupMode};
 use alacritty_terminal::event::OnResize;
-use alacritty_terminal::index::Line;
 use alacritty_terminal::message_bar::MessageBuffer;
 use alacritty_terminal::meter::Meter;
 use alacritty_terminal::selection::Selection;
-use alacritty_terminal::term::color::Rgb;
-use alacritty_terminal::term::{RenderableCell, SizeInfo, Term, TermMode};
+use alacritty_terminal::term::{RenderableCell, Term, TermMode};
 
 use crate::config::Config;
 use crate::event::{DisplayUpdate, Mouse};
@@ -120,9 +119,11 @@ pub struct Display {
     renderer: QuadRenderer,
     glyph_cache: GlyphCache,
     meter: Meter,
-    charts_last_drawn: u64,
+    // charts_last_drawn: u64,
     #[cfg(not(any(target_os = "macos", windows)))]
     is_x11: bool,
+
+    decorations: Vec<DecorationTypes>,
 }
 
 impl Display {
@@ -259,7 +260,27 @@ impl Display {
             StartupMode::Maximized => window.set_maximized(true),
             _ => (),
         }
-
+        let hexagon_radius = 100f32;
+        let hexagon_color = Rgb { r: 25, g: 88, b: 167 };
+        let hexagon_line_decorator = alacritty_decorations::create_hexagon_line(
+            hexagon_color,
+            0.3f32,
+            size_info,
+            hexagon_radius,
+        );
+        let hexagon_fan_decorator = alacritty_decorations::create_hexagon_fan(
+            hexagon_color,
+            Rgb { r: 0, g: 0, b: 0 },
+            0.05f32,
+            size_info,
+            hexagon_radius,
+        );
+        let hexagon_point_decorator = alacritty_decorations::create_hexagon_points(
+            hexagon_color,
+            0.4f32,
+            size_info,
+            hexagon_radius,
+        );
         Ok(Self {
             window,
             renderer,
@@ -268,11 +289,16 @@ impl Display {
             size_info,
             urls: Urls::new(),
             highlighted_url: None,
-            charts_last_drawn: 0u64,
+            // charts_last_drawn: 0u64,
             #[cfg(not(any(target_os = "macos", windows)))]
             is_x11,
             #[cfg(not(any(target_os = "macos", windows)))]
             wayland_event_queue,
+            decorations: vec![
+                hexagon_line_decorator,
+                hexagon_fan_decorator,
+                hexagon_point_decorator,
+            ],
         })
     }
 
@@ -338,8 +364,8 @@ impl Display {
         message_buffer: &MessageBuffer,
         config: &Config,
         update_pending: DisplayUpdate,
-        tokio_handle: current_thread::Handle,
-        charts_tx: futures_mpsc::Sender<alacritty_charts::async_utils::AsyncChartTask>,
+        tokio_handle: tokio::runtime::Handle,
+        mut charts_tx: futures_mpsc::Sender<alacritty_charts::async_utils::AsyncChartTask>,
     ) {
         // Update font size and cell dimensions.
         if let Some(font) = update_pending.font {
@@ -397,35 +423,58 @@ impl Display {
         self.window.resize(physical);
         let (height, width) = (self.size_info.height, self.size_info.width);
         let (chart_resize_tx, chart_resize_rx) = oneshot::channel();
-        let send_display_size = charts_tx
-            .send(alacritty_charts::async_utils::AsyncChartTask::ChangeDisplaySize(
-                height,
-                width,
-                padding_y,
-                padding_x,
-                chart_resize_tx,
-            ))
-            .map_err(|e| error!("Sending ChangeDisplaySize Task: err={:?}", e))
-            .and_then(move |_res| {
-                debug!(
+        tokio_handle.spawn(async move {
+            let send_display_size =
+                charts_tx.send(alacritty_charts::async_utils::AsyncChartTask::ChangeDisplaySize(
+                    height,
+                    width,
+                    padding_y,
+                    padding_x,
+                    chart_resize_tx,
+                ));
+            match send_display_size.await {
+                Err(e) => error!("Sending ChangeDisplaySize Task: err={:?}", e),
+                Ok(_) => debug!(
                     "Sent ChangeDisplaySize Task height: {}, width: {}, padding_y: {}, padding_x: \
                      {}",
                     height, width, padding_y, padding_x
-                );
-                Ok(())
-            });
-        tokio_handle
-            .spawn(lazy(move || send_display_size))
-            .expect("Unable to queue async task for send_display_size");
-        match chart_resize_rx.map(|x| x).wait() {
-            Ok(_) => {
-                debug!("Got response from ChangeDisplaySize Task.");
-            },
-            Err(err) => {
-                error!("Error response from ChangeDisplaySize Task: {:?}", err);
-            },
-        }
+                ),
+            }
+        });
+        tokio_handle.block_on(async {
+            match chart_resize_rx.await {
+                Ok(_) => {
+                    debug!("Got response from ChangeDisplaySize Task.");
+                }
+                Err(err) => {
+                    error!("Error response from ChangeDisplaySize Task: {:?}", err);
+                }
+            }
+        });
         self.renderer.resize(&self.size_info);
+        let hexagon_color = Rgb { r: 25, g: 88, b: 167 };
+        let hexagon_radius = 100f32;
+        let hexagon_line_decorator = alacritty_decorations::create_hexagon_line(
+            hexagon_color,
+            0.3f32,
+            self.size_info,
+            hexagon_radius,
+        );
+        let hexagon_fan_decorator = alacritty_decorations::create_hexagon_fan(
+            hexagon_color,
+            Rgb { r: 0, g: 0, b: 0 },
+            0.05f32,
+            self.size_info,
+            hexagon_radius,
+        );
+        let hexagon_point_decorator = alacritty_decorations::create_hexagon_points(
+            hexagon_color,
+            0.4f32,
+            self.size_info,
+            hexagon_radius,
+        );
+        self.decorations =
+            vec![hexagon_line_decorator, hexagon_fan_decorator, hexagon_point_decorator];
     }
 
     /// Draw the screen.
@@ -440,8 +489,6 @@ impl Display {
         config: &Config,
         mouse: &Mouse,
         mods: ModifiersState,
-        tokio_handle: current_thread::Handle,
-        charts_tx: futures_mpsc::Sender<alacritty_charts::async_utils::AsyncChartTask>,
     ) {
         let grid_cells: Vec<RenderableCell> = terminal.renderable_cells(config).collect();
         let visual_bell_intensity = terminal.visual_bell.intensity();
@@ -450,6 +497,7 @@ impl Display {
         let glyph_cache = &mut self.glyph_cache;
         let size_info = self.size_info;
         let charts_enabled = terminal.charts_enabled();
+        let decorations_enabled = terminal.decorations_enabled;
 
         let selection = !terminal.selection.as_ref().map(Selection::is_empty).unwrap_or(true);
         let mouse_mode = terminal.mode().intersects(TermMode::MOUSE_MODE)
@@ -460,6 +508,9 @@ impl Display {
         } else {
             None
         };
+
+        let tokio_handle = terminal.charts_handle.tokio_handle.clone();
+        let charts_tx = terminal.charts_handle.charts_tx.clone();
 
         // Update IME position.
         #[cfg(not(windows))]
@@ -581,7 +632,7 @@ impl Display {
                             "decoration",
                             tokio_handle.clone(),
                         );
-                        self.renderer.draw_charts_line(
+                        self.renderer.draw_array(
                             &size_info,
                             &opengl_data.0,
                             Rgb {
@@ -596,6 +647,7 @@ impl Display {
                                     .b,
                             },
                             opengl_data.1,
+                            renderer::DrawArrayMode::GlLineStrip,
                         );
                     }
                     for series_idx in 0..chart_config.charts[chart_idx].sources.len() {
@@ -606,7 +658,7 @@ impl Display {
                             "metric_data",
                             tokio_handle.clone(),
                         );
-                        self.renderer.draw_charts_line(
+                        self.renderer.draw_array(
                             &size_info,
                             &opengl_data.0,
                             Rgb {
@@ -615,10 +667,78 @@ impl Display {
                                 b: chart_config.charts[chart_idx].sources[series_idx].color().b,
                             },
                             opengl_data.1,
+                            renderer::DrawArrayMode::GlLineStrip,
                         );
                     }
-                    let chart_last_drawn =
+                    let _chart_last_drawn =
                         std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+                }
+            }
+        } else {
+            debug!("Charts are not enabled");
+        }
+        if decorations_enabled {
+            // Create a "wind" effect of a moving curtain by making it very transparent as it
+            // reaches 1000
+            //
+            let seconds_cycle = 15f32;
+            let curr_second_cycle = (std::time::SystemTime::now()
+                .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+                % (seconds_cycle as u64)) as f32;
+
+            // |-------------------------------|---------------------------------|
+            // 0.0 u                         0.25 u                             0.5
+            // 0.0 seconds                    15 seconds                        15 seconds
+            // Every 15 seconds the opacity should go back to 100% of out top
+            let max_hexagon_opacity = 0.5f32;
+            let wind_screen_size = 0.5f32;
+            let x_move_in_time = (curr_second_cycle * wind_screen_size) / seconds_cycle;
+            for decoration in &self.decorations {
+                debug!("Traversing Decorations");
+                match decoration {
+                    DecorationTypes::Lines(line_decor) => match line_decor {
+                        DecorationLines::Hexagon(hex_lines) => {
+                            debug!("- Drawing hexagon lines");
+                            // Draw chunks of 12, since it's 2 points (x,y) per coordinate
+                            for opengl_data in hex_lines.vecs.chunks(12) {
+                                // Mid-left is the 6th in the array
+                                let curr_opacity = (((opengl_data[6] + x_move_in_time)
+                                    % wind_screen_size)
+                                    / wind_screen_size)
+                                    * max_hexagon_opacity;
+                                self.renderer.draw_array(
+                                    &size_info,
+                                    &opengl_data,
+                                    Rgb { r: 25, g: 88, b: 167 },
+                                    curr_opacity.abs(),
+                                    renderer::DrawArrayMode::GlLineLoop,
+                                );
+                            }
+                        }
+                    },
+                    DecorationTypes::Fans(fan_decor) => match fan_decor {
+                        DecorationFans::Hexagon((hex_fans, _number_vertices)) => {
+                            info!("- Drawing hexagon fans");
+                            info!("- - Decorations Hexagon Fans: {:?}", hex_fans.vecs);
+                            // Triangle fans decorators contain the number of sides
+                            self.renderer.draw_hex_bg(&size_info, &hex_fans.vecs);
+                        }
+                    },
+                    DecorationTypes::Points(point_decor) => match point_decor {
+                        DecorationPoints::Hexagon(hex_points) => {
+                            debug!("- Drawing hexagon points");
+                            // Draw chunks of 2, since it's 2 points (x,y) per coordinate
+                            self.renderer.draw_array(
+                                &size_info,
+                                &hex_points.vecs,
+                                Rgb { r: 25, g: 88, b: 167 },
+                                0.7f32,
+                                renderer::DrawArrayMode::GlPoints,
+                            );
+                        }
+                    },
                 }
             }
         } else {

@@ -5,10 +5,10 @@ use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::Path;
 
+use alacritty_common::index::Column;
 use alacritty_terminal::ansi;
 use alacritty_terminal::config::MockConfig;
 use alacritty_terminal::event::{Event, EventListener};
-use alacritty_terminal::index::Column;
 use alacritty_terminal::term::cell::Cell;
 use alacritty_terminal::term::SizeInfo;
 use alacritty_terminal::Grid;

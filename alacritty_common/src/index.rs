@@ -7,8 +7,6 @@ use std::ops::{self, Add, AddAssign, Deref, Range, Sub, SubAssign};
 
 use serde::{Deserialize, Serialize};
 
-use crate::term::RenderableCell;
-
 /// The side of a cell.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Side {
@@ -127,12 +125,6 @@ impl From<Point<isize>> for Point<usize> {
 impl From<Point> for Point<usize> {
     fn from(point: Point) -> Self {
         Point::new(point.line.0, point.col)
-    }
-}
-
-impl From<RenderableCell> for Point<Line> {
-    fn from(cell: RenderableCell) -> Self {
-        Point::new(cell.line, cell.column)
     }
 }
 

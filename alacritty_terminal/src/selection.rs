@@ -9,8 +9,8 @@ use std::convert::TryFrom;
 use std::mem;
 use std::ops::Range;
 
-use crate::index::{Column, Line, Point, Side};
 use crate::term::{Search, Term};
+use alacritty_common::index::{Column, Line, Point, Side};
 
 /// A Point and side within that point.
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -374,8 +374,9 @@ mod tests {
 
     use crate::config::MockConfig;
     use crate::event::{Event, EventListener};
-    use crate::index::{Column, Line, Point, Side};
-    use crate::term::{SizeInfo, Term};
+    use crate::term::Term;
+    use alacritty_common::index::{Column, Line, Point, Side};
+    use alacritty_common::SizeInfo;
 
     struct Mock;
     impl EventListener for Mock {
