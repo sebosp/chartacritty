@@ -1,6 +1,7 @@
 use std::cmp::min;
 use std::mem;
 
+use crossfont::Metrics;
 use glutin::event::{ElementState, ModifiersState};
 use urlocator::{UrlLocation, UrlLocator};
 
@@ -90,7 +91,7 @@ impl Urls {
         self.last_point = Some(end);
 
         // Extend current state if a wide char spacer is encountered.
-        if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+        if cell.flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER) {
             if let UrlLocation::Url(_, mut end_offset) = self.state {
                 if end_offset != 0 {
                     end_offset += 1;
@@ -117,10 +118,10 @@ impl Urls {
 
                 // Push the new cell into URL.
                 self.extend_url(point, end, cell.fg, end_offset);
-            },
+            }
             (UrlLocation::Url(_length, end_offset), UrlLocation::Url(..)) => {
                 self.extend_url(point, end, cell.fg, end_offset);
-            },
+            }
             (UrlLocation::Scheme, _) => self.scheme_buffer.push(cell),
             (UrlLocation::Reset, _) => self.reset(),
             _ => (),
@@ -164,7 +165,7 @@ impl Urls {
 
         // Make sure all prerequisites for highlighting are met.
         if selection
-            || !mouse.inside_grid
+            || !mouse.inside_text_area
             || config.ui_config.mouse.url.launcher.is_none()
             || required_mods != mods
             || mouse.left_button_state == ElementState::Pressed

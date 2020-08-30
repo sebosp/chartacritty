@@ -9,10 +9,9 @@ use alacritty_common::index::Column;
 use alacritty_terminal::ansi;
 use alacritty_terminal::config::MockConfig;
 use alacritty_terminal::event::{Event, EventListener};
+use alacritty_terminal::grid::{Dimensions, Grid};
 use alacritty_terminal::term::cell::Cell;
-use alacritty_terminal::term::SizeInfo;
-use alacritty_terminal::Grid;
-use alacritty_terminal::Term;
+use alacritty_terminal::term::{SizeInfo, Term};
 
 macro_rules! ref_tests {
     ($($name:ident)*) => {
@@ -62,6 +61,12 @@ ref_tests! {
     erase_chars_reset
     scroll_up_reset
     clear_underline
+    region_scroll_down
+    wrapline_alt_toggle
+    saved_cursor
+    saved_cursor_alt
+    sgr
+    underline
 }
 
 fn read_u8<P>(path: P) -> Vec<u8>
@@ -99,7 +104,7 @@ fn ref_test(dir: &Path) {
 
     let (tokio_handle, charts_tx, _tokio_shutdown) =
         alacritty_charts::async_utils::tokio_default_setup();
-    let mut terminal = Term::new(&config, &size, Mock, tokio_handle, charts_tx);
+    let mut terminal = Term::new(&config, size, Mock, tokio_handle, charts_tx);
     let mut parser = ansi::Processor::new();
 
     for byte in recording {
@@ -112,8 +117,8 @@ fn ref_test(dir: &Path) {
     term_grid.truncate();
 
     if grid != term_grid {
-        for i in 0..grid.len() {
-            for j in 0..grid.num_cols().0 {
+        for i in 0..grid.total_lines() {
+            for j in 0..grid.cols().0 {
                 let cell = term_grid[i][Column(j)];
                 let original_cell = grid[i][Column(j)];
                 if original_cell != cell {

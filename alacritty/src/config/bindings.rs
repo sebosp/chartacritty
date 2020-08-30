@@ -176,6 +176,12 @@ pub enum Action {
     /// Allow receiving char input.
     ReceiveChar,
 
+    /// Start a forward buffer search.
+    SearchForward,
+
+    /// Start a backward buffer search.
+    SearchBackward,
+
     /// No action.
     None,
 
@@ -211,6 +217,14 @@ pub enum ViAction {
     ToggleBlockSelection,
     /// Toggle semantic vi selection.
     ToggleSemanticSelection,
+    /// Jump to the beginning of the next match.
+    SearchNext,
+    /// Jump to the beginning of the previous match.
+    SearchPrevious,
+    /// Jump to the next start of a match to the left of the origin.
+    SearchStart,
+    /// Jump to the next end of a match to the right of the origin.
+    SearchEnd,
     /// Launch the URL below the vi mode cursor.
     Open,
 }
@@ -357,6 +371,7 @@ pub fn default_key_bindings() -> Vec<KeyBinding> {
         Escape,                        +TermMode::VI; Action::ClearSelection;
         I,                             +TermMode::VI; Action::ScrollToBottom;
         I,                             +TermMode::VI; Action::ToggleViMode;
+        C,      ModifiersState::CTRL,  +TermMode::VI; Action::ToggleViMode;
         Y,      ModifiersState::CTRL,  +TermMode::VI; Action::ScrollLineUp;
         E,      ModifiersState::CTRL,  +TermMode::VI; Action::ScrollLineDown;
         G,                             +TermMode::VI; Action::ScrollToTop;
@@ -367,10 +382,14 @@ pub fn default_key_bindings() -> Vec<KeyBinding> {
         D,      ModifiersState::CTRL,  +TermMode::VI; Action::ScrollHalfPageDown;
         Y,                             +TermMode::VI; Action::Copy;
         Y,                             +TermMode::VI; Action::ClearSelection;
+        Slash,                         +TermMode::VI; Action::SearchForward;
+        Slash,  ModifiersState::SHIFT, +TermMode::VI; Action::SearchBackward;
         V,                             +TermMode::VI; ViAction::ToggleNormalSelection;
         V,      ModifiersState::SHIFT, +TermMode::VI; ViAction::ToggleLineSelection;
         V,      ModifiersState::CTRL,  +TermMode::VI; ViAction::ToggleBlockSelection;
         V,      ModifiersState::ALT,   +TermMode::VI; ViAction::ToggleSemanticSelection;
+        N,                             +TermMode::VI; ViAction::SearchNext;
+        N,      ModifiersState::SHIFT, +TermMode::VI; ViAction::SearchPrevious;
         Return,                        +TermMode::VI; ViAction::Open;
         K,                             +TermMode::VI; ViMotion::Up;
         J,                             +TermMode::VI; ViMotion::Down;
@@ -472,6 +491,8 @@ fn common_keybindings() -> Vec<KeyBinding> {
         KeyBinding;
         V,        ModifiersState::CTRL | ModifiersState::SHIFT, ~TermMode::VI; Action::Paste;
         C,        ModifiersState::CTRL | ModifiersState::SHIFT; Action::Copy;
+        F,        ModifiersState::CTRL | ModifiersState::SHIFT; Action::SearchForward;
+        B,        ModifiersState::CTRL | ModifiersState::SHIFT; Action::SearchBackward;
         C,        ModifiersState::CTRL | ModifiersState::SHIFT, +TermMode::VI; Action::ClearSelection;
         Insert,   ModifiersState::SHIFT, ~TermMode::VI; Action::PasteSelection;
         Key0,     ModifiersState::CTRL;  Action::ResetFontSize;
@@ -517,6 +538,8 @@ pub fn platform_key_bindings() -> Vec<KeyBinding> {
         M, ModifiersState::LOGO; Action::Minimize;
         Q, ModifiersState::LOGO; Action::Quit;
         W, ModifiersState::LOGO; Action::Quit;
+        F, ModifiersState::LOGO; Action::SearchForward;
+        B, ModifiersState::LOGO; Action::SearchBackward;
     )
 }
 

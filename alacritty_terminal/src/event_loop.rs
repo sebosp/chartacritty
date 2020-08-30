@@ -6,6 +6,7 @@ use std::fs::File;
 use std::io::{self, ErrorKind, Read, Write};
 use std::marker::Send;
 use std::sync::Arc;
+use std::thread::JoinHandle;
 
 use log::error;
 #[cfg(not(windows))]
@@ -14,12 +15,11 @@ use mio::{self, Events, PollOpt, Ready};
 use mio_extras::channel::{self, Receiver, Sender};
 
 use crate::ansi;
-use crate::config::Config;
 use crate::event::{self, Event, EventListener};
 use crate::sync::FairMutex;
 use crate::term::Term;
+use crate::thread;
 use crate::tty;
-use crate::util::thread;
 use alacritty_common::SizeInfo;
 
 /// Max bytes to read from the PTY.
@@ -155,11 +155,12 @@ where
     U: EventListener + Send + 'static,
 {
     /// Create a new event loop.
-    pub fn new<V>(
+    pub fn new(
         terminal: Arc<FairMutex<Term<U>>>,
         event_proxy: U,
         pty: T,
-        config: &Config<V>,
+        hold: bool,
+        ref_test: bool,
     ) -> EventLoop<T, U> {
         let (tx, rx) = channel::channel();
         EventLoop {
@@ -169,8 +170,8 @@ where
             rx,
             terminal,
             event_proxy,
-            hold: config.hold,
-            ref_test: config.debug.ref_test,
+            hold,
+            ref_test,
         }
     }
 
@@ -251,11 +252,11 @@ where
                     if processed > MAX_READ {
                         break;
                     }
-                },
+                }
                 Err(err) => match err.kind() {
                     ErrorKind::Interrupted | ErrorKind::WouldBlock => {
                         break;
-                    },
+                    }
                     _ => return Err(err),
                 },
             }
@@ -279,21 +280,21 @@ where
                     Ok(0) => {
                         state.set_current(Some(current));
                         break 'write_many;
-                    },
+                    }
                     Ok(n) => {
                         current.advance(n);
                         if current.finished() {
                             state.goto_next();
                             break 'write_one;
                         }
-                    },
+                    }
                     Err(err) => {
                         state.set_current(Some(current));
                         match err.kind() {
                             ErrorKind::Interrupted | ErrorKind::WouldBlock => break 'write_many,
                             _ => return Err(err),
                         }
-                    },
+                    }
                 }
             }
         }
@@ -301,7 +302,7 @@ where
         Ok(())
     }
 
-    pub fn spawn(mut self) -> thread::JoinHandle<(Self, State)> {
+    pub fn spawn(mut self) -> JoinHandle<(Self, State)> {
         thread::spawn_named("PTY reader", move || {
             let mut state = State::default();
             let mut buf = [0u8; MAX_READ];
@@ -338,7 +339,7 @@ where
                             if !self.channel_event(channel_token, &mut state) {
                                 break 'event_loop;
                             }
-                        },
+                        }
 
                         token if token == self.pty.child_event_token() => {
                             if let Some(tty::ChildEvent::Exited) = self.pty.next_child_event() {
@@ -348,33 +349,29 @@ where
                                 self.event_proxy.send_event(Event::Wakeup);
                                 break 'event_loop;
                             }
-                        },
+                        }
 
                         token
                             if token == self.pty.read_token()
                                 || token == self.pty.write_token() =>
                         {
                             #[cfg(unix)]
-                            {
-                                if UnixReady::from(event.readiness()).is_hup() {
-                                    // Don't try to do I/O on a dead PTY.
-                                    continue;
-                                }
+                            if UnixReady::from(event.readiness()).is_hup() {
+                                // Don't try to do I/O on a dead PTY.
+                                continue;
                             }
 
                             if event.readiness().is_readable() {
                                 if let Err(err) = self.pty_read(&mut state, &mut buf, pipe.as_mut())
                                 {
+                                    // On Linux, a `read` on the master side of a PTY can fail
+                                    // with `EIO` if the client side hangs up.  In that case,
+                                    // just loop back round for the inevitable `Exited` event.
+                                    // This sucks, but checking the process is either racy or
+                                    // blocking.
                                     #[cfg(target_os = "linux")]
-                                    {
-                                        // On Linux, a `read` on the master side of a PTY can fail
-                                        // with `EIO` if the client side hangs up.  In that case,
-                                        // just loop back round for the inevitable `Exited` event.
-                                        // This sucks, but checking the process is either racy or
-                                        // blocking.
-                                        if err.kind() == ErrorKind::Other {
-                                            continue;
-                                        }
+                                    if err.kind() == ErrorKind::Other {
+                                        continue;
                                     }
 
                                     error!("Error reading from PTY in event loop: {}", err);

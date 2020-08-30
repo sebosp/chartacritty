@@ -1,13 +1,14 @@
-use std::fmt;
+use std::fmt::{self, Display, Formatter};
 use std::ops::{Index, IndexMut, Mul};
 use std::str::FromStr;
 
-use log::{error, trace};
-use serde::de::Visitor;
+use log::trace;
+use serde::de::{Error as _, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
+use serde_yaml::Value;
 
 use crate::ansi;
-use crate::config::{Colors, LOG_TARGET_CONFIG};
+use crate::config::Colors;
 pub use alacritty_common::Rgb;
 
 pub const COUNT: usize = 269;
@@ -15,8 +16,65 @@ pub const COUNT: usize = 269;
 /// Factor for automatic computation of dim colors used by terminal.
 pub const DIM_FACTOR: f32 = 0.66;
 
-pub const RED: Rgb = Rgb { r: 0xff, g: 0x0, b: 0x0 };
-pub const YELLOW: Rgb = Rgb { r: 0xff, g: 0xff, b: 0x0 };
+/// RGB color optionally referencing the cell's foreground or background.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum CellRgb {
+    CellForeground,
+    CellBackground,
+    Rgb(Rgb),
+}
+
+impl CellRgb {
+    pub fn color(self, foreground: Rgb, background: Rgb) -> Rgb {
+        match self {
+            Self::CellForeground => foreground,
+            Self::CellBackground => background,
+            Self::Rgb(rgb) => rgb,
+        }
+    }
+}
+
+impl Default for CellRgb {
+    fn default() -> Self {
+        Self::Rgb(Rgb::default())
+    }
+}
+
+impl<'de> Deserialize<'de> for CellRgb {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        const EXPECTING: &str = "CellForeground, CellBackground, or hex color like #ff00ff";
+
+        struct CellRgbVisitor;
+        impl<'a> Visitor<'a> for CellRgbVisitor {
+            type Value = CellRgb;
+
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str(EXPECTING)
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<CellRgb, E>
+            where
+                E: serde::de::Error,
+            {
+                // Attempt to deserialize as enum constants.
+                match value {
+                    "CellForeground" => return Ok(CellRgb::CellForeground),
+                    "CellBackground" => return Ok(CellRgb::CellBackground),
+                    _ => (),
+                }
+
+                Rgb::from_str(&value[..]).map(CellRgb::Rgb).map_err(|_| {
+                    E::custom(format!("failed to parse color {}; expected {}", value, EXPECTING))
+                })
+            }
+        }
+
+        deserializer.deserialize_str(CellRgbVisitor).map_err(D::Error::custom)
+    }
+}
 
 /// List of indexed colors.
 ///
@@ -68,9 +126,6 @@ impl List {
         // Foreground and background.
         self[ansi::NamedColor::Foreground] = colors.primary.foreground;
         self[ansi::NamedColor::Background] = colors.primary.background;
-
-        // Background for custom cursor colors.
-        self[ansi::NamedColor::Cursor] = colors.cursor.cursor.unwrap_or_else(Rgb::default);
 
         // Dims.
         self[ansi::NamedColor::DimForeground] =
@@ -203,5 +258,30 @@ impl IndexMut<u8> for List {
     #[inline]
     fn index_mut(&mut self, idx: u8) -> &mut Self::Output {
         &mut self.0[idx as usize]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::f64::EPSILON;
+
+    #[test]
+    fn contrast() {
+        let rgb1 = Rgb { r: 0xff, g: 0xff, b: 0xff };
+        let rgb2 = Rgb { r: 0x00, g: 0x00, b: 0x00 };
+        assert!((rgb1.contrast(rgb2) - 21.).abs() < EPSILON);
+
+        let rgb1 = Rgb { r: 0xff, g: 0xff, b: 0xff };
+        assert!((rgb1.contrast(rgb1) - 1.).abs() < EPSILON);
+
+        let rgb1 = Rgb { r: 0xff, g: 0x00, b: 0xff };
+        let rgb2 = Rgb { r: 0x00, g: 0xff, b: 0x00 };
+        assert!((rgb1.contrast(rgb2) - 2.285_543_608_124_253_3).abs() < EPSILON);
+
+        let rgb1 = Rgb { r: 0x12, g: 0x34, b: 0x56 };
+        let rgb2 = Rgb { r: 0xfe, g: 0xdc, b: 0xba };
+        assert!((rgb1.contrast(rgb2) - 9.786_558_997_257_74).abs() < EPSILON);
     }
 }
