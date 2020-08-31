@@ -92,6 +92,7 @@ dependencies = [
 name = "alacritty_common"
 version = "0.1.0"
 dependencies = [
+ "bitflags",
  "log",
  "serde",
  "serde_yaml",
