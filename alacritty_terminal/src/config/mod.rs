@@ -16,8 +16,8 @@ pub use crate::alacritty_charts;
 pub use crate::config::bell::{BellAnimation, BellConfig};
 pub use crate::config::colors::Colors;
 pub use crate::config::scrolling::Scrolling;
+pub use alacritty_common::config::{failure_default, LOG_TARGET_CONFIG};
 
-pub const LOG_TARGET_CONFIG: &str = "alacritty_config";
 const MAX_SCROLLBACK_LINES: u32 = 100_000;
 const DEFAULT_CURSOR_THICKNESS: f32 = 0.15;
 
@@ -246,23 +246,6 @@ impl Default for DefaultTrueBool {
     fn default() -> Self {
         DefaultTrueBool(true)
     }
-}
-
-fn fallback_default<T, E>(err: E) -> T
-where
-    T: Default,
-    E: Display,
-{
-    error!(target: LOG_TARGET_CONFIG, "Problem with config: {}; using default value", err);
-    T::default()
-}
-
-pub fn failure_default<'a, D, T>(deserializer: D) -> Result<T, D::Error>
-where
-    D: Deserializer<'a>,
-    T: Deserialize<'a> + Default,
-{
-    Ok(T::deserialize(Value::deserialize(deserializer)?).unwrap_or_else(fallback_default))
 }
 
 pub fn option_explicit_none<'de, T, D>(deserializer: D) -> Result<Option<T>, D::Error>
