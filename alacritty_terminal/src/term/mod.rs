@@ -11,24 +11,21 @@ use log::{debug, error, trace};
 use serde::Deserialize;
 use unicode_width::UnicodeWidthChar;
 
-use crate::ansi::{
-    self, Attr, CharsetIndex, Color, CursorStyle, Handler, NamedColor, StandardCharset,
-};
+use crate::ansi::{self, Attr, Color, CursorStyle, Handler};
 use crate::config::{BellAnimation, BellConfig, Config};
 use crate::event::{Event, EventListener};
-use crate::grid::{Dimensions, DisplayIter, Grid, IndexRegion, Indexed, Scroll};
 use crate::selection::{Selection, SelectionRange};
-use crate::term::cell::{Cell, Flags, LineLength};
-use crate::term::color::{CellRgb, Rgb, DIM_FACTOR};
 use crate::term::search::{RegexIter, RegexSearch};
 use crate::vi_mode::{ViModeCursor, ViMotion};
-use alacritty_common::index::{
-    self, Boundary, Column, Direction, IndexRange, Line, Point, RenderableCell, Side,
-};
+use alacritty_common::ansi::{CharsetIndex, NamedColor, StandardCharset};
+use alacritty_common::grid::{Dimensions, DisplayIter, Grid, IndexRegion, Scroll};
+use alacritty_common::index::{self, Boundary, Column, Direction, IndexRange, Line, Point, Side};
+use alacritty_common::term::cell::{Cell, Flags, LineLength};
+use alacritty_common::term::color::{CellRgb, Rgb};
 pub use alacritty_common::SizeInfo;
 use tokio::sync::mpsc as tokio_mpsc;
 
-pub mod cell;
+pub use alacritty_common::term::cell;
 pub mod color;
 mod search;
 
@@ -515,7 +512,7 @@ impl<T> Term<T> {
 
     pub fn new<C>(
         config: &Config<C>,
-        size: &SizeInfo,
+        size: SizeInfo,
         event_proxy: T,
         tokio_handle: tokio::runtime::Handle,
         charts_tx: tokio_mpsc::Sender<alacritty_charts::async_utils::AsyncChartTask>,
@@ -2169,7 +2166,9 @@ pub mod test {
             padding_y: 0.,
             dpr: 1.,
         };
-        let mut term = Term::new(&Config::<()>::default(), size, ());
+        let (tokio_handle, charts_tx, _tokio_shutdown) =
+            alacritty_charts::async_utils::tokio_default_setup();
+        let mut term = Term::new(&Config::<()>::default(), size, (), tokio_handle, charts_tx);
 
         // Fill terminal with content.
         for (line, text) in lines.iter().rev().enumerate() {
@@ -2202,13 +2201,14 @@ mod tests {
 
     use std::mem;
 
-    use crate::ansi::{self, CharsetIndex, Handler, StandardCharset};
+    use crate::ansi::Handler;
     use crate::config::MockConfig;
     use crate::event::{Event, EventListener};
-    use crate::grid::{Grid, Scroll};
     use crate::selection::{Selection, SelectionType};
-    use crate::term::cell::{Cell, Flags};
+    use alacritty_common::ansi::{self, CharsetIndex, StandardCharset};
+    use alacritty_common::grid::{Grid, Scroll};
     use alacritty_common::index::{Column, Line, Point, Side};
+    use alacritty_common::term::cell::{Cell, Flags};
 
     struct Mock;
     impl EventListener for Mock {
