@@ -1,3 +1,4 @@
+/// Moved from alacritty_terminal/src/grid/storage.rs
 use std::cmp::{max, PartialEq};
 use std::mem;
 use std::ops::{Index, IndexMut};
@@ -6,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use super::Row;
 use crate::grid::GridCell;
-use alacritty_common::index::{Column, Line};
+use crate::index::{Column, Line};
 
 /// Maximum number of buffered lines outside of the grid for performance optimization.
 const MAX_CACHE_SIZE: usize = 1_000;
