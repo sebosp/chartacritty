@@ -1,5 +1,5 @@
 //! Defines the Row type which makes up lines in the grid.
-
+/// Moved from alacritty_terminal/src/grid/row.rs
 use std::cmp::{max, min};
 use std::ops::{Index, IndexMut};
 use std::ops::{Range, RangeFrom, RangeFull, RangeTo, RangeToInclusive};
@@ -8,7 +8,7 @@ use std::slice;
 use serde::{Deserialize, Serialize};
 
 use crate::grid::GridCell;
-use alacritty_common::index::Column;
+use crate::index::Column;
 
 /// A row in the grid.
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
