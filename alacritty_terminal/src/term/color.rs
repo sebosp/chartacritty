@@ -1,80 +1,16 @@
-use std::fmt::{self, Display, Formatter};
-use std::ops::{Index, IndexMut, Mul};
-use std::str::FromStr;
+use std::ops::{Index, IndexMut};
 
 use log::trace;
-use serde::de::{Error as _, Visitor};
-use serde::{Deserialize, Deserializer, Serialize};
-use serde_yaml::Value;
 
-use crate::ansi;
-use crate::config::Colors;
-pub use alacritty_common::Rgb;
+use alacritty_common::ansi;
+use alacritty_common::config::colors::Colors;
+pub use alacritty_common::term::color::{CellRgb, Rgb};
+use std::fmt;
 
 pub const COUNT: usize = 269;
 
 /// Factor for automatic computation of dim colors used by terminal.
 pub const DIM_FACTOR: f32 = 0.66;
-
-/// RGB color optionally referencing the cell's foreground or background.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum CellRgb {
-    CellForeground,
-    CellBackground,
-    Rgb(Rgb),
-}
-
-impl CellRgb {
-    pub fn color(self, foreground: Rgb, background: Rgb) -> Rgb {
-        match self {
-            Self::CellForeground => foreground,
-            Self::CellBackground => background,
-            Self::Rgb(rgb) => rgb,
-        }
-    }
-}
-
-impl Default for CellRgb {
-    fn default() -> Self {
-        Self::Rgb(Rgb::default())
-    }
-}
-
-impl<'de> Deserialize<'de> for CellRgb {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        const EXPECTING: &str = "CellForeground, CellBackground, or hex color like #ff00ff";
-
-        struct CellRgbVisitor;
-        impl<'a> Visitor<'a> for CellRgbVisitor {
-            type Value = CellRgb;
-
-            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.write_str(EXPECTING)
-            }
-
-            fn visit_str<E>(self, value: &str) -> Result<CellRgb, E>
-            where
-                E: serde::de::Error,
-            {
-                // Attempt to deserialize as enum constants.
-                match value {
-                    "CellForeground" => return Ok(CellRgb::CellForeground),
-                    "CellBackground" => return Ok(CellRgb::CellBackground),
-                    _ => (),
-                }
-
-                Rgb::from_str(&value[..]).map(CellRgb::Rgb).map_err(|_| {
-                    E::custom(format!("failed to parse color {}; expected {}", value, EXPECTING))
-                })
-            }
-        }
-
-        deserializer.deserialize_str(CellRgbVisitor).map_err(D::Error::custom)
-    }
-}
 
 /// List of indexed colors.
 ///
