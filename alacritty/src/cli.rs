@@ -7,7 +7,6 @@ use serde_yaml::Value;
 
 use alacritty_common::index::{Column, Line};
 use alacritty_terminal::config::Program;
-use alacritty_terminal::config::{Delta, Dimensions, Program, DEFAULT_NAME};
 
 use crate::config::serde_utils;
 use crate::config::ui_config::Delta;

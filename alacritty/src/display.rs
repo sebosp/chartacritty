@@ -30,7 +30,7 @@ use crossfont::{self, Rasterize, Rasterizer};
 use alacritty_terminal::event::{EventListener, OnResize};
 use alacritty_terminal::index::{Column, Direction, Line, Point};
 use alacritty_terminal::selection::Selection;
-use alacritty_terminal::term::{RenderableCell, SizeInfo, Term, TermMode};
+use alacritty_terminal::term::{RenderableCell, Term, TermMode};
 
 use crate::config::font::Font;
 use crate::config::window::StartupMode;
@@ -44,12 +44,9 @@ use crate::url::{Url, Urls};
 use crate::window::{self, Window};
 
 // Chartacritty:
-use alacritty_common::index::Line;
-use alacritty_common::Rgb;
+use alacritty_common::term::color::Rgb;
 use alacritty_common::SizeInfo;
 use alacritty_decorations::{DecorationFans, DecorationLines, DecorationPoints, DecorationTypes};
-use alacritty_terminal::config::{Font, StartupMode};
-use alacritty_terminal::event::OnResize;
 
 const FORWARD_SEARCH_LABEL: &str = "Search: ";
 const BACKWARD_SEARCH_LABEL: &str = "Backward Search: ";
