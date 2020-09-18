@@ -834,7 +834,7 @@ impl QuadRenderer {
     }
 
     /// `draw_hex_bg` draws one hexagon for the background
-    pub fn draw_hex_bg(&mut self, props: &term::SizeInfo, opengl_data: &[f32]) {
+    pub fn draw_hex_bg(&mut self, props: &SizeInfo, opengl_data: &[f32]) {
         // This function expects a vector that contains 6 data points per vertex:
         // 2 are x,y position and the other 4 are the r,g,b,a
         /*let opengl_data = vec![
@@ -922,7 +922,7 @@ impl QuadRenderer {
     /// `draw_array` draws a vec made of 2D values in a specific mode
     pub fn draw_array(
         &mut self,
-        props: &term::SizeInfo,
+        props: &SizeInfo,
         opengl_vecs: &[f32],
         color: Rgb,
         alpha: f32,
