@@ -8,7 +8,7 @@ use std::time::{Duration, Instant, UNIX_EPOCH};
 use std::{io, iter, mem, ptr, str};
 
 use log::{debug, error, trace};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use unicode_width::UnicodeWidthChar;
 
 use crate::ansi::{
@@ -16,18 +16,16 @@ use crate::ansi::{
 };
 use crate::config::{BellAnimation, BellConfig, Config};
 use crate::event::{Event, EventListener};
+use crate::grid::{Dimensions, DisplayIter, Grid, IndexRegion, Indexed, Scroll};
+use crate::index::{self, Boundary, Column, Direction, IndexRange, Line, Point, Side};
 use crate::selection::{Selection, SelectionRange};
-use crate::term::color::DIM_FACTOR;
+use crate::term::cell::{Cell, Flags, LineLength};
+use crate::term::color::{CellRgb, Rgb, DIM_FACTOR};
 use crate::term::search::{RegexIter, RegexSearch};
 use crate::vi_mode::{ViModeCursor, ViMotion};
-use alacritty_common::grid::{Dimensions, DisplayIter, Grid, IndexRegion, Indexed, Scroll};
-use alacritty_common::index::{self, Boundary, Column, Direction, IndexRange, Line, Point, Side};
-use alacritty_common::term::cell::{Cell, Flags, LineLength};
-use alacritty_common::term::color::{CellRgb, Rgb};
-pub use alacritty_common::SizeInfo;
 use tokio::sync::mpsc as tokio_mpsc;
 
-pub use alacritty_common::term::cell;
+pub mod cell;
 pub mod color;
 mod search;
 
@@ -617,6 +615,93 @@ pub struct TermChartsHandle {
 
     /// Wether or not the charts are enabled
     enabled: bool,
+}
+
+/// Terminal size info.
+#[derive(Serialize, Deserialize, Debug, Copy, Clone, PartialEq)]
+pub struct SizeInfo {
+    /// Terminal window width.
+    pub width: f32,
+
+    /// Terminal window height.
+    pub height: f32,
+
+    /// Width of individual cell.
+    pub cell_width: f32,
+
+    /// Height of individual cell.
+    pub cell_height: f32,
+
+    /// Horizontal window padding.
+    pub padding_x: f32,
+
+    /// Horizontal window padding.
+    pub padding_y: f32,
+
+    /// DPR of the current window.
+    #[serde(default)]
+    pub dpr: f64,
+}
+
+impl SizeInfo {
+    #[inline]
+    pub fn lines(&self) -> Line {
+        Line(((self.height - 2. * self.padding_y) / self.cell_height) as usize)
+    }
+
+    #[inline]
+    pub fn cols(&self) -> Column {
+        Column(((self.width - 2. * self.padding_x) / self.cell_width) as usize)
+    }
+
+    #[inline]
+    pub fn padding_right(&self) -> usize {
+        (self.padding_x + (self.width - 2. * self.padding_x) % self.cell_width) as usize
+    }
+
+    #[inline]
+    pub fn padding_bottom(&self) -> usize {
+        (self.padding_y + (self.height - 2. * self.padding_y) % self.cell_height) as usize
+    }
+
+    /// Check if coordinates are inside the terminal grid.
+    ///
+    /// The padding is not counted as part of the grid.
+    #[inline]
+    pub fn contains_point(&self, x: usize, y: usize) -> bool {
+        x < (self.width as usize - self.padding_right())
+            && x >= self.padding_x as usize
+            && y < (self.height as usize - self.padding_bottom())
+            && y >= self.padding_y as usize
+    }
+
+    pub fn pixels_to_coords(&self, x: usize, y: usize) -> Point {
+        let col = Column(x.saturating_sub(self.padding_x as usize) / (self.cell_width as usize));
+        let line = Line(y.saturating_sub(self.padding_y as usize) / (self.cell_height as usize));
+
+        Point {
+            line: min(line, Line(self.lines().saturating_sub(1))),
+            col: min(col, Column(self.cols().saturating_sub(1))),
+        }
+    }
+
+    /// `scale_x` Scales the value from the current display boundary to
+    /// a cartesian plane from [-1.0, 1.0], where -1.0 is 0px (left-most) and
+    /// 1.0 is the `display_width` parameter (right-most), i.e. 1024px.
+    pub fn scale_x(&self, input_value: f32) -> f32 {
+        let center_x = self.width / 2.;
+        let x = self.padding_x + input_value;
+        (x - center_x) / center_x
+    }
+
+    /// `scale_y` Scales the value from the current display boundary to
+    /// a cartesian plane from [-1.0, 1.0], where 1.0 is 0px (top) and -1.0 is
+    /// the `display_height` parameter (bottom), i.e. 768px.
+    pub fn scale_y(&self, input_value: f32) -> f32 {
+        let center_y = self.height / 2.;
+        let y = self.height - 2. * self.padding_y - input_value;
+        -(y - center_y) / center_y
+    }
 }
 
 pub struct Term<T> {
