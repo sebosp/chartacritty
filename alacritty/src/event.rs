@@ -28,13 +28,10 @@ use serde_json as json;
 use crossfont::set_font_smoothing;
 use crossfont::{self, Size};
 
-use alacritty_common::index::{Column, Line, Point, Side};
-//use alacritty_terminal::index::{Boundary, Column, Direction, Line, Point, Side};
-// SEB: moved to:
-use alacritty_common::grid::{Dimensions, Scroll};
 use alacritty_terminal::config::LOG_TARGET_CONFIG;
 use alacritty_terminal::event::{Event as TerminalEvent, EventListener, Notify, OnResize};
-use alacritty_terminal::index::{Boundary, Direction};
+use alacritty_terminal::grid::{Dimensions, Scroll};
+use alacritty_terminal::index::{Boundary, Column, Direction, Line, Point, Side};
 use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::cell::Cell;
