@@ -22,11 +22,10 @@ use glutin::event_loop::EventLoopWindowTarget;
 use glutin::platform::macos::EventLoopWindowTargetExtMacOS;
 use glutin::window::CursorIcon;
 
-use alacritty_common::grid::{Dimensions, Scroll};
-use alacritty_common::index::{Column, Line, Point, Side};
 use alacritty_terminal::ansi::{ClearMode, Handler};
 use alacritty_terminal::event::EventListener;
-use alacritty_terminal::index::Direction;
+use alacritty_terminal::grid::{Dimensions, Scroll};
+use alacritty_terminal::index::{Column, Direction, Line, Point, Side};
 use alacritty_terminal::selection::SelectionType;
 use alacritty_terminal::term::mode::TermMode;
 use alacritty_terminal::term::{ClipboardType, SizeInfo, Term};
