@@ -98,7 +98,7 @@ impl<T> Term<T> {
             Some(max_lines) => {
                 let line = (start.line + total_lines - max_lines) % total_lines;
                 Point::new(line, self.cols() - 1)
-            },
+            }
             _ => end.sub_absolute(self, Boundary::Wrap, 1),
         };
 
@@ -258,7 +258,7 @@ impl<T> Term<T> {
                     let start = Point::new(last_line - point.line, last_col - point.col);
                     iter = self.grid.iter_from(start);
                     *iter.cell()
-                },
+                }
             };
             self.skip_fullwidth(&mut iter, &mut new_cell, direction);
             let last_point = mem::replace(&mut point, iter.point());
@@ -292,13 +292,13 @@ impl<T> Term<T> {
         match direction {
             Direction::Right if cell.flags.contains(Flags::WIDE_CHAR) => {
                 iter.next();
-            },
+            }
             Direction::Right if cell.flags.contains(Flags::LEADING_WIDE_CHAR_SPACER) => {
                 if let Some(new_cell) = iter.next() {
                     *cell = *new_cell;
                 }
                 iter.next();
-            },
+            }
             Direction::Left if cell.flags.contains(Flags::WIDE_CHAR_SPACER) => {
                 if let Some(new_cell) = iter.prev() {
                     *cell = *new_cell;
@@ -308,7 +308,7 @@ impl<T> Term<T> {
                 if self.grid[prev].flags.contains(Flags::LEADING_WIDE_CHAR_SPACER) {
                     iter.prev();
                 }
-            },
+            }
             _ => (),
         }
     }
