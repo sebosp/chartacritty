@@ -6,9 +6,9 @@ use std::sync::mpsc::TryRecvError;
 
 use crate::config::{Config, Program};
 use crate::event::OnResize;
+use crate::term::SizeInfo;
 use crate::tty::windows::child::ChildExitWatcher;
 use crate::tty::{ChildEvent, EventedPty, EventedReadWrite};
-use alacritty_common::SizeInfo;
 
 #[cfg(feature = "winpty")]
 mod automatic_backend;
