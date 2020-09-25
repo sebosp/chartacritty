@@ -1,9 +1,8 @@
 //! Tests for the Grid.
 
-use super::{BidirectionalIterator, Grid, GridCell};
+use super::{BidirectionalIterator, Dimensions, Grid, GridCell};
 use crate::index::{Column, Line, Point};
 use crate::term::cell::{Cell, Flags};
-use alacritty_common::index::{Column, Dimensions, Line, Point};
 
 impl GridCell for usize {
     fn is_empty(&self) -> bool {

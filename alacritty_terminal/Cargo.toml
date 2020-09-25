@@ -23,8 +23,6 @@ base64 = "0.12.0"
 terminfo = "0.7.1"
 tokio = { version = "0.2", features = ["full"] }
 futures = "0.3.5"
-alacritty_charts = { path = "../alacritty_charts" }
-alacritty_common = { path = "../alacritty_common" }
 regex-automata = "0.1.9"
 hyper = "0.13.6"
 hyper-tls = "0.4.1"
@@ -32,7 +30,6 @@ serde_derive = "1.0"
 serde_json = "1"
 env_logger = "0.7"
 tracing = { version = "0.1", features = ["log", "log-always"] }
-alacritty_common = { path = "../alacritty_common" }
 tracing-log = { version = "0.1", features = ["env_logger"]}
 percent-encoding = "1.0.1"
 failure = "0.1.6"

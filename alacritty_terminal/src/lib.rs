@@ -4,7 +4,9 @@
 #![cfg_attr(all(test, feature = "bench"), feature(test))]
 
 pub mod ansi;
+pub mod charts;
 pub mod config;
+pub mod decorations;
 pub mod event;
 pub mod event_loop;
 pub mod grid;
@@ -18,4 +20,3 @@ pub mod vi_mode;
 
 pub use crate::grid::Grid;
 pub use crate::term::Term;
-pub use alacritty_charts;

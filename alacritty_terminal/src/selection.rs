@@ -9,10 +9,9 @@ use std::convert::TryFrom;
 use std::mem;
 use std::ops::{Bound, Range, RangeBounds};
 
+use crate::grid::Dimensions;
+use crate::index::{Column, Line, Point, Side};
 use crate::term::Term;
-use alacritty_common::grid::Dimensions;
-use alacritty_common::index::{Column, Line, Point, Side};
-use alacritty_common::selection::SelectionRange;
 
 /// A Point and side within that point.
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -25,6 +24,17 @@ impl Anchor {
     fn new(point: Point<usize>, side: Side) -> Anchor {
         Anchor { point, side }
     }
+}
+
+/// Represents a range of selected cells.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct SelectionRange<L = usize> {
+    /// Start point, top left of the selection.
+    pub start: Point<L>,
+    /// End point, bottom right of the selection.
+    pub end: Point<L>,
+    /// Whether this selection is a block selection.
+    pub is_block: bool,
 }
 
 impl<L> SelectionRange<L> {
@@ -390,9 +400,8 @@ mod tests {
 
     use crate::config::MockConfig;
     use crate::event::{Event, EventListener};
-    use crate::term::Term;
-    use alacritty_common::index::{Column, Line, Point, Side};
-    use alacritty_common::SizeInfo;
+    use crate::index::{Column, Line, Point, Side};
+    use crate::term::{SizeInfo, Term};
 
     struct Mock;
     impl EventListener for Mock {
