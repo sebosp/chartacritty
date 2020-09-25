@@ -25,6 +25,8 @@
 //
 // TODO: There are several RFCs in rust to allow enum variants to impl a specific Trait but they
 // haven't been merged
+use crate::charts::{ChartSizeInfo, TimeSeriesSource, TimeSeriesStats, Value2D};
+use crate::term::color::Rgb;
 use tracing::{event, span, Level};
 /// `Decoration` contains several types of decorations to add to a chart
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
