@@ -1,4 +1,4 @@
-use crate::Rgb;
+use crate::term::color::Rgb;
 /// Utilities from alacritty_terminal/src/ansi.rs
 /// Standard or common character sets which can be designated as G0-G3.
 use serde::{Deserialize, Serialize};
@@ -180,4 +180,47 @@ pub enum Color {
     Named(NamedColor),
     Spec(Rgb),
     Indexed(u8),
+}
+
+/// Identifiers which can be assigned to a graphic character set.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CharsetIndex {
+    /// Default set, is designated as ASCII at startup.
+    G0,
+    G1,
+    G2,
+    G3,
+}
+
+impl Default for CharsetIndex {
+    fn default() -> Self {
+        CharsetIndex::G0
+    }
+}
+
+/// Describes shape of cursor.
+#[derive(Debug, Eq, PartialEq, Copy, Clone, Hash, Deserialize)]
+pub enum CursorStyle {
+    /// Cursor is a block like `▒`.
+    Block,
+
+    /// Cursor is an underscore like `_`.
+    Underline,
+
+    /// Cursor is a vertical bar `⎸`.
+    Beam,
+
+    /// Cursor is a box like `☐`.
+    #[serde(skip)]
+    HollowBlock,
+
+    /// Invisible cursor.
+    #[serde(skip)]
+    Hidden,
+}
+
+impl Default for CursorStyle {
+    fn default() -> CursorStyle {
+        CursorStyle::Block
+    }
 }

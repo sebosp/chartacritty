@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use alacritty_common::SizeInfo;
+use alacritty_terminal::term::SizeInfo;
 
 pub const CLOSE_BUTTON_TEXT: &str = "[X]";
 const CLOSE_BUTTON_PADDING: usize = 1;
@@ -170,7 +170,6 @@ impl MessageBuffer {
 #[cfg(test)]
 mod tests {
     use super::{Message, MessageBuffer, MessageType, MIN_FREE_LINES};
-    use alacritty_common::SizeInfo;
     use alacritty_terminal::term::SizeInfo;
 
     #[test]

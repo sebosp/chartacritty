@@ -4,8 +4,8 @@ use log::error;
 use serde::{Deserialize, Deserializer};
 use serde_yaml::Value;
 
-use alacritty_common::index::{Column, Line};
 use alacritty_terminal::config::{failure_default, option_explicit_none, LOG_TARGET_CONFIG};
+use alacritty_terminal::index::{Column, Line};
 
 use crate::config::ui_config::{DefaultTrueBool, Delta};
 

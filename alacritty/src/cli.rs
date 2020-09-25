@@ -5,8 +5,8 @@ use clap::{crate_authors, crate_description, crate_name, crate_version, App, Arg
 use log::{self, error, LevelFilter};
 use serde_yaml::Value;
 
-use alacritty_common::index::{Column, Line};
 use alacritty_terminal::config::Program;
+use alacritty_terminal::index::{Column, Line};
 
 use crate::config::serde_utils;
 use crate::config::ui_config::Delta;
