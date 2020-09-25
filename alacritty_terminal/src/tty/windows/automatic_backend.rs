@@ -13,7 +13,7 @@ use mio_named_pipes::NamedPipe;
 
 use crate::config::Config;
 use crate::event::OnResize;
-use alacritty_common::SizeInfo;
+use crate::term::SizeInfo;
 
 use super::{conpty, winpty, Pty};
 

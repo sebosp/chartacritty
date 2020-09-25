@@ -10,31 +10,32 @@ use std::cmp::{max, min, Ordering};
 use std::marker::PhantomData;
 use std::time::{Duration, Instant};
 
-use log::{debug, trace, warn};
+use log::trace;
 
 use glutin::dpi::PhysicalPosition;
 use glutin::event::{
     ElementState, KeyboardInput, ModifiersState, MouseButton, MouseScrollDelta, TouchPhase,
+    VirtualKeyCode,
 };
 use glutin::event_loop::EventLoopWindowTarget;
 #[cfg(target_os = "macos")]
 use glutin::platform::macos::EventLoopWindowTargetExtMacOS;
 use glutin::window::CursorIcon;
 
-use alacritty_common::index::{Column, Line, Point, Side};
 use alacritty_terminal::ansi::{ClearMode, Handler};
 use alacritty_terminal::event::EventListener;
-use alacritty_terminal::grid::Scroll;
-use alacritty_terminal::message_bar::{self, Message};
+use alacritty_terminal::grid::{Dimensions, Scroll};
+use alacritty_terminal::index::{Column, Direction, Line, Point, Side};
 use alacritty_terminal::selection::SelectionType;
 use alacritty_terminal::term::mode::TermMode;
 use alacritty_terminal::term::{ClipboardType, SizeInfo, Term};
-use alacritty_terminal::util::start_daemon;
 use alacritty_terminal::vi_mode::ViMotion;
 
 use crate::clipboard::Clipboard;
 use crate::config::{Action, Binding, Config, Key, ViAction};
-use crate::event::{ClickState, Event, Mouse};
+use crate::daemon::start_daemon;
+use crate::event::{ClickState, Event, Mouse, TYPING_SEARCH_DELAY};
+use crate::message_bar::{self, Message};
 use crate::scheduler::{Scheduler, TimerId};
 use crate::url::{Url, Urls};
 use crate::window::Window;
@@ -93,6 +94,15 @@ pub trait ActionContext<T: EventListener> {
     fn mouse_mode(&self) -> bool;
     fn clipboard_mut(&mut self) -> &mut Clipboard;
     fn scheduler_mut(&mut self) -> &mut Scheduler;
+    fn start_search(&mut self, direction: Direction);
+    fn confirm_search(&mut self);
+    fn cancel_search(&mut self);
+    fn push_search(&mut self, c: char);
+    fn pop_search(&mut self);
+    fn pop_word_search(&mut self);
+    fn advance_search_origin(&mut self, direction: Direction);
+    fn search_direction(&self) -> Direction;
+    fn search_active(&self) -> bool;
 }
 
 trait Execute<T: EventListener> {
@@ -135,55 +145,88 @@ impl<T: EventListener> Execute<T> for Action {
                 ctx.clear_selection();
                 ctx.scroll(Scroll::Bottom);
                 ctx.write_to_pty(s.clone().into_bytes())
-            },
+            }
             Action::Copy => ctx.copy_selection(ClipboardType::Clipboard),
             #[cfg(not(any(target_os = "macos", windows)))]
             Action::CopySelection => ctx.copy_selection(ClipboardType::Selection),
             Action::Paste => {
                 let text = ctx.clipboard_mut().load(ClipboardType::Clipboard);
                 paste(ctx, &text);
-            },
+            }
             Action::PasteSelection => {
                 let text = ctx.clipboard_mut().load(ClipboardType::Selection);
                 paste(ctx, &text);
-            },
+            }
             Action::Command(ref program) => {
                 let args = program.args();
                 let program = program.program();
                 trace!("Running command {} with args {:?}", program, args);
 
-                match start_daemon(program, args) {
-                    Ok(_) => debug!("Spawned new proc"),
-                    Err(err) => warn!("Couldn't run command {}", err),
-                }
-            },
+                start_daemon(program, args);
+            }
             Action::ClearSelection => ctx.clear_selection(),
             Action::ToggleViMode => ctx.terminal_mut().toggle_vi_mode(),
-            Action::ViAction(ViAction::ToggleNormalSelection) => {
-                Self::toggle_selection(ctx, SelectionType::Simple)
-            },
-            Action::ViAction(ViAction::ToggleLineSelection) => {
-                Self::toggle_selection(ctx, SelectionType::Lines)
-            },
-            Action::ViAction(ViAction::ToggleBlockSelection) => {
-                Self::toggle_selection(ctx, SelectionType::Block)
-            },
-            Action::ViAction(ViAction::ToggleSemanticSelection) => {
-                Self::toggle_selection(ctx, SelectionType::Semantic)
-            },
-            Action::ViAction(ViAction::Open) => {
-                ctx.mouse_mut().block_url_launcher = false;
-                if let Some(url) = ctx.urls().find_at(ctx.terminal().vi_mode_cursor.point) {
-                    ctx.launch_url(url);
-                }
-            },
             Action::ViMotion(motion) => {
                 if ctx.config().ui_config.mouse.hide_when_typing {
                     ctx.window_mut().set_mouse_visible(false);
                 }
 
                 ctx.terminal_mut().vi_motion(motion)
-            },
+            }
+            Action::ViAction(ViAction::ToggleNormalSelection) => {
+                Self::toggle_selection(ctx, SelectionType::Simple)
+            }
+            Action::ViAction(ViAction::ToggleLineSelection) => {
+                Self::toggle_selection(ctx, SelectionType::Lines)
+            }
+            Action::ViAction(ViAction::ToggleBlockSelection) => {
+                Self::toggle_selection(ctx, SelectionType::Block)
+            }
+            Action::ViAction(ViAction::ToggleSemanticSelection) => {
+                Self::toggle_selection(ctx, SelectionType::Semantic)
+            }
+            Action::ViAction(ViAction::Open) => {
+                ctx.mouse_mut().block_url_launcher = false;
+                if let Some(url) = ctx.urls().find_at(ctx.terminal().vi_mode_cursor.point) {
+                    ctx.launch_url(url);
+                }
+            }
+            Action::ViAction(ViAction::SearchNext) => {
+                let origin = ctx.terminal().visible_to_buffer(ctx.terminal().vi_mode_cursor.point);
+                let direction = ctx.search_direction();
+
+                let regex_match = ctx.terminal().search_next(origin, direction, Side::Left, None);
+                if let Some(regex_match) = regex_match {
+                    ctx.terminal_mut().vi_goto_point(*regex_match.start());
+                }
+            }
+            Action::ViAction(ViAction::SearchPrevious) => {
+                let origin = ctx.terminal().visible_to_buffer(ctx.terminal().vi_mode_cursor.point);
+                let direction = ctx.search_direction().opposite();
+
+                let regex_match = ctx.terminal().search_next(origin, direction, Side::Left, None);
+                if let Some(regex_match) = regex_match {
+                    ctx.terminal_mut().vi_goto_point(*regex_match.start());
+                }
+            }
+            Action::ViAction(ViAction::SearchStart) => {
+                let terminal = ctx.terminal();
+                let origin = terminal.visible_to_buffer(ctx.terminal().vi_mode_cursor.point);
+                let regex_match = terminal.search_next(origin, Direction::Left, Side::Left, None);
+                if let Some(regex_match) = regex_match {
+                    ctx.terminal_mut().vi_goto_point(*regex_match.start());
+                }
+            }
+            Action::ViAction(ViAction::SearchEnd) => {
+                let terminal = ctx.terminal();
+                let origin = terminal.visible_to_buffer(ctx.terminal().vi_mode_cursor.point);
+                let regex_match = terminal.search_next(origin, Direction::Right, Side::Right, None);
+                if let Some(regex_match) = regex_match {
+                    ctx.terminal_mut().vi_goto_point(*regex_match.end());
+                }
+            }
+            Action::SearchForward => ctx.start_search(Direction::Right),
+            Action::SearchBackward => ctx.start_search(Direction::Left),
             Action::ToggleFullscreen => ctx.window_mut().toggle_fullscreen(),
             #[cfg(target_os = "macos")]
             Action::ToggleSimpleFullscreen => ctx.window_mut().toggle_simple_fullscreen(),
@@ -199,46 +242,46 @@ impl<T: EventListener> Execute<T> for Action {
             Action::ScrollPageUp => {
                 // Move vi mode cursor.
                 let term = ctx.terminal_mut();
-                let scroll_lines = term.grid().num_lines().0 as isize;
+                let scroll_lines = term.screen_lines().0 as isize;
                 term.vi_mode_cursor = term.vi_mode_cursor.scroll(term, scroll_lines);
 
                 ctx.scroll(Scroll::PageUp);
-            },
+            }
             Action::ScrollPageDown => {
                 // Move vi mode cursor.
                 let term = ctx.terminal_mut();
-                let scroll_lines = -(term.grid().num_lines().0 as isize);
+                let scroll_lines = -(term.screen_lines().0 as isize);
                 term.vi_mode_cursor = term.vi_mode_cursor.scroll(term, scroll_lines);
 
                 ctx.scroll(Scroll::PageDown);
-            },
+            }
             Action::ScrollHalfPageUp => {
                 // Move vi mode cursor.
                 let term = ctx.terminal_mut();
-                let scroll_lines = term.grid().num_lines().0 as isize / 2;
+                let scroll_lines = term.screen_lines().0 as isize / 2;
                 term.vi_mode_cursor = term.vi_mode_cursor.scroll(term, scroll_lines);
 
-                ctx.scroll(Scroll::Lines(scroll_lines));
-            },
+                ctx.scroll(Scroll::Delta(scroll_lines));
+            }
             Action::ScrollHalfPageDown => {
                 // Move vi mode cursor.
                 let term = ctx.terminal_mut();
-                let scroll_lines = -(term.grid().num_lines().0 as isize / 2);
+                let scroll_lines = -(term.screen_lines().0 as isize / 2);
                 term.vi_mode_cursor = term.vi_mode_cursor.scroll(term, scroll_lines);
 
-                ctx.scroll(Scroll::Lines(scroll_lines));
-            },
+                ctx.scroll(Scroll::Delta(scroll_lines));
+            }
             Action::ScrollLineUp => {
                 // Move vi mode cursor.
                 let term = ctx.terminal();
-                if term.grid().display_offset() != term.grid().history_size()
-                    && term.vi_mode_cursor.point.line + 1 != term.grid().num_lines()
+                if term.grid().display_offset() != term.history_size()
+                    && term.vi_mode_cursor.point.line + 1 != term.screen_lines()
                 {
                     ctx.terminal_mut().vi_mode_cursor.point.line += 1;
                 }
 
-                ctx.scroll(Scroll::Lines(1));
-            },
+                ctx.scroll(Scroll::Delta(1));
+            }
             Action::ScrollLineDown => {
                 // Move vi mode cursor.
                 if ctx.terminal().grid().display_offset() != 0
@@ -247,26 +290,26 @@ impl<T: EventListener> Execute<T> for Action {
                     ctx.terminal_mut().vi_mode_cursor.point.line -= 1;
                 }
 
-                ctx.scroll(Scroll::Lines(-1));
-            },
+                ctx.scroll(Scroll::Delta(-1));
+            }
             Action::ScrollToTop => {
                 ctx.scroll(Scroll::Top);
 
                 // Move vi mode cursor.
                 ctx.terminal_mut().vi_mode_cursor.point.line = Line(0);
                 ctx.terminal_mut().vi_motion(ViMotion::FirstOccupied);
-            },
+            }
             Action::ScrollToBottom => {
                 ctx.scroll(Scroll::Bottom);
 
                 // Move vi mode cursor.
                 let term = ctx.terminal_mut();
-                term.vi_mode_cursor.point.line = term.grid().num_lines() - 1;
+                term.vi_mode_cursor.point.line = term.screen_lines() - 1;
 
                 // Move to beginning twice, to always jump across linewraps.
                 term.vi_motion(ViMotion::FirstOccupied);
                 term.vi_motion(ViMotion::FirstOccupied);
-            },
+            }
             Action::ClearHistory => ctx.terminal_mut().clear_screen(ClearMode::Saved),
             Action::ClearLogNotice => ctx.pop_message(),
             Action::ToggleChartShow => ctx.terminal_mut().toggle_chart_show(),
@@ -318,12 +361,14 @@ impl<'a, T: EventListener, A: ActionContext<T>> Processor<'a, T, A> {
 
     #[inline]
     pub fn mouse_moved(&mut self, position: PhysicalPosition<f64>) {
+        let search_active = self.ctx.search_active();
         let size_info = self.ctx.size_info();
 
         let (x, y) = position.into();
 
         let lmb_pressed = self.ctx.mouse().left_button_state == ElementState::Pressed;
-        if !self.ctx.selection_is_empty() && lmb_pressed {
+        let rmb_pressed = self.ctx.mouse().right_button_state == ElementState::Pressed;
+        if !self.ctx.selection_is_empty() && (lmb_pressed || rmb_pressed) && !search_active {
             self.update_selection_scrolling(y);
         }
 
@@ -333,7 +378,7 @@ impl<'a, T: EventListener, A: ActionContext<T>> Processor<'a, T, A> {
         self.ctx.mouse_mut().x = x;
         self.ctx.mouse_mut().y = y;
 
-        let inside_grid = size_info.contains_point(x, y);
+        let inside_text_area = size_info.contains_point(x, y);
         let point = size_info.pixels_to_coords(x, y);
         let cell_side = self.get_mouse_side();
 
@@ -343,12 +388,12 @@ impl<'a, T: EventListener, A: ActionContext<T>> Processor<'a, T, A> {
         // If the mouse hasn't changed cells, do nothing.
         if !cell_changed
             && self.ctx.mouse().cell_side == cell_side
-            && self.ctx.mouse().inside_grid == inside_grid
+            && self.ctx.mouse().inside_text_area == inside_text_area
         {
             return;
         }
 
-        self.ctx.mouse_mut().inside_grid = inside_grid;
+        self.ctx.mouse_mut().inside_text_area = inside_text_area;
         self.ctx.mouse_mut().cell_side = cell_side;
         self.ctx.mouse_mut().line = point.line;
         self.ctx.mouse_mut().column = point.col;
@@ -361,20 +406,14 @@ impl<'a, T: EventListener, A: ActionContext<T>> Processor<'a, T, A> {
         self.update_url_state(&mouse_state);
         self.ctx.window_mut().set_mouse_cursor(mouse_state.into());
 
-        let last_term_line = self.ctx.terminal().grid().num_lines() - 1;
-        if lmb_pressed && (self.ctx.modifiers().shift() || !self.ctx.mouse_mode()) {
-            // Treat motion over message bar like motion over the last line.
-            let line = min(point.line, last_term_line);
-
-            // Move vi mode cursor to mouse cursor position.
-            if self.ctx.terminal().mode().contains(TermMode::VI) {
-                self.ctx.terminal_mut().vi_mode_cursor.point = point;
-            }
-
-            self.ctx.update_selection(Point { line, col: point.col }, cell_side);
-        } else if inside_grid
+        if (lmb_pressed || rmb_pressed)
+            && (self.ctx.modifiers().shift() || !self.ctx.mouse_mode())
+            && !search_active
+        {
+            self.ctx.update_selection(point, cell_side);
+        } else if inside_text_area
             && cell_changed
-            && point.line <= last_term_line
+            && point.line < self.ctx.terminal().screen_lines()
             && self.ctx.terminal().mode().intersects(TermMode::MOUSE_MOTION | TermMode::MOUSE_DRAG)
         {
             if lmb_pressed {
@@ -506,20 +545,20 @@ impl<'a, T: EventListener, A: ActionContext<T>> Processor<'a, T, A> {
                 _ if button != self.ctx.mouse().last_click_button => {
                     self.ctx.mouse_mut().last_click_button = button;
                     ClickState::Click
-                },
+                }
                 ClickState::Click if elapsed < mouse_config.double_click.threshold => {
                     ClickState::DoubleClick
-                },
+                }
                 ClickState::DoubleClick if elapsed < mouse_config.triple_click.threshold => {
                     ClickState::TripleClick
-                },
+                }
                 _ => ClickState::Click,
             };
 
             // Load mouse point, treating message bar and padding as the closest cell.
             let mouse = self.ctx.mouse();
             let mut point = self.ctx.size_info().pixels_to_coords(mouse.x, mouse.y);
-            point.line = min(point.line, self.ctx.terminal().grid().num_lines() - 1);
+            point.line = min(point.line, self.ctx.terminal().screen_lines() - 1);
 
             match button {
                 MouseButton::Left => self.on_left_click(point),
@@ -541,7 +580,7 @@ impl<'a, T: EventListener, A: ActionContext<T>> Processor<'a, T, A> {
                 };
 
                 self.expand_selection(point, selection_type);
-            },
+            }
             ClickState::DoubleClick => self.expand_selection(point, SelectionType::Semantic),
             ClickState::TripleClick => self.expand_selection(point, SelectionType::Lines),
             ClickState::None => (),
@@ -559,6 +598,11 @@ impl<'a, T: EventListener, A: ActionContext<T>> Processor<'a, T, A> {
 
         selection.ty = selection_type;
         self.ctx.update_selection(point, cell_side);
+
+        // Move vi mode cursor to mouse click position.
+        if self.ctx.terminal().mode().contains(TermMode::VI) {
+            self.ctx.terminal_mut().vi_mode_cursor.point = point;
+        }
     }
 
     /// Handle left click selection and vi mode cursor movement.
@@ -578,21 +622,20 @@ impl<'a, T: EventListener, A: ActionContext<T>> Processor<'a, T, A> {
                 } else {
                     self.ctx.start_selection(SelectionType::Simple, point, side);
                 }
-            },
+            }
             ClickState::DoubleClick => {
                 self.ctx.mouse_mut().block_url_launcher = true;
                 self.ctx.start_selection(SelectionType::Semantic, point, side);
-            },
+            }
             ClickState::TripleClick => {
                 self.ctx.mouse_mut().block_url_launcher = true;
                 self.ctx.start_selection(SelectionType::Lines, point, side);
-            },
+            }
             ClickState::None => (),
         };
 
-        // Move vi mode cursor to mouse position.
+        // Move vi mode cursor to mouse click position.
         if self.ctx.terminal().mode().contains(TermMode::VI) {
-            // Update Vi mode cursor position on click.
             self.ctx.terminal_mut().vi_mode_cursor.point = point;
         }
     }
@@ -621,19 +664,19 @@ impl<'a, T: EventListener, A: ActionContext<T>> Processor<'a, T, A> {
             MouseScrollDelta::LineDelta(_columns, lines) => {
                 let new_scroll_px = lines * self.ctx.size_info().cell_height;
                 self.scroll_terminal(f64::from(new_scroll_px));
-            },
+            }
             MouseScrollDelta::PixelDelta(lpos) => {
                 match phase {
                     TouchPhase::Started => {
                         // Reset offset to zero.
                         self.ctx.mouse_mut().scroll_px = 0.;
-                    },
+                    }
                     TouchPhase::Moved => {
                         self.scroll_terminal(lpos.y);
-                    },
+                    }
                     _ => (),
                 }
-            },
+            }
         }
     }
 
@@ -685,7 +728,7 @@ impl<'a, T: EventListener, A: ActionContext<T>> Processor<'a, T, A> {
             let term = self.ctx.terminal();
             let absolute = term.visible_to_buffer(term.vi_mode_cursor.point);
 
-            self.ctx.scroll(Scroll::Lines(lines as isize));
+            self.ctx.scroll(Scroll::Delta(lines as isize));
 
             // Try to restore vi mode cursor position, to keep it above its previous content.
             let term = self.ctx.terminal_mut();
@@ -728,7 +771,7 @@ impl<'a, T: EventListener, A: ActionContext<T>> Processor<'a, T, A> {
 
             // Reset cursor when message bar height changed or all messages are gone.
             let size = self.ctx.size_info();
-            let current_lines = (size.lines() - self.ctx.terminal().grid().num_lines()).0;
+            let current_lines = (size.lines() - self.ctx.terminal().screen_lines()).0;
             let new_lines = self.ctx.message().map(|m| m.text(&size).len()).unwrap_or(0);
 
             let new_icon = match current_lines.cmp(&new_lines) {
@@ -740,16 +783,16 @@ impl<'a, T: EventListener, A: ActionContext<T>> Processor<'a, T, A> {
                     } else {
                         CursorIcon::Text
                     }
-                },
+                }
             };
 
             self.ctx.window_mut().set_mouse_cursor(new_icon);
-        } else {
+        } else if !self.ctx.search_active() {
             match state {
                 ElementState::Pressed => {
                     self.process_mouse_bindings(button);
                     self.on_mouse_press(button);
-                },
+                }
                 ElementState::Released => self.on_mouse_release(button),
             }
         }
@@ -759,11 +802,61 @@ impl<'a, T: EventListener, A: ActionContext<T>> Processor<'a, T, A> {
     pub fn key_input(&mut self, input: KeyboardInput) {
         self.ctx.terminal_mut().increment_chart_input_counter(1f64);
         match input.state {
+            ElementState::Pressed if self.ctx.search_active() => {
+                match (input.virtual_keycode, *self.ctx.modifiers()) {
+                    (Some(VirtualKeyCode::Back), _) => {
+                        self.ctx.pop_search();
+                        *self.ctx.suppress_chars() = true;
+                    }
+                    (Some(VirtualKeyCode::Return), ModifiersState::SHIFT)
+                        if !self.ctx.terminal().mode().contains(TermMode::VI) =>
+                    {
+                        let direction = self.ctx.search_direction().opposite();
+                        self.ctx.advance_search_origin(direction);
+                        *self.ctx.suppress_chars() = true;
+                    }
+                    (Some(VirtualKeyCode::Return), _)
+                    | (Some(VirtualKeyCode::J), ModifiersState::CTRL) => {
+                        if self.ctx.terminal().mode().contains(TermMode::VI) {
+                            self.ctx.confirm_search();
+                        } else {
+                            self.ctx.advance_search_origin(self.ctx.search_direction());
+                        }
+
+                        *self.ctx.suppress_chars() = true;
+                    }
+                    (Some(VirtualKeyCode::Escape), _)
+                    | (Some(VirtualKeyCode::C), ModifiersState::CTRL) => {
+                        self.ctx.cancel_search();
+                        *self.ctx.suppress_chars() = true;
+                    }
+                    (Some(VirtualKeyCode::U), ModifiersState::CTRL) => {
+                        let direction = self.ctx.search_direction();
+                        self.ctx.cancel_search();
+                        self.ctx.start_search(direction);
+                        *self.ctx.suppress_chars() = true;
+                    }
+                    (Some(VirtualKeyCode::H), ModifiersState::CTRL) => {
+                        self.ctx.pop_search();
+                        *self.ctx.suppress_chars() = true;
+                    }
+                    (Some(VirtualKeyCode::W), ModifiersState::CTRL) => {
+                        self.ctx.pop_word_search();
+                        *self.ctx.suppress_chars() = true;
+                    }
+                    _ => (),
+                }
+
+                // Reset search delay when the user is still typing.
+                if let Some(timer) = self.ctx.scheduler_mut().get_mut(TimerId::DelayedSearch) {
+                    timer.deadline = Instant::now() + TYPING_SEARCH_DELAY;
+                }
+            }
             ElementState::Pressed => {
                 *self.ctx.received_count() = 0;
                 self.process_key_bindings(input);
-            },
-            ElementState::Released => *self.ctx.suppress_chars() = false,
+            }
+            ElementState::Released => (),
         }
     }
 
@@ -779,7 +872,21 @@ impl<'a, T: EventListener, A: ActionContext<T>> Processor<'a, T, A> {
 
     /// Process a received character.
     pub fn received_char(&mut self, c: char) {
-        if *self.ctx.suppress_chars() || self.ctx.terminal().mode().contains(TermMode::VI) {
+        let suppress_chars = *self.ctx.suppress_chars();
+        let search_active = self.ctx.search_active();
+        if suppress_chars || self.ctx.terminal().mode().contains(TermMode::VI) || search_active {
+            if search_active {
+                // Skip control characters.
+                let c_decimal = c as isize;
+                let is_printable = (c_decimal >= 0x20 && c_decimal < 0x7f) || c_decimal >= 0xa0;
+
+                if !suppress_chars && is_printable {
+                    self.ctx.push_search(c);
+                }
+            }
+
+            *self.ctx.suppress_chars() = false;
+
             return;
         }
 
@@ -797,7 +904,7 @@ impl<'a, T: EventListener, A: ActionContext<T>> Processor<'a, T, A> {
             c.encode_utf8(&mut bytes[..]);
         }
 
-        if self.ctx.config().alt_send_esc()
+        if self.ctx.config().ui_config.alt_send_esc()
             && *self.ctx.received_count() == 0
             && self.ctx.modifiers().alt()
             && utf8_len == 1
@@ -839,7 +946,7 @@ impl<'a, T: EventListener, A: ActionContext<T>> Processor<'a, T, A> {
                 let binding = binding.clone();
                 binding.execute(&mut self.ctx);
 
-                // Don't suppress when there has been a `ReceiveChar` action.
+                // Pass through the key if any of the bindings has the `ReceiveChar` action.
                 *suppress_chars.get_or_insert(true) &= binding.action != Action::ReceiveChar;
             }
         }
@@ -873,15 +980,19 @@ impl<'a, T: EventListener, A: ActionContext<T>> Processor<'a, T, A> {
 
     /// Check if the cursor is hovering above the message bar.
     fn message_at_cursor(&mut self) -> bool {
-        self.ctx.mouse().line >= self.ctx.terminal().grid().num_lines()
+        self.ctx.mouse().line >= self.ctx.terminal().screen_lines()
     }
 
     /// Whether the point is over the message bar's close button.
     fn message_close_at_cursor(&self) -> bool {
         let mouse = self.ctx.mouse();
-        mouse.inside_grid
+
+        // Since search is above the message bar, the button is offset by search's height.
+        let search_height = if self.ctx.search_active() { 1 } else { 0 };
+
+        mouse.inside_text_area
             && mouse.column + message_bar::CLOSE_BUTTON_TEXT.len() >= self.ctx.size_info().cols()
-            && mouse.line == self.ctx.terminal().grid().num_lines()
+            && mouse.line == self.ctx.terminal().screen_lines() + search_height
     }
 
     /// Copy text selection.
@@ -963,7 +1074,7 @@ impl<'a, T: EventListener, A: ActionContext<T>> Processor<'a, T, A> {
 
         // Scale number of lines scrolled based on distance to boundary.
         let delta = delta as isize / step as isize;
-        let event = Event::Scroll(Scroll::Lines(delta));
+        let event = Event::Scroll(Scroll::Delta(delta));
 
         // Schedule event.
         match scheduler.get_mut(TimerId::SelectionScrolling) {
@@ -975,7 +1086,7 @@ impl<'a, T: EventListener, A: ActionContext<T>> Processor<'a, T, A> {
                     true,
                     TimerId::SelectionScrolling,
                 );
-            },
+            }
         }
     }
 }
@@ -987,10 +1098,10 @@ mod tests {
     use glutin::event::{Event as GlutinEvent, VirtualKeyCode, WindowEvent};
 
     use alacritty_terminal::event::Event as TerminalEvent;
-    use alacritty_terminal::message_bar::MessageBuffer;
     use alacritty_terminal::selection::Selection;
 
     use crate::config::ClickHandler;
+    use crate::message_bar::MessageBuffer;
 
     const KEY: VirtualKeyCode = VirtualKeyCode::Key0;
 
@@ -1031,6 +1142,28 @@ mod tests {
         fn change_font_size(&mut self, _delta: f32) {}
 
         fn reset_font_size(&mut self) {}
+
+        fn start_search(&mut self, _direction: Direction) {}
+
+        fn confirm_search(&mut self) {}
+
+        fn cancel_search(&mut self) {}
+
+        fn push_search(&mut self, _c: char) {}
+
+        fn pop_search(&mut self) {}
+
+        fn pop_word_search(&mut self) {}
+
+        fn advance_search_origin(&mut self, _direction: Direction) {}
+
+        fn search_direction(&self) -> Direction {
+            Direction::Right
+        }
+
+        fn search_active(&self) -> bool {
+            false
+        }
 
         fn terminal(&self) -> &Term<T> {
             &self.terminal
@@ -1162,11 +1295,11 @@ mod tests {
                     dpr: 1.0,
                 };
                 // Create the tokio handle, transmission channel and shutdown channel
-                let (tokio_handle, charts_tx, _tokio_shutdown) = alacritty_charts::async_utils::tokio_default_setup();
+                let (tokio_handle, charts_tx, _tokio_shutdown) = alacritty_terminal::charts::async_utils::tokio_default_setup();
 
                 let mut clipboard = Clipboard::new_nop();
 
-                let mut terminal = Term::new(&cfg, &size, MockEventProxy, tokio_handle, charts_tx);
+                let mut terminal = Term::new(&cfg, size, MockEventProxy, tokio_handle, charts_tx);
 
                 let mut mouse = Mouse::default();
                 mouse.click_state = $initial_state;

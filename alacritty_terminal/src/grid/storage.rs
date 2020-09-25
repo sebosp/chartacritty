@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use super::Row;
 use crate::grid::GridCell;
-use alacritty_common::index::{Column, Line};
+use crate::index::{Column, Line};
 
 /// Maximum number of buffered lines outside of the grid for performance optimization.
 const MAX_CACHE_SIZE: usize = 1_000;
@@ -232,7 +232,9 @@ impl<T> Storage<T> {
 
     /// Rotate the grid up, moving all existing lines down in history.
     ///
-    /// This is a faster, specialized version of [`rotate`].
+    /// This is a faster, specialized version of [`rotate_left`].
+    ///
+    /// [`rotate_left`]: https://doc.rust-lang.org/std/vec/struct.Vec.html#method.rotate_left
     #[inline]
     pub fn rotate_up(&mut self, count: usize) {
         self.zero = (self.zero + count) % self.inner.len();
@@ -301,8 +303,8 @@ mod tests {
     use crate::grid::row::Row;
     use crate::grid::storage::{Storage, MAX_CACHE_SIZE};
     use crate::grid::GridCell;
+    use crate::index::{Column, Line};
     use crate::term::cell::Flags;
-    use alacritty_common::index::{Column, Line};
 
     impl GridCell for char {
         fn is_empty(&self) -> bool {

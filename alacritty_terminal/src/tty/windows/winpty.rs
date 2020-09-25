@@ -10,9 +10,9 @@ use winpty::{Config as WinptyConfig, ConfigFlags, MouseMode, SpawnConfig, SpawnF
 
 use crate::config::Config;
 use crate::event::OnResize;
+use crate::term::SizeInfo;
 use crate::tty::windows::child::ChildExitWatcher;
 use crate::tty::windows::{cmdline, Pty};
-use alacritty_common::SizeInfo;
 
 pub use winpty::Winpty as Agent;
 
@@ -34,7 +34,7 @@ pub fn new<C>(config: &Config<C>, size: &SizeInfo, _window_id: Option<usize>) ->
         SpawnFlags::AUTO_SHUTDOWN | SpawnFlags::EXIT_AFTER_SHUTDOWN,
         None, // appname.
         Some(&cmdline),
-        config.working_directory.as_ref().map(|p| p.as_path()),
+        config.working_directory.as_deref(),
         None, // Env.
     )
     .unwrap();

@@ -1,8 +1,9 @@
 //! Process window events.
 
 use std::borrow::Cow;
-use std::cmp::max;
+use std::cmp::{max, min};
 use std::env;
+use std::fmt::Debug;
 #[cfg(unix)]
 use std::fs;
 use std::fs::File;
@@ -12,7 +13,7 @@ use std::path::PathBuf;
 #[cfg(not(any(target_os = "macos", windows)))]
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use glutin::dpi::PhysicalSize;
 use glutin::event::{ElementState, Event as GlutinEvent, ModifiersState, MouseButton, WindowEvent};
@@ -20,39 +21,42 @@ use glutin::event_loop::{ControlFlow, EventLoop, EventLoopProxy, EventLoopWindow
 use glutin::platform::desktop::EventLoopExtDesktop;
 #[cfg(not(any(target_os = "macos", windows)))]
 use glutin::platform::unix::EventLoopWindowTargetExtUnix;
-use log::{debug, info, warn};
+use log::info;
 use serde_json as json;
 
 #[cfg(target_os = "macos")]
-use font::set_font_smoothing;
-use font::{self, Size};
+use crossfont::set_font_smoothing;
+use crossfont::{self, Size};
 
-use alacritty_common::index::{Column, Line, Point, Side};
-use alacritty_terminal::config::Font;
 use alacritty_terminal::config::LOG_TARGET_CONFIG;
-use alacritty_terminal::event::OnResize;
-use alacritty_terminal::event::{Event as TerminalEvent, EventListener, Notify};
-use alacritty_terminal::grid::Scroll;
-use alacritty_terminal::message_bar::{Message, MessageBuffer};
+use alacritty_terminal::event::{Event as TerminalEvent, EventListener, Notify, OnResize};
+use alacritty_terminal::grid::{Dimensions, Scroll};
+use alacritty_terminal::index::{Boundary, Column, Direction, Line, Point, Side};
 use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::cell::Cell;
 use alacritty_terminal::term::{ClipboardType, SizeInfo, Term, TermMode};
 #[cfg(not(windows))]
 use alacritty_terminal::tty;
-use alacritty_terminal::util::start_daemon;
 
-use crate::cli::Options;
+use crate::cli::Options as CLIOptions;
 use crate::clipboard::Clipboard;
 use crate::config;
 use crate::config::Config;
-use crate::display::Display;
+use crate::daemon::start_daemon;
+use crate::display::{Display, DisplayUpdate};
 use crate::input::{self, ActionContext as _, FONT_SIZE_STEP};
-use crate::scheduler::Scheduler;
+use crate::message_bar::{Message, MessageBuffer};
+use crate::scheduler::{Scheduler, TimerId};
 use crate::url::{Url, Urls};
 use crate::window::Window;
 
 use tokio::sync::mpsc as tokio_mpsc;
+/// Duration after the last user input until an unlimited search is performed.
+pub const TYPING_SEARCH_DELAY: Duration = Duration::from_millis(500);
+
+/// Maximum number of lines for the blocking search while still typing the search regex.
+const MAX_SEARCH_WHILE_TYPING: Option<usize> = Some(1000);
 
 /// Events dispatched through the UI event loop.
 #[derive(Debug, Clone)]
@@ -62,6 +66,7 @@ pub enum Event {
     Scroll(Scroll),
     ConfigReload(PathBuf),
     Message(Message),
+    SearchNext,
 }
 
 impl From<Event> for GlutinEvent<'_, Event> {
@@ -76,17 +81,45 @@ impl From<TerminalEvent> for Event {
     }
 }
 
-#[derive(Default, Clone, Debug, PartialEq)]
-pub struct DisplayUpdate {
-    pub dimensions: Option<PhysicalSize<u32>>,
-    pub message_buffer: bool,
-    pub font: Option<Font>,
-    pub cursor: bool,
+/// Regex search state.
+pub struct SearchState {
+    /// Search string regex.
+    regex: Option<String>,
+
+    /// Search direction.
+    direction: Direction,
+
+    /// Change in display offset since the beginning of the search.
+    display_offset_delta: isize,
+
+    /// Search origin in viewport coordinates relative to original display offset.
+    origin: Point,
 }
 
-impl DisplayUpdate {
-    fn is_empty(&self) -> bool {
-        self.dimensions.is_none() && self.font.is_none() && !self.message_buffer && !self.cursor
+impl SearchState {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    /// Search regex text if a search is active.
+    pub fn regex(&self) -> Option<&String> {
+        self.regex.as_ref()
+    }
+
+    /// Direction of the search from the search origin.
+    pub fn direction(&self) -> Direction {
+        self.direction
+    }
+}
+
+impl Default for SearchState {
+    fn default() -> Self {
+        Self {
+            direction: Direction::Right,
+            display_offset_delta: 0,
+            origin: Point::default(),
+            regex: None,
+        }
     }
 }
 
@@ -106,6 +139,8 @@ pub struct ActionContext<'a, N, T> {
     pub event_loop: &'a EventLoopWindowTarget<Event>,
     pub urls: &'a Urls,
     pub scheduler: &'a mut Scheduler,
+    pub search_state: &'a mut SearchState,
+    cli_options: &'a CLIOptions,
     font_size: &'a mut Size,
 }
 
@@ -119,17 +154,25 @@ impl<'a, N: Notify + 'a, T: EventListener> input::ActionContext<T> for ActionCon
     }
 
     fn scroll(&mut self, scroll: Scroll) {
+        let old_offset = self.terminal.grid().display_offset() as isize;
+
         self.terminal.scroll_display(scroll);
+
+        // Keep track of manual display offset changes during search.
+        if self.search_active() {
+            let display_offset = self.terminal.grid().display_offset();
+            self.search_state.display_offset_delta += old_offset - display_offset as isize;
+        }
 
         // Update selection.
         if self.terminal.mode().contains(TermMode::VI)
             && self.terminal.selection.as_ref().map(|s| s.is_empty()) != Some(true)
         {
             self.update_selection(self.terminal.vi_mode_cursor.point, Side::Right);
-        } else if ElementState::Pressed == self.mouse().left_button_state {
-            let (x, y) = (self.mouse().x, self.mouse().y);
-            let size_info = self.size_info();
-            let point = size_info.pixels_to_coords(x, y);
+        } else if self.mouse().left_button_state == ElementState::Pressed
+            || self.mouse().right_button_state == ElementState::Pressed
+        {
+            let point = self.size_info().pixels_to_coords(self.mouse().x, self.mouse().y);
             let cell_side = self.mouse().cell_side;
             self.update_selection(Point { line: point.line, col: point.col }, cell_side);
         }
@@ -152,20 +195,27 @@ impl<'a, N: Notify + 'a, T: EventListener> input::ActionContext<T> for ActionCon
         self.terminal.dirty = true;
     }
 
-    fn update_selection(&mut self, point: Point, side: Side) {
-        let point = self.terminal.visible_to_buffer(point);
+    fn update_selection(&mut self, mut point: Point, side: Side) {
+        let mut selection = match self.terminal.selection.take() {
+            Some(selection) => selection,
+            None => return,
+        };
 
-        // Update selection if one exists.
-        let vi_mode = self.terminal.mode().contains(TermMode::VI);
-        if let Some(selection) = &mut self.terminal.selection {
-            selection.update(point, side);
+        // Treat motion over message bar like motion over the last line.
+        point.line = min(point.line, self.terminal.screen_lines() - 1);
 
-            if vi_mode {
-                selection.include_all();
-            }
+        // Update selection.
+        let absolute_point = self.terminal.visible_to_buffer(point);
+        selection.update(absolute_point, side);
 
-            self.terminal.dirty = true;
+        // Move vi cursor and expand selection.
+        if self.terminal.mode().contains(TermMode::VI) {
+            self.terminal.vi_mode_cursor.point = point;
+            selection.include_all();
         }
+
+        self.terminal.selection = Some(selection);
+        self.terminal.dirty = true;
     }
 
     fn start_selection(&mut self, ty: SelectionType, point: Point, side: Side) {
@@ -178,11 +228,11 @@ impl<'a, N: Notify + 'a, T: EventListener> input::ActionContext<T> for ActionCon
         match &mut self.terminal.selection {
             Some(selection) if selection.ty == ty && !selection.is_empty() => {
                 self.clear_selection();
-            },
+            }
             Some(selection) if !selection.is_empty() => {
                 selection.ty = ty;
                 self.terminal.dirty = true;
-            },
+            }
             _ => self.start_selection(ty, point, side),
         }
     }
@@ -254,24 +304,25 @@ impl<'a, N: Notify + 'a, T: EventListener> input::ActionContext<T> for ActionCon
 
         #[cfg(unix)]
         let args = {
-            #[cfg(not(target_os = "freebsd"))]
-            let proc_prefix = "";
-            #[cfg(target_os = "freebsd")]
-            let proc_prefix = "/compat/linux";
-            let link_path = format!("{}/proc/{}/cwd", proc_prefix, tty::child_pid());
-            if let Ok(path) = fs::read_link(link_path) {
-                vec!["--working-directory".into(), path]
-            } else {
-                Vec::new()
+            // Use working directory of controlling process, or fallback to initial shell.
+            let mut pid = unsafe { libc::tcgetpgrp(tty::master_fd()) };
+            if pid < 0 {
+                pid = tty::child_pid();
             }
+
+            #[cfg(not(target_os = "freebsd"))]
+            let link_path = format!("/proc/{}/cwd", pid);
+            #[cfg(target_os = "freebsd")]
+            let link_path = format!("/compat/linux/proc/{}/cwd", pid);
+
+            fs::read_link(link_path)
+                .map(|path| vec!["--working-directory".into(), path])
+                .unwrap_or_default()
         };
         #[cfg(not(unix))]
         let args: Vec<String> = Vec::new();
 
-        match start_daemon(&alacritty, &args) {
-            Ok(_) => debug!("Started new Alacritty process: {} {:?}", alacritty, args),
-            Err(_) => warn!("Unable to start new Alacritty process: {} {:?}", alacritty, args),
-        }
+        start_daemon(&alacritty, &args);
     }
 
     /// Spawn URL launcher when clicking on URLs.
@@ -286,29 +337,154 @@ impl<'a, N: Notify + 'a, T: EventListener> input::ActionContext<T> for ActionCon
             let end = self.terminal.visible_to_buffer(url.end());
             args.push(self.terminal.bounds_to_string(start, end));
 
-            match start_daemon(launcher.program(), &args) {
-                Ok(_) => debug!("Launched {} with args {:?}", launcher.program(), args),
-                Err(_) => warn!("Unable to launch {} with args {:?}", launcher.program(), args),
-            }
+            start_daemon(launcher.program(), &args);
         }
     }
 
     fn change_font_size(&mut self, delta: f32) {
         *self.font_size = max(*self.font_size + delta, Size::new(FONT_SIZE_STEP));
-        let font = self.config.font.clone().with_size(*self.font_size);
-        self.display_update_pending.font = Some(font);
+        let font = self.config.ui_config.font.clone().with_size(*self.font_size);
+        self.display_update_pending.set_font(font);
         self.terminal.dirty = true;
     }
 
     fn reset_font_size(&mut self) {
-        *self.font_size = self.config.font.size;
-        self.display_update_pending.font = Some(self.config.font.clone());
+        *self.font_size = self.config.ui_config.font.size;
+        self.display_update_pending.set_font(self.config.ui_config.font.clone());
         self.terminal.dirty = true;
     }
 
+    #[inline]
     fn pop_message(&mut self) {
-        self.display_update_pending.message_buffer = true;
-        self.message_buffer.pop();
+        if !self.message_buffer.is_empty() {
+            self.display_update_pending.dirty = true;
+            self.message_buffer.pop();
+        }
+    }
+
+    #[inline]
+    fn start_search(&mut self, direction: Direction) {
+        let num_lines = self.terminal.screen_lines();
+        let num_cols = self.terminal.cols();
+
+        self.search_state.regex = Some(String::new());
+        self.search_state.direction = direction;
+
+        // Store original search position as origin and reset location.
+        self.search_state.display_offset_delta = 0;
+        self.search_state.origin = if self.terminal.mode().contains(TermMode::VI) {
+            self.terminal.vi_mode_cursor.point
+        } else {
+            // Clear search, since it is used as the active match.
+            self.terminal.selection = None;
+
+            match direction {
+                Direction::Right => Point::new(Line(0), Column(0)),
+                Direction::Left => Point::new(num_lines - 2, num_cols - 1),
+            }
+        };
+
+        self.display_update_pending.dirty = true;
+        self.terminal.dirty = true;
+    }
+
+    #[inline]
+    fn confirm_search(&mut self) {
+        // Force unlimited search if the previous one was interrupted.
+        if self.scheduler.scheduled(TimerId::DelayedSearch) {
+            self.goto_match(None);
+        }
+
+        // Move vi cursor down if resize will pull content from history.
+        if self.terminal.history_size() != 0 && self.terminal.grid().display_offset() == 0 {
+            self.terminal.vi_mode_cursor.point.line += 1;
+        }
+
+        self.display_update_pending.dirty = true;
+        self.search_state.regex = None;
+        self.terminal.dirty = true;
+    }
+
+    #[inline]
+    fn cancel_search(&mut self) {
+        self.terminal.cancel_search();
+
+        // Recover pre-search state in vi mode.
+        if self.terminal.mode().contains(TermMode::VI) {
+            self.search_reset_state();
+        }
+
+        // Move vi cursor down if resize will pull from history.
+        if self.terminal.history_size() != 0 && self.terminal.grid().display_offset() == 0 {
+            self.terminal.vi_mode_cursor.point.line += 1;
+        }
+
+        self.display_update_pending.dirty = true;
+        self.search_state.regex = None;
+        self.terminal.dirty = true;
+    }
+
+    #[inline]
+    fn push_search(&mut self, c: char) {
+        if let Some(regex) = self.search_state.regex.as_mut() {
+            // Prevent previous search selections from sticking around when not in vi mode.
+            if !self.terminal.mode().contains(TermMode::VI) {
+                self.terminal.selection = None;
+            }
+
+            regex.push(c);
+            self.update_search();
+        }
+    }
+
+    #[inline]
+    fn pop_search(&mut self) {
+        if let Some(regex) = self.search_state.regex.as_mut() {
+            regex.pop();
+            self.update_search();
+        }
+    }
+
+    #[inline]
+    fn pop_word_search(&mut self) {
+        if let Some(regex) = self.search_state.regex.as_mut() {
+            *regex = regex.trim_end().to_owned();
+            regex.truncate(regex.rfind(' ').map(|i| i + 1).unwrap_or(0));
+            self.update_search();
+        }
+    }
+
+    #[inline]
+    fn advance_search_origin(&mut self, direction: Direction) {
+        let origin = self.absolute_origin();
+        self.terminal.scroll_to_point(origin);
+
+        // Move the search origin right in front of the next match in the specified direction.
+        if let Some(regex_match) = self.terminal.search_next(origin, direction, Side::Left, None) {
+            let origin = match direction {
+                Direction::Right => *regex_match.end(),
+                Direction::Left => {
+                    regex_match.start().sub_absolute(self.terminal, Boundary::Wrap, 1)
+                }
+            };
+            self.terminal.scroll_to_point(origin);
+
+            let origin_relative = self.terminal.grid().clamp_buffer_to_visible(origin);
+            self.search_state.origin = origin_relative;
+            self.search_state.display_offset_delta = 0;
+
+            self.update_search();
+        }
+    }
+
+    #[inline]
+    fn search_direction(&self) -> Direction {
+        self.search_state.direction
+    }
+
+    #[inline]
+    fn search_active(&self) -> bool {
+        self.search_state.regex.is_some()
     }
 
     fn message(&self) -> Option<&Message> {
@@ -333,6 +509,122 @@ impl<'a, N: Notify + 'a, T: EventListener> input::ActionContext<T> for ActionCon
 
     fn scheduler_mut(&mut self) -> &mut Scheduler {
         self.scheduler
+    }
+}
+
+impl<'a, N: Notify + 'a, T: EventListener> ActionContext<'a, N, T> {
+    fn update_search(&mut self) {
+        let regex = match self.search_state.regex.as_mut() {
+            Some(regex) => regex,
+            None => return,
+        };
+
+        // Hide cursor while typing into the search bar.
+        if self.config.ui_config.mouse.hide_when_typing {
+            self.window.set_mouse_visible(false);
+        }
+
+        if regex.is_empty() {
+            // Stop search if there's nothing to search for.
+            self.search_reset_state();
+            self.terminal.cancel_search();
+
+            // Restart search without vi mode to clear the search origin.
+            if !self.terminal.mode().contains(TermMode::VI) {
+                self.start_search(self.search_state.direction);
+            }
+        } else {
+            // Create terminal search from the new regex string.
+            self.terminal.start_search(&regex);
+
+            // Update search highlighting.
+            self.goto_match(MAX_SEARCH_WHILE_TYPING);
+        }
+
+        self.terminal.dirty = true;
+    }
+
+    /// Reset terminal to the state before search was started.
+    fn search_reset_state(&mut self) {
+        // Reset display offset.
+        self.terminal.scroll_display(Scroll::Delta(self.search_state.display_offset_delta));
+        self.search_state.display_offset_delta = 0;
+
+        // Reset vi mode cursor.
+        let mut origin = self.search_state.origin;
+        origin.line = min(origin.line, self.terminal.screen_lines() - 1);
+        origin.col = min(origin.col, self.terminal.cols() - 1);
+        self.terminal.vi_mode_cursor.point = origin;
+
+        // Unschedule pending timers.
+        self.scheduler.unschedule(TimerId::DelayedSearch);
+    }
+
+    /// Jump to the first regex match from the search origin.
+    fn goto_match(&mut self, mut limit: Option<usize>) {
+        let regex = match self.search_state.regex.take() {
+            Some(regex) => regex,
+            None => return,
+        };
+
+        // Limit search only when enough lines are available to run into the limit.
+        limit = limit.filter(|&limit| limit <= self.terminal.total_lines());
+
+        // Jump to the next match.
+        let direction = self.search_state.direction;
+        match self.terminal.search_next(self.absolute_origin(), direction, Side::Left, limit) {
+            Some(regex_match) => {
+                let old_offset = self.terminal.grid().display_offset() as isize;
+
+                if self.terminal.mode().contains(TermMode::VI) {
+                    // Move vi cursor to the start of the match.
+                    self.terminal.vi_goto_point(*regex_match.start());
+                } else {
+                    // Select the match when vi mode is not active.
+                    self.terminal.scroll_to_point(*regex_match.start());
+                    let start = self.terminal.grid().clamp_buffer_to_visible(*regex_match.start());
+                    let end = self.terminal.grid().clamp_buffer_to_visible(*regex_match.end());
+                    self.start_selection(SelectionType::Simple, start, Side::Left);
+                    self.update_selection(end, Side::Right);
+                }
+
+                // Store number of lines the viewport had to be moved.
+                let display_offset = self.terminal.grid().display_offset();
+                self.search_state.display_offset_delta += old_offset - display_offset as isize;
+
+                // Since we found a result, we require no delayed re-search.
+                self.scheduler.unschedule(TimerId::DelayedSearch);
+            }
+            // Reset viewport only when we know there is no match, to prevent unnecessary jumping.
+            None if limit.is_none() => self.search_reset_state(),
+            None => {
+                // Schedule delayed search if we ran into our search limit.
+                if !self.scheduler.scheduled(TimerId::DelayedSearch) {
+                    self.scheduler.schedule(
+                        Event::SearchNext.into(),
+                        TYPING_SEARCH_DELAY,
+                        false,
+                        TimerId::DelayedSearch,
+                    );
+                }
+            }
+        }
+
+        self.search_state.regex = Some(regex);
+    }
+
+    /// Get the absolute position of the search origin.
+    ///
+    /// This takes the relative motion of the viewport since the start of the search into account.
+    /// So while the absolute point of the origin might have changed since new content was printed,
+    /// this will still return the correct absolute position.
+    fn absolute_origin(&self) -> Point<usize> {
+        let mut relative_origin = self.search_state.origin;
+        relative_origin.line = min(relative_origin.line, self.terminal.screen_lines() - 1);
+        relative_origin.col = min(relative_origin.col, self.terminal.cols() - 1);
+        let mut origin = self.terminal.visible_to_buffer(relative_origin);
+        origin.line = (origin.line as isize + self.search_state.display_offset_delta) as usize;
+        origin
     }
 }
 
@@ -361,7 +653,7 @@ pub struct Mouse {
     pub cell_side: Side,
     pub lines_scrolled: f32,
     pub block_url_launcher: bool,
-    pub inside_grid: bool,
+    pub inside_text_area: bool,
 }
 
 impl Default for Mouse {
@@ -381,7 +673,7 @@ impl Default for Mouse {
             cell_side: Side::Left,
             lines_scrolled: 0.,
             block_url_launcher: false,
-            inside_grid: false,
+            inside_text_area: false,
         }
     }
 }
@@ -402,8 +694,10 @@ pub struct Processor<N> {
     display: Display,
     font_size: Size,
     tokio_handle: tokio::runtime::Handle,
-    charts_tx: tokio_mpsc::Sender<alacritty_charts::async_utils::AsyncChartTask>,
+    charts_tx: tokio_mpsc::Sender<alacritty_terminal::charts::async_utils::AsyncChartTask>,
     event_queue: Vec<GlutinEvent<'static, Event>>,
+    search_state: SearchState,
+    cli_options: CLIOptions,
 }
 
 impl<N: Notify + OnResize> Processor<N> {
@@ -416,7 +710,8 @@ impl<N: Notify + OnResize> Processor<N> {
         config: Config,
         display: Display,
         tokio_handle: tokio::runtime::Handle,
-        charts_tx: tokio_mpsc::Sender<alacritty_charts::async_utils::AsyncChartTask>,
+        charts_tx: tokio_mpsc::Sender<alacritty_terminal::charts::async_utils::AsyncChartTask>,
+        cli_options: CLIOptions,
     ) -> Processor<N> {
         #[cfg(not(any(target_os = "macos", windows)))]
         let clipboard = Clipboard::new(display.window.wayland_display());
@@ -429,7 +724,7 @@ impl<N: Notify + OnResize> Processor<N> {
             received_count: 0,
             suppress_chars: false,
             modifiers: Default::default(),
-            font_size: config.font.size,
+            font_size: config.ui_config.font.size,
             config,
             message_buffer,
             display,
@@ -437,6 +732,8 @@ impl<N: Notify + OnResize> Processor<N> {
             charts_tx,
             event_queue: Vec::new(),
             clipboard,
+            search_state: SearchState::new(),
+            cli_options,
         }
     }
 
@@ -473,7 +770,7 @@ impl<N: Notify + OnResize> Processor<N> {
         let mut scheduler = Scheduler::new();
 
         event_loop.run_return(|event, event_loop, control_flow| {
-            if self.config.debug.print_events {
+            if self.config.ui_config.debug.print_events {
                 info!("glutin event: {:?}", event);
             }
 
@@ -487,7 +784,7 @@ impl<N: Notify + OnResize> Processor<N> {
                 GlutinEvent::UserEvent(Event::TerminalEvent(TerminalEvent::Exit)) => {
                     *control_flow = ControlFlow::Exit;
                     return;
-                },
+                }
                 // Process events.
                 GlutinEvent::RedrawEventsCleared => {
                     *control_flow = match scheduler.update(&mut self.event_queue) {
@@ -498,7 +795,7 @@ impl<N: Notify + OnResize> Processor<N> {
                     if self.event_queue_empty() {
                         return;
                     }
-                },
+                }
                 // Remap DPR change event to remove lifetime.
                 GlutinEvent::WindowEvent {
                     event: WindowEvent::ScaleFactorChanged { scale_factor, new_inner_size },
@@ -508,7 +805,7 @@ impl<N: Notify + OnResize> Processor<N> {
                     let size = (new_inner_size.width, new_inner_size.height);
                     self.event_queue.push(Event::DPRChanged(scale_factor, size).into());
                     return;
-                },
+                }
                 // Transmute to extend lifetime, which exists only for `ScaleFactorChanged` event.
                 // Since we remap that event to remove the lifetime, this is safe.
                 event => unsafe {
@@ -521,6 +818,7 @@ impl<N: Notify + OnResize> Processor<N> {
             let mut terminal = terminal.lock();
 
             let mut display_update_pending = DisplayUpdate::default();
+            let old_is_searching = self.search_state.regex.is_some();
 
             let context = ActionContext {
                 terminal: &mut terminal,
@@ -538,6 +836,8 @@ impl<N: Notify + OnResize> Processor<N> {
                 config: &mut self.config,
                 urls: &self.display.urls,
                 scheduler: &mut scheduler,
+                search_state: &mut self.search_state,
+                cli_options: &self.cli_options,
                 event_loop,
             };
             let mut processor = input::Processor::new(context, &self.display.highlighted_url);
@@ -547,26 +847,14 @@ impl<N: Notify + OnResize> Processor<N> {
             }
 
             // Process DisplayUpdate events.
-            if !display_update_pending.is_empty() {
-                self.display.handle_update(
-                    &mut terminal,
-                    &mut self.notifier,
-                    &self.message_buffer,
-                    &self.config,
-                    display_update_pending,
-                    self.tokio_handle.clone(),
-                    self.charts_tx.clone(),
-                );
+            if display_update_pending.dirty {
+                self.submit_display_update(&mut terminal, old_is_searching, display_update_pending);
             }
 
+            // Skip rendering on Wayland until we get frame event from compositor.
             #[cfg(not(any(target_os = "macos", windows)))]
-            {
-                // Skip rendering on Wayland until we get frame event from compositor.
-                if event_loop.is_wayland()
-                    && !self.display.window.should_draw.load(Ordering::Relaxed)
-                {
-                    return;
-                }
+            if event_loop.is_wayland() && !self.display.window.should_draw.load(Ordering::Relaxed) {
+                return;
             }
 
             if terminal.dirty {
@@ -585,12 +873,15 @@ impl<N: Notify + OnResize> Processor<N> {
                     &self.config,
                     &self.mouse,
                     self.modifiers,
+                    &self.search_state,
                 );
             }
         });
 
         // Write ref tests to disk.
-        self.write_ref_test_results(&terminal.lock());
+        if self.config.ui_config.debug.ref_test {
+            self.write_ref_test_results(&terminal.lock());
+        }
     }
 
     /// Handle events from glutin.
@@ -608,35 +899,49 @@ impl<N: Notify + OnResize> Processor<N> {
                     let display_update_pending = &mut processor.ctx.display_update_pending;
 
                     // Push current font to update its DPR.
-                    display_update_pending.font =
-                        Some(processor.ctx.config.font.clone().with_size(*processor.ctx.font_size));
+                    let font = processor.ctx.config.ui_config.font.clone();
+                    display_update_pending.set_font(font.with_size(*processor.ctx.font_size));
 
                     // Resize to event's dimensions, since no resize event is emitted on Wayland.
-                    display_update_pending.dimensions = Some(PhysicalSize::new(width, height));
+                    display_update_pending.set_dimensions(PhysicalSize::new(width, height));
 
                     processor.ctx.size_info.dpr = scale_factor;
                     processor.ctx.terminal.dirty = true;
-                },
+                }
                 Event::Message(message) => {
                     processor.ctx.message_buffer.push(message);
-                    processor.ctx.display_update_pending.message_buffer = true;
+                    processor.ctx.display_update_pending.dirty = true;
                     processor.ctx.terminal.dirty = true;
-                },
+                }
+                Event::SearchNext => processor.ctx.goto_match(None),
                 Event::ConfigReload(path) => Self::reload_config(&path, processor),
                 Event::Scroll(scroll) => processor.ctx.scroll(scroll),
                 Event::TerminalEvent(event) => match event {
-                    TerminalEvent::Title(title) => processor.ctx.window.set_title(&title),
+                    TerminalEvent::Title(title) => {
+                        let ui_config = &processor.ctx.config.ui_config;
+                        if ui_config.dynamic_title() {
+                            processor.ctx.window.set_title(&title);
+                        }
+                    }
+                    TerminalEvent::ResetTitle => {
+                        let ui_config = &processor.ctx.config.ui_config;
+                        if ui_config.dynamic_title() {
+                            processor.ctx.window.set_title(&ui_config.window.title);
+                        }
+                    }
                     TerminalEvent::Wakeup => processor.ctx.terminal.dirty = true,
-                    TerminalEvent::Urgent => {
-                        processor.ctx.window.set_urgent(!processor.ctx.terminal.is_focused)
-                    },
+                    TerminalEvent::Bell => {
+                        let bell_command = processor.ctx.config.bell().command.as_ref();
+                        let _ = bell_command.map(|cmd| start_daemon(cmd.program(), cmd.args()));
+                        processor.ctx.window.set_urgent(!processor.ctx.terminal.is_focused);
+                    }
                     TerminalEvent::ClipboardStore(clipboard_type, content) => {
                         processor.ctx.clipboard.store(clipboard_type, content);
-                    },
+                    }
                     TerminalEvent::ClipboardLoad(clipboard_type, format) => {
                         let text = format(processor.ctx.clipboard.load(clipboard_type).as_str());
                         processor.ctx.write_to_pty(text.into_bytes());
-                    },
+                    }
                     TerminalEvent::MouseCursorDirty => processor.reset_mouse_cursor(),
                     TerminalEvent::Exit => (),
                 },
@@ -646,40 +951,38 @@ impl<N: Notify + OnResize> Processor<N> {
                 match event {
                     WindowEvent::CloseRequested => processor.ctx.terminal.exit(),
                     WindowEvent::Resized(size) => {
+                        // Minimizing the window sends a Resize event with zero width and
+                        // height. But there's no need to ever actually resize to this.
+                        // Both WinPTY & ConPTY have issues when resizing down to zero size
+                        // and back.
                         #[cfg(windows)]
-                        {
-                            // Minimizing the window sends a Resize event with zero width and
-                            // height. But there's no need to ever actually resize to this.
-                            // Both WinPTY & ConPTY have issues when resizing down to zero size
-                            // and back.
-                            if size.width == 0 && size.height == 0 {
-                                return;
-                            }
+                        if size.width == 0 && size.height == 0 {
+                            return;
                         }
 
-                        processor.ctx.display_update_pending.dimensions = Some(size);
+                        processor.ctx.display_update_pending.set_dimensions(size);
                         processor.ctx.terminal.dirty = true;
-                    },
+                    }
                     WindowEvent::KeyboardInput { input, is_synthetic: false, .. } => {
                         processor.key_input(input);
-                    },
+                    }
                     WindowEvent::ReceivedCharacter(c) => processor.received_char(c),
                     WindowEvent::MouseInput { state, button, .. } => {
                         processor.ctx.window.set_mouse_visible(true);
                         processor.mouse_input(state, button);
                         processor.ctx.terminal.dirty = true;
-                    },
+                    }
                     WindowEvent::ModifiersChanged(modifiers) => {
                         processor.modifiers_input(modifiers)
-                    },
+                    }
                     WindowEvent::CursorMoved { position, .. } => {
                         processor.ctx.window.set_mouse_visible(true);
                         processor.mouse_moved(position);
-                    },
+                    }
                     WindowEvent::MouseWheel { delta, phase, .. } => {
                         processor.ctx.window.set_mouse_visible(true);
                         processor.mouse_wheel_input(delta, phase);
-                    },
+                    }
                     WindowEvent::Focused(is_focused) => {
                         if window_id == processor.ctx.window.window_id() {
                             processor.ctx.terminal.is_focused = is_focused;
@@ -693,18 +996,18 @@ impl<N: Notify + OnResize> Processor<N> {
 
                             processor.on_focus_change(is_focused);
                         }
-                    },
+                    }
                     WindowEvent::DroppedFile(path) => {
                         let path: String = path.to_string_lossy().into();
                         processor.ctx.write_to_pty((path + " ").into_bytes());
-                    },
+                    }
                     WindowEvent::CursorLeft { .. } => {
-                        processor.ctx.mouse.inside_grid = false;
+                        processor.ctx.mouse.inside_text_area = false;
 
                         if processor.highlighted_url.is_some() {
                             processor.ctx.terminal.dirty = true;
                         }
-                    },
+                    }
                     WindowEvent::KeyboardInput { is_synthetic: true, .. }
                     | WindowEvent::TouchpadPressure { .. }
                     | WindowEvent::ScaleFactorChanged { .. }
@@ -717,7 +1020,7 @@ impl<N: Notify + OnResize> Processor<N> {
                     | WindowEvent::Touch(_)
                     | WindowEvent::Moved(_) => (),
                 }
-            },
+            }
             GlutinEvent::Suspended { .. }
             | GlutinEvent::NewEvents { .. }
             | GlutinEvent::DeviceEvent { .. }
@@ -731,18 +1034,18 @@ impl<N: Notify + OnResize> Processor<N> {
     /// Check if an event is irrelevant and can be skipped.
     fn skip_event(event: &GlutinEvent<Event>) -> bool {
         match event {
-            GlutinEvent::WindowEvent { event, .. } => match event {
+            GlutinEvent::WindowEvent { event, .. } => matches!(
+                event,
                 WindowEvent::KeyboardInput { is_synthetic: true, .. }
-                | WindowEvent::TouchpadPressure { .. }
-                | WindowEvent::CursorEntered { .. }
-                | WindowEvent::AxisMotion { .. }
-                | WindowEvent::HoveredFileCancelled
-                | WindowEvent::Destroyed
-                | WindowEvent::HoveredFile(_)
-                | WindowEvent::Touch(_)
-                | WindowEvent::Moved(_) => true,
-                _ => false,
-            },
+                    | WindowEvent::TouchpadPressure { .. }
+                    | WindowEvent::CursorEntered { .. }
+                    | WindowEvent::AxisMotion { .. }
+                    | WindowEvent::HoveredFileCancelled
+                    | WindowEvent::Destroyed
+                    | WindowEvent::HoveredFile(_)
+                    | WindowEvent::Touch(_)
+                    | WindowEvent::Moved(_)
+            ),
             GlutinEvent::Suspended { .. }
             | GlutinEvent::NewEvents { .. }
             | GlutinEvent::MainEventsCleared
@@ -751,22 +1054,19 @@ impl<N: Notify + OnResize> Processor<N> {
         }
     }
 
-    pub fn reload_config<T>(
-        path: &PathBuf,
-        processor: &mut input::Processor<T, ActionContext<N, T>>,
-    ) where
+    fn reload_config<T>(path: &PathBuf, processor: &mut input::Processor<T, ActionContext<N, T>>)
+    where
         T: EventListener,
     {
-        processor.ctx.message_buffer.remove_target(LOG_TARGET_CONFIG);
-        processor.ctx.display_update_pending.message_buffer = true;
+        if !processor.ctx.message_buffer.is_empty() {
+            processor.ctx.message_buffer.remove_target(LOG_TARGET_CONFIG);
+            processor.ctx.display_update_pending.dirty = true;
+        }
 
-        let config = match config::reload_from(&path) {
+        let config = match config::reload(&path, &processor.ctx.cli_options) {
             Ok(config) => config,
             Err(_) => return,
         };
-
-        let options = Options::new();
-        let config = options.into_config(config);
 
         processor.ctx.terminal.update_config(&config);
 
@@ -774,41 +1074,90 @@ impl<N: Notify + OnResize> Processor<N> {
         if (processor.ctx.config.cursor.thickness() - config.cursor.thickness()).abs()
             > std::f64::EPSILON
         {
-            processor.ctx.display_update_pending.cursor = true;
+            processor.ctx.display_update_pending.set_cursor_dirty();
         }
 
-        if processor.ctx.config.font != config.font {
+        if processor.ctx.config.ui_config.font != config.ui_config.font {
             // Do not update font size if it has been changed at runtime.
-            if *processor.ctx.font_size == processor.ctx.config.font.size {
-                *processor.ctx.font_size = config.font.size;
+            if *processor.ctx.font_size == processor.ctx.config.ui_config.font.size {
+                *processor.ctx.font_size = config.ui_config.font.size;
             }
 
-            let font = config.font.clone().with_size(*processor.ctx.font_size);
-            processor.ctx.display_update_pending.font = Some(font);
+            let font = config.ui_config.font.clone().with_size(*processor.ctx.font_size);
+            processor.ctx.display_update_pending.set_font(font);
+        }
+
+        // Update display if padding options were changed.
+        let window_config = &processor.ctx.config.ui_config.window;
+        if window_config.padding != config.ui_config.window.padding
+            || window_config.dynamic_padding != config.ui_config.window.dynamic_padding
+        {
+            processor.ctx.display_update_pending.dirty = true;
+        }
+
+        // Live title reload.
+        if !config.ui_config.dynamic_title()
+            || processor.ctx.config.ui_config.window.title != config.ui_config.window.title
+        {
+            processor.ctx.window.set_title(&config.ui_config.window.title);
         }
 
         #[cfg(not(any(target_os = "macos", windows)))]
-        {
-            if processor.ctx.event_loop.is_wayland() {
-                processor.ctx.window.set_wayland_theme(&config.colors);
-            }
+        if processor.ctx.event_loop.is_wayland() {
+            processor.ctx.window.set_wayland_theme(&config.colors);
         }
 
         // Set subpixel anti-aliasing.
         #[cfg(target_os = "macos")]
-        set_font_smoothing(config.font.use_thin_strokes());
+        set_font_smoothing(config.ui_config.font.use_thin_strokes());
 
         *processor.ctx.config = config;
 
         processor.ctx.terminal.dirty = true;
     }
 
-    // Write the ref test results to the disk.
-    pub fn write_ref_test_results<T>(&self, terminal: &Term<T>) {
-        if !self.config.debug.ref_test {
-            return;
-        }
+    /// Submit the pending changes to the `Display`.
+    fn submit_display_update<T>(
+        &mut self,
+        terminal: &mut Term<T>,
+        old_is_searching: bool,
+        display_update_pending: DisplayUpdate,
+    ) where
+        T: EventListener,
+    {
+        // Compute cursor positions before resize.
+        let num_lines = terminal.screen_lines();
+        let cursor_at_bottom = terminal.grid().cursor.point.line + 1 == num_lines;
+        let origin_at_bottom = if terminal.mode().contains(TermMode::VI) {
+            terminal.vi_mode_cursor.point.line == num_lines - 1
+        } else {
+            self.search_state.direction == Direction::Left
+        };
 
+        self.display.handle_update(
+            terminal,
+            &mut self.notifier,
+            &self.message_buffer,
+            self.search_state.regex.is_some(),
+            &self.config,
+            display_update_pending,
+            self.tokio_handle.clone(),
+            self.charts_tx.clone(),
+        );
+
+        // Scroll to make sure search origin is visible and content moves as little as possible.
+        if !old_is_searching && self.search_state.regex.is_some() {
+            let display_offset = terminal.grid().display_offset();
+            if display_offset == 0 && cursor_at_bottom && !origin_at_bottom {
+                terminal.scroll_display(Scroll::Delta(1));
+            } else if display_offset != 0 && origin_at_bottom {
+                terminal.scroll_display(Scroll::Delta(-1));
+            }
+        }
+    }
+
+    /// Write the ref test results to the disk.
+    fn write_ref_test_results<T>(&self, terminal: &Term<T>) {
         // Dump grid state.
         let mut grid = terminal.grid().clone();
         grid.initialize_all(Cell::default());

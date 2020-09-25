@@ -1,18 +1,8 @@
 //! TTY related functionality.
 
-use crate::config::{Config, Program};
-use crate::event::OnResize;
-use crate::tty::{ChildEvent, EventedPty, EventedReadWrite};
-use alacritty_common::SizeInfo;
-
-use libc::{self, c_int, pid_t, winsize, TIOCSCTTY};
-use log::error;
-use nix::pty::openpty;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-use nix::sys::termios::{self, InputFlags, SetArg};
-use signal_hook::{self as sighook, iterator::Signals};
-
-use mio::unix::EventedFd;
+use std::borrow::Cow;
+#[cfg(not(target_os = "macos"))]
+use std::env;
 use std::ffi::CStr;
 use std::fs::File;
 use std::io;
@@ -23,12 +13,28 @@ use std::os::unix::{
 };
 use std::process::{Child, Command, Stdio};
 use std::ptr;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
+
+use libc::{self, c_int, pid_t, winsize, TIOCSCTTY};
+use log::error;
+use mio::unix::EventedFd;
+use nix::pty::openpty;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use nix::sys::termios::{self, InputFlags, SetArg};
+use signal_hook::{self as sighook, iterator::Signals};
+
+use crate::config::{Config, Program};
+use crate::event::OnResize;
+use crate::term::SizeInfo;
+use crate::tty::{ChildEvent, EventedPty, EventedReadWrite};
 
 /// Process ID of child process.
 ///
 /// Necessary to put this in static storage for `SIGCHLD` to have access.
 static PID: AtomicUsize = AtomicUsize::new(0);
+
+/// File descriptor of terminal master.
+static FD: AtomicI32 = AtomicI32::new(-1);
 
 macro_rules! die {
     ($($arg:tt)*) => {{
@@ -39,6 +45,10 @@ macro_rules! die {
 
 pub fn child_pid() -> pid_t {
     PID.load(Ordering::Relaxed) as pid_t
+}
+
+pub fn master_fd() -> RawFd {
+    FD.load(Ordering::Relaxed) as RawFd
 }
 
 /// Get raw fds for master/slave ends of a new PTY.
@@ -128,34 +138,39 @@ pub struct Pty {
     signals_token: mio::Token,
 }
 
+#[cfg(target_os = "macos")]
+fn default_shell(pw: &Passwd<'_>) -> Program {
+    let shell_name = pw.shell.rsplit('/').next().unwrap();
+    let argv = vec![String::from("-c"), format!("exec -a -{} {}", shell_name, pw.shell)];
+
+    Program::WithArgs { program: "/bin/bash".to_owned(), args: argv }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn default_shell(pw: &Passwd<'_>) -> Program {
+    Program::Just(env::var("SHELL").unwrap_or_else(|_| pw.shell.to_owned()))
+}
+
 /// Create a new TTY and return a handle to interact with it.
 pub fn new<C>(config: &Config<C>, size: &SizeInfo, window_id: Option<usize>) -> Pty {
-    let win_size = size.to_winsize();
+    let (master, slave) = make_pty(size.to_winsize());
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    if let Ok(mut termios) = termios::tcgetattr(master) {
+        // Set character encoding to UTF-8.
+        termios.input_flags.set(InputFlags::IUTF8, true);
+        let _ = termios::tcsetattr(master, SetArg::TCSANOW, &termios);
+    }
+
     let mut buf = [0; 1024];
     let pw = get_pw_entry(&mut buf);
 
-    let (master, slave) = make_pty(win_size);
-
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    {
-        if let Ok(mut termios) = termios::tcgetattr(master) {
-            // Set character encoding to UTF-8.
-            termios.input_flags.set(InputFlags::IUTF8, true);
-            let _ = termios::tcsetattr(master, SetArg::TCSANOW, &termios);
-        }
-    }
-
-    let default_shell = if cfg!(target_os = "macos") {
-        let shell_name = pw.shell.rsplit('/').next().unwrap();
-        let argv = vec![String::from("-c"), format!("exec -a -{} {}", shell_name, pw.shell)];
-
-        Program::WithArgs { program: "/bin/bash".to_owned(), args: argv }
-    } else {
-        Program::Just(pw.shell.to_owned())
+    let shell = match config.shell.as_ref() {
+        Some(shell) => Cow::Borrowed(shell),
+        None => Cow::Owned(default_shell(&pw)),
     };
-    let shell = config.shell.as_ref().unwrap_or(&default_shell);
 
-    let mut builder = Command::new(&*shell.program());
+    let mut builder = Command::new(shell.program());
     for arg in shell.args() {
         builder.arg(arg);
     }
@@ -171,8 +186,11 @@ pub fn new<C>(config: &Config<C>, size: &SizeInfo, window_id: Option<usize>) -> 
     // Setup shell environment.
     builder.env("LOGNAME", pw.name);
     builder.env("USER", pw.name);
-    builder.env("SHELL", pw.shell);
     builder.env("HOME", pw.dir);
+
+    // Set $SHELL environment variable on macOS, since login does not do it for us.
+    #[cfg(target_os = "macos")]
+    builder.env("SHELL", config.shell.as_ref().map(|sh| sh.program()).unwrap_or(pw.shell));
 
     if let Some(window_id) = window_id {
         builder.env("WINDOWID", format!("{}", window_id));
@@ -213,8 +231,9 @@ pub fn new<C>(config: &Config<C>, size: &SizeInfo, window_id: Option<usize>) -> 
 
     match builder.spawn() {
         Ok(child) => {
-            // Remember child PID so other modules can use it.
+            // Remember master FD and child PID so other modules can use it.
             PID.store(child.id() as usize, Ordering::Relaxed);
+            FD.store(master, Ordering::Relaxed);
 
             unsafe {
                 // Maybe this should be done outside of this function so nonblocking
@@ -231,7 +250,7 @@ pub fn new<C>(config: &Config<C>, size: &SizeInfo, window_id: Option<usize>) -> 
             };
             pty.on_resize(size);
             pty
-        },
+        }
         Err(err) => die!("Failed to spawn command '{}': {}", shell.program(), err),
     }
 }
@@ -316,7 +335,7 @@ impl EventedPty for Pty {
                 Err(e) => {
                     error!("Error checking child process termination: {}", e);
                     None
-                },
+                }
                 Ok(None) => None,
                 Ok(_) => Some(ChildEvent::Exited),
             }

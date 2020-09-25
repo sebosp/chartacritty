@@ -8,7 +8,7 @@ use std::slice;
 use serde::{Deserialize, Serialize};
 
 use crate::grid::GridCell;
-use alacritty_common::index::Column;
+use crate::index::Column;
 
 /// A row in the grid.
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
@@ -130,8 +130,9 @@ impl<T> Row<T> {
         self.inner = vec;
     }
 
+    /// Check if all cells in the row are empty.
     #[inline]
-    pub fn is_empty(&self) -> bool
+    pub fn is_clear(&self) -> bool
     where
         T: GridCell,
     {

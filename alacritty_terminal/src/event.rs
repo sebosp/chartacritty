@@ -2,17 +2,17 @@ use std::borrow::Cow;
 use std::fmt::{self, Debug, Formatter};
 use std::sync::Arc;
 
-use crate::term::ClipboardType;
-use alacritty_common::SizeInfo;
+use crate::term::{ClipboardType, SizeInfo};
 
 #[derive(Clone)]
 pub enum Event {
     MouseCursorDirty,
     Title(String),
+    ResetTitle,
     ClipboardStore(ClipboardType, String),
     ClipboardLoad(ClipboardType, Arc<dyn Fn(&str) -> String + Sync + Send + 'static>),
     Wakeup,
-    Urgent,
+    Bell,
     Exit,
 }
 
@@ -21,10 +21,11 @@ impl Debug for Event {
         match self {
             Event::MouseCursorDirty => write!(f, "MouseCursorDirty"),
             Event::Title(title) => write!(f, "Title({})", title),
+            Event::ResetTitle => write!(f, "ResetTitle"),
             Event::ClipboardStore(ty, text) => write!(f, "ClipboardStore({:?}, {})", ty, text),
             Event::ClipboardLoad(ty, _) => write!(f, "ClipboardLoad({:?})", ty),
             Event::Wakeup => write!(f, "Wakeup"),
-            Event::Urgent => write!(f, "Urgent"),
+            Event::Bell => write!(f, "Bell"),
             Event::Exit => write!(f, "Exit"),
         }
     }
