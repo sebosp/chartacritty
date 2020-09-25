@@ -1,6 +1,6 @@
-use alacritty_charts::Value2D;
-use alacritty_common::term::color::Rgb;
-use alacritty_common::SizeInfo;
+use crate::charts::Value2D;
+use crate::term::color::Rgb;
+use crate::term::SizeInfo;
 //use log::*;
 
 const COS_60: f32 = 0.49999997f32;
