@@ -93,13 +93,13 @@ where
             } else {
                 Ok(index)
             }
-        },
+        }
         Err(err) => {
             error!(target: LOG_TARGET_CONFIG, "Problem with config: {}; ignoring setting", err);
 
             // Return value out of range to ignore this color.
             Ok(0)
-        },
+        }
     }
 }
 

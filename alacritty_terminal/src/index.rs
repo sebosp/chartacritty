@@ -7,6 +7,9 @@ use std::ops::{self, Add, AddAssign, Deref, Range, Sub, SubAssign};
 
 use serde::{Deserialize, Serialize};
 
+use crate::grid::Dimensions;
+use crate::term::RenderableCell;
+
 /// The side of a cell.
 pub type Side = Direction;
 
@@ -127,7 +130,7 @@ impl Point<usize> {
                     let col = Column((self.col.0 + rhs) % num_cols.0);
                     let line = dimensions.total_lines() + self.line - line_delta;
                     Point::new(line, col)
-                }
+                },
             }
         }
     }
@@ -184,6 +187,12 @@ impl From<Point<isize>> for Point<usize> {
 impl From<Point> for Point<usize> {
     fn from(point: Point) -> Self {
         Point::new(point.line.0, point.col)
+    }
+}
+
+impl From<RenderableCell> for Point<Line> {
+    fn from(cell: RenderableCell) -> Self {
+        Point::new(cell.line, cell.column)
     }
 }
 
@@ -477,263 +486,6 @@ macro_rules! ops {
 ops!(Line, Line);
 ops!(Column, Column);
 ops!(Linear, Linear);
-
-#[derive(Copy, Clone, Debug)]
-pub struct RenderableCell {
-    /// A _Display_ line (not necessarily an _Active_ line).
-    pub line: Line,
-    pub column: Column,
-    pub inner: RenderableCellContent,
-    pub fg: Rgb,
-    pub bg: Rgb,
-    pub bg_alpha: f32,
-    pub flags: Flags,
-}
-
-impl RenderableCell {
-    fn new<'a, C>(iter: &mut RenderableCellsIter<'a, C>, cell: Indexed<Cell>) -> Self {
-        let point = Point::new(cell.line, cell.column);
-
-        // Lookup RGB values.
-        let mut fg_rgb = Self::compute_fg_rgb(iter.config, iter.colors, cell.fg, cell.flags);
-        let mut bg_rgb = Self::compute_bg_rgb(iter.colors, cell.bg);
-
-        let mut bg_alpha = if cell.inverse() {
-            mem::swap(&mut fg_rgb, &mut bg_rgb);
-            1.0
-        } else {
-            Self::compute_bg_alpha(cell.bg)
-        };
-
-        if iter.is_selected(point) {
-            let config_bg = iter.config.colors.selection.background();
-            let selected_fg = iter.config.colors.selection.text().color(fg_rgb, bg_rgb);
-            bg_rgb = config_bg.color(fg_rgb, bg_rgb);
-            fg_rgb = selected_fg;
-
-            if fg_rgb == bg_rgb && !cell.flags.contains(Flags::HIDDEN) {
-                // Reveal inversed text when fg/bg is the same.
-                fg_rgb = iter.colors[NamedColor::Background];
-                bg_rgb = iter.colors[NamedColor::Foreground];
-                bg_alpha = 1.0;
-            } else if config_bg != CellRgb::CellBackground {
-                bg_alpha = 1.0;
-            }
-        } else if iter.search.advance(iter.grid.visible_to_buffer(point)) {
-            // Highlight the cell if it is part of a search match.
-            let config_bg = iter.config.colors.search.matches.background;
-            let matched_fg = iter.config.colors.search.matches.foreground.color(fg_rgb, bg_rgb);
-            bg_rgb = config_bg.color(fg_rgb, bg_rgb);
-            fg_rgb = matched_fg;
-
-            if config_bg != CellRgb::CellBackground {
-                bg_alpha = 1.0;
-            }
-        }
-
-        RenderableCell {
-            line: cell.line,
-            column: cell.column,
-            inner: RenderableCellContent::Chars(cell.chars()),
-            fg: fg_rgb,
-            bg: bg_rgb,
-            bg_alpha,
-            flags: cell.flags,
-        }
-    }
-
-    fn is_empty(&self) -> bool {
-        self.bg_alpha == 0.
-            && !self.flags.intersects(Flags::UNDERLINE | Flags::STRIKEOUT | Flags::DOUBLE_UNDERLINE)
-            && self.inner == RenderableCellContent::Chars([' '; cell::MAX_ZEROWIDTH_CHARS + 1])
-    }
-
-    fn compute_fg_rgb<C>(config: &Config<C>, colors: &color::List, fg: Color, flags: Flags) -> Rgb {
-        match fg {
-            Color::Spec(rgb) => match flags & Flags::DIM {
-                Flags::DIM => rgb * DIM_FACTOR,
-                _ => rgb,
-            },
-            Color::Named(ansi) => {
-                match (config.draw_bold_text_with_bright_colors(), flags & Flags::DIM_BOLD) {
-                    // If no bright foreground is set, treat it like the BOLD flag doesn't exist.
-                    (_, Flags::DIM_BOLD)
-                        if ansi == NamedColor::Foreground
-                            && config.colors.primary.bright_foreground.is_none() =>
-                    {
-                        colors[NamedColor::DimForeground]
-                    }
-                    // Draw bold text in bright colors *and* contains bold flag.
-                    (true, Flags::BOLD) => colors[ansi.to_bright()],
-                    // Cell is marked as dim and not bold.
-                    (_, Flags::DIM) | (false, Flags::DIM_BOLD) => colors[ansi.to_dim()],
-                    // None of the above, keep original color..
-                    _ => colors[ansi],
-                }
-            }
-            Color::Indexed(idx) => {
-                let idx = match (
-                    config.draw_bold_text_with_bright_colors(),
-                    flags & Flags::DIM_BOLD,
-                    idx,
-                ) {
-                    (true, Flags::BOLD, 0..=7) => idx as usize + 8,
-                    (false, Flags::DIM, 8..=15) => idx as usize - 8,
-                    (false, Flags::DIM, 0..=7) => idx as usize + 260,
-                    _ => idx as usize,
-                };
-
-                colors[idx]
-            }
-        }
-    }
-
-    /// Compute background alpha based on cell's original color.
-    ///
-    /// Since an RGB color matching the background should not be transparent, this is computed
-    /// using the named input color, rather than checking the RGB of the background after its color
-    /// is computed.
-    #[inline]
-    fn compute_bg_alpha(bg: Color) -> f32 {
-        if bg == Color::Named(NamedColor::Background) {
-            0.
-        } else {
-            1.
-        }
-    }
-
-    #[inline]
-    fn compute_bg_rgb(colors: &color::List, bg: Color) -> Rgb {
-        match bg {
-            Color::Spec(rgb) => rgb,
-            Color::Named(ansi) => colors[ansi],
-            Color::Indexed(idx) => colors[idx],
-        }
-    }
-}
-
-impl From<RenderableCell> for Point<Line> {
-    fn from(cell: RenderableCell) -> Self {
-        Point::new(cell.line, cell.column)
-    }
-}
-
-impl<'a, C> Iterator for RenderableCellsIter<'a, C> {
-    type Item = RenderableCell;
-
-    /// Gets the next renderable cell.
-    ///
-    /// Skips empty (background) cells and applies any flags to the cell state
-    /// (eg. invert fg and bg colors).
-    #[inline]
-    fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            if self.cursor.point.line == self.inner.line()
-                && self.cursor.point.col == self.inner.column()
-            {
-                if self.cursor.rendered {
-                    // Handle cell below cursor.
-                    let cell = self.inner.next()?;
-                    let mut cell = RenderableCell::new(self, cell);
-
-                    if self.cursor.key.style == CursorStyle::Block {
-                        cell.fg = match self.cursor.cursor_color {
-                            // Apply cursor color, or invert the cursor if it has a fixed background
-                            // close to the cell's background.
-                            CellRgb::Rgb(col) if col.contrast(cell.bg) < MIN_CURSOR_CONTRAST => {
-                                cell.bg
-                            }
-                            _ => self.cursor.text_color.color(cell.fg, cell.bg),
-                        };
-                    }
-
-                    return Some(cell);
-                } else {
-                    // Handle cursor.
-                    self.cursor.rendered = true;
-
-                    let buffer_point = self.grid.visible_to_buffer(self.cursor.point);
-                    let cell = Indexed {
-                        inner: self.grid[buffer_point.line][buffer_point.col],
-                        column: self.cursor.point.col,
-                        line: self.cursor.point.line,
-                    };
-
-                    let mut cell = RenderableCell::new(self, cell);
-                    cell.inner = RenderableCellContent::Cursor(self.cursor.key);
-
-                    // Apply cursor color, or invert the cursor if it has a fixed background close
-                    // to the cell's background.
-                    if !matches!(
-                        self.cursor.cursor_color,
-                        CellRgb::Rgb(color) if color.contrast(cell.bg) < MIN_CURSOR_CONTRAST
-                    ) {
-                        cell.fg = self.cursor.cursor_color.color(cell.fg, cell.bg);
-                    }
-
-                    return Some(cell);
-                }
-            } else {
-                let cell = self.inner.next()?;
-                let cell = RenderableCell::new(self, cell);
-
-                if !cell.is_empty() {
-                    return Some(cell);
-                }
-            }
-        }
-    }
-}
-
-/// Grid dimensions.
-pub trait Dimensions {
-    /// Total number of lines in the buffer, this includes scrollback and visible lines.
-    fn total_lines(&self) -> usize;
-
-    /// Height of the viewport in lines.
-    fn screen_lines(&self) -> Line;
-
-    /// Width of the terminal in columns.
-    fn cols(&self) -> Column;
-
-    /// Number of invisible lines part of the scrollback history.
-    #[inline]
-    fn history_size(&self) -> usize {
-        self.total_lines() - self.screen_lines().0
-    }
-}
-
-impl<G> Dimensions for Grid<G> {
-    #[inline]
-    fn total_lines(&self) -> usize {
-        self.raw.len()
-    }
-
-    #[inline]
-    fn screen_lines(&self) -> Line {
-        self.lines
-    }
-
-    #[inline]
-    fn cols(&self) -> Column {
-        self.cols
-    }
-}
-
-#[cfg(test)]
-impl Dimensions for (Line, Column) {
-    fn total_lines(&self) -> usize {
-        *self.0
-    }
-
-    fn screen_lines(&self) -> Line {
-        self.0
-    }
-
-    fn cols(&self) -> Column {
-        self.1
-    }
-}
 
 #[cfg(test)]
 mod tests {

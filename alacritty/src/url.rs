@@ -5,9 +5,7 @@ use crossfont::Metrics;
 use glutin::event::{ElementState, ModifiersState};
 use urlocator::{UrlLocation, UrlLocator};
 
-use font::Metrics;
-
-use alacritty_common::index::{Column, Point};
+use alacritty_terminal::index::{Column, Point};
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::color::Rgb;
 use alacritty_terminal::term::{RenderableCell, RenderableCellContent, SizeInfo};
@@ -197,7 +195,7 @@ impl Urls {
 mod tests {
     use super::*;
 
-    use alacritty_common::index::{Column, Line};
+    use alacritty_terminal::index::{Column, Line};
     use alacritty_terminal::term::cell::MAX_ZEROWIDTH_CHARS;
 
     fn text_to_cells(text: &str) -> Vec<RenderableCell> {

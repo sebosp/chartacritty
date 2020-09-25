@@ -1,7 +1,7 @@
 use alacritty_charts::Value2D;
-use alacritty_common::Rgb;
+use alacritty_common::term::color::Rgb;
 use alacritty_common::SizeInfo;
-use log::*;
+//use log::*;
 
 const COS_60: f32 = 0.49999997f32;
 const SIN_60: f32 = 0.86602545f32;
@@ -45,7 +45,7 @@ pub fn create_hexagon_line(
     size_info: SizeInfo,
     radius: f32,
 ) -> DecorationTypes {
-    let mut hexagon_line_background = HexagonLineBackground::new(color, alpha, size_info, radius);
+    let hexagon_line_background = HexagonLineBackground::new(color, alpha, size_info, radius);
     //hexagon_line_background.update_opengl_vecs();
     DecorationTypes::Lines(DecorationLines::Hexagon(hexagon_line_background))
 }

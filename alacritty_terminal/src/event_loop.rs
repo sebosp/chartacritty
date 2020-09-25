@@ -17,10 +17,9 @@ use mio_extras::channel::{self, Receiver, Sender};
 use crate::ansi;
 use crate::event::{self, Event, EventListener};
 use crate::sync::FairMutex;
-use crate::term::Term;
+use crate::term::{SizeInfo, Term};
 use crate::thread;
 use crate::tty;
-use alacritty_common::SizeInfo;
 
 /// Max bytes to read from the PTY.
 const MAX_READ: usize = 0x10_000;
