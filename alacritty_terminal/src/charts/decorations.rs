@@ -25,7 +25,6 @@
 //
 // TODO: There are several RFCs in rust to allow enum variants to impl a specific Trait but they
 // haven't been merged
-use crate::*;
 use tracing::{event, span, Level};
 /// `Decoration` contains several types of decorations to add to a chart
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -262,10 +261,7 @@ impl Default for ReferencePointDecoration {
 
 impl Decorate for ReferencePointDecoration {
     fn width(&self) -> f32 {
-        event!(
-            Level::DEBUG,
-            "Using custom width from ReferencePointDecoration"
-        );
+        event!(Level::DEBUG, "Using custom width from ReferencePointDecoration");
         self.padding.x * 2. // Reserve space left and right
     }
 
@@ -429,10 +425,7 @@ impl Decorate for ActiveAlertUnderLineDecoration {
         stats: &TimeSeriesStats,
         sources: &[TimeSeriesSource],
     ) {
-        let span = span!(
-            Level::TRACE,
-            "ActiveAlertUnderLineDecoration::update_opengl_vecs",
-        );
+        let span = span!(Level::TRACE, "ActiveAlertUnderLineDecoration::update_opengl_vecs",);
         let _enter = span.enter();
         // TODO: This needs to be calculated only at the start, perhaps an init() method.
         // TODO: Depending on the number of alarms, the transparency should become 0.
@@ -459,10 +452,8 @@ impl Decorate for ActiveAlertUnderLineDecoration {
 
         // Calculate Y, the marker hints are by default 10% of the chart height
         // Same as the chart_width to have the same amount of pixels.
-        let y1 = display_size.scale_y(
-            stats.max,
-            stats.min + ((stats.max - stats.min) / 10f64) * 2f64,
-        );
+        let y1 =
+            display_size.scale_y(stats.max, stats.min + ((stats.max - stats.min) / 10f64) * 2f64);
         let y2 = display_size.scale_y(stats.max, stats.min + ((stats.max - stats.min) / 10f64));
 
         // TODO: Fix this part in a for loop overwriting the allocated vector
@@ -484,11 +475,7 @@ impl Decorate for ActiveAlertUnderLineDecoration {
         self.opengl_data[10] = x3;
         self.opengl_data[11] = y2;
 
-        self.alpha = if self.is_series_alert_triggering(sources) {
-            1.0
-        } else {
-            0.0
-        };
+        self.alpha = if self.is_series_alert_triggering(sources) { 1.0 } else { 0.0 };
         event!(
             Level::DEBUG,
             "ActiveAlertUnderLineDecoration:update_opengl_vecs: Finished: alpha: {} vecs {:?}",
