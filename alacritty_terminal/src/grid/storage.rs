@@ -1,4 +1,3 @@
-/// Moved from alacritty_terminal/src/grid/storage.rs
 use std::cmp::{max, PartialEq};
 use std::mem;
 use std::ops::{Index, IndexMut};
@@ -304,8 +303,8 @@ mod tests {
     use crate::grid::row::Row;
     use crate::grid::storage::{Storage, MAX_CACHE_SIZE};
     use crate::grid::GridCell;
+    use crate::index::{Column, Line};
     use crate::term::cell::Flags;
-    use alacritty_common::index::{Column, Line};
 
     impl GridCell for char {
         fn is_empty(&self) -> bool {

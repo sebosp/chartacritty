@@ -1,5 +1,5 @@
 //! Defines the Row type which makes up lines in the grid.
-/// Moved from alacritty_terminal/src/grid/row.rs
+
 use std::cmp::{max, min};
 use std::ops::{Index, IndexMut};
 use std::ops::{Range, RangeFrom, RangeFull, RangeTo, RangeToInclusive};
