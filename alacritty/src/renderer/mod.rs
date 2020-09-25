@@ -496,8 +496,8 @@ pub enum DrawArrayMode {
     GlPoints,
     GlLineStrip,
     GlLineLoop,
-    GlTriangleFan,
-    /* GlLines,
+    /* GlTriangleFan,
+     * GlLines,
      * GlTriangleStrip,
      * GlTriangles,
      * GlQuadStrip, // Unsupported
@@ -945,8 +945,8 @@ impl QuadRenderer {
             DrawArrayMode::GlPoints => gl::POINTS,
             DrawArrayMode::GlLineStrip => gl::LINE_STRIP,
             DrawArrayMode::GlLineLoop => gl::LINE_LOOP,
-            DrawArrayMode::GlTriangleFan => gl::TRIANGLE_FAN,
-            /* DrawArrayMode::GlLines => gl::LINES,
+            /* DrawArrayMode::GlTriangleFan => gl::TRIANGLE_FAN,
+             * DrawArrayMode::GlLines => gl::LINES,
              * DrawArrayMode::GlTriangleStrip => gl::TRIANGLE_STRIP,
              * DrawArrayMode::GlTriangles => gl::TRIANGLES,
              * DrawArrayMode::GlQuadStrip => gl::QUAD_STRIP, // Unsupported?

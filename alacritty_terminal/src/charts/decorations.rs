@@ -27,6 +27,7 @@
 // haven't been merged
 use crate::charts::{ChartSizeInfo, TimeSeriesSource, TimeSeriesStats, Value2D};
 use crate::term::color::Rgb;
+use serde::{Deserialize, Serialize};
 use tracing::{event, span, Level};
 /// `Decoration` contains several types of decorations to add to a chart
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]

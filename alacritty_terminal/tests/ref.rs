@@ -103,7 +103,7 @@ fn ref_test(dir: &Path) {
     config.scrolling.set_history(ref_config.history_size);
 
     let (tokio_handle, charts_tx, _tokio_shutdown) =
-        alacritty_charts::async_utils::tokio_default_setup();
+        alacritty_terminal::charts::async_utils::tokio_default_setup();
     let mut terminal = Term::new(&config, size, Mock, tokio_handle, charts_tx);
     let mut parser = ansi::Processor::new();
 

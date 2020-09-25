@@ -417,7 +417,7 @@ mod tests {
             dpr: 1.0,
         };
         let (tokio_handle, charts_tx, _tokio_shutdown) =
-            alacritty_charts::async_utils::tokio_default_setup();
+            crate::charts::async_utils::tokio_default_setup();
         Term::new(&MockConfig::default(), size, Mock, tokio_handle, charts_tx)
     }
 

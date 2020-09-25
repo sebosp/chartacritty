@@ -12,6 +12,7 @@ mod scrolling;
 
 use crate::ansi::CursorStyle;
 
+pub use crate::charts::ChartsConfig;
 pub use crate::config::bell::{BellAnimation, BellConfig};
 pub use crate::config::colors::Colors;
 pub use crate::config::scrolling::Scrolling;
@@ -63,6 +64,9 @@ pub struct Config<T> {
     /// Shell startup directory.
     #[serde(default, deserialize_with = "option_explicit_none")]
     pub working_directory: Option<PathBuf>,
+
+    #[serde(default, deserialize_with = "option_explicit_none")]
+    pub charts: Option<ChartsConfig>,
 
     /// Additional configuration options not directly required by the terminal.
     #[serde(flatten)]

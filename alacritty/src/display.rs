@@ -44,8 +44,10 @@ use crate::url::{Url, Urls};
 use crate::window::{self, Window};
 
 // Chartacritty:
-use crate::decorations::{DecorationFans, DecorationLines, DecorationPoints, DecorationTypes};
-use crate::term::color::Rgb;
+use alacritty_terminal::decorations::{
+    DecorationFans, DecorationLines, DecorationPoints, DecorationTypes,
+};
+use alacritty_terminal::term::color::Rgb;
 
 const FORWARD_SEARCH_LABEL: &str = "Search: ";
 const BACKWARD_SEARCH_LABEL: &str = "Backward Search: ";
@@ -309,20 +311,20 @@ impl Display {
         }
         let hexagon_radius = 100f32;
         let hexagon_color = Rgb { r: 25, g: 88, b: 167 };
-        let hexagon_line_decorator = alacritty_decorations::create_hexagon_line(
+        let hexagon_line_decorator = alacritty_terminal::decorations::create_hexagon_line(
             hexagon_color,
             0.3f32,
             size_info,
             hexagon_radius,
         );
-        let hexagon_fan_decorator = alacritty_decorations::create_hexagon_fan(
+        let hexagon_fan_decorator = alacritty_terminal::decorations::create_hexagon_fan(
             hexagon_color,
             Rgb { r: 0, g: 0, b: 0 },
             0.05f32,
             size_info,
             hexagon_radius,
         );
-        let hexagon_point_decorator = alacritty_decorations::create_hexagon_points(
+        let hexagon_point_decorator = alacritty_terminal::decorations::create_hexagon_points(
             hexagon_color,
             0.4f32,
             size_info,
@@ -413,7 +415,9 @@ impl Display {
         config: &Config,
         update_pending: DisplayUpdate,
         tokio_handle: tokio::runtime::Handle,
-        mut charts_tx: futures_mpsc::Sender<alacritty_charts::async_utils::AsyncChartTask>,
+        mut charts_tx: futures_mpsc::Sender<
+            alacritty_terminal::charts::async_utils::AsyncChartTask,
+        >,
     ) where
         T: EventListener,
     {
@@ -480,14 +484,15 @@ impl Display {
         let (height, width) = (self.size_info.height, self.size_info.width);
         let (chart_resize_tx, chart_resize_rx) = oneshot::channel();
         tokio_handle.spawn(async move {
-            let send_display_size =
-                charts_tx.send(alacritty_charts::async_utils::AsyncChartTask::ChangeDisplaySize(
+            let send_display_size = charts_tx.send(
+                alacritty_terminal::charts::async_utils::AsyncChartTask::ChangeDisplaySize(
                     height,
                     width,
                     padding_y,
                     padding_x,
                     chart_resize_tx,
-                ));
+                ),
+            );
             match send_display_size.await {
                 Err(e) => error!("Sending ChangeDisplaySize Task: err={:?}", e),
                 Ok(_) => debug!(
@@ -510,20 +515,20 @@ impl Display {
         self.renderer.resize(&self.size_info);
         let hexagon_color = Rgb { r: 25, g: 88, b: 167 };
         let hexagon_radius = 100f32;
-        let hexagon_line_decorator = alacritty_decorations::create_hexagon_line(
+        let hexagon_line_decorator = alacritty_terminal::decorations::create_hexagon_line(
             hexagon_color,
             0.3f32,
             self.size_info,
             hexagon_radius,
         );
-        let hexagon_fan_decorator = alacritty_decorations::create_hexagon_fan(
+        let hexagon_fan_decorator = alacritty_terminal::decorations::create_hexagon_fan(
             hexagon_color,
             Rgb { r: 0, g: 0, b: 0 },
             0.05f32,
             self.size_info,
             hexagon_radius,
         );
-        let hexagon_point_decorator = alacritty_decorations::create_hexagon_points(
+        let hexagon_point_decorator = alacritty_terminal::decorations::create_hexagon_points(
             hexagon_color,
             0.4f32,
             self.size_info,
@@ -687,13 +692,14 @@ impl Display {
                     for decoration_idx in 0..chart_config.charts[chart_idx].decorations.len() {
                         // TODO: Change this to return a ChartOpenglData that contains:
                         // (ves: Vec<f32>, alpha: f32)
-                        let opengl_data = alacritty_charts::async_utils::get_metric_opengl_data(
-                            charts_tx.clone(),
-                            chart_idx,
-                            decoration_idx,
-                            "decoration",
-                            tokio_handle.clone(),
-                        );
+                        let opengl_data =
+                            alacritty_terminal::charts::async_utils::get_metric_opengl_data(
+                                charts_tx.clone(),
+                                chart_idx,
+                                decoration_idx,
+                                "decoration",
+                                tokio_handle.clone(),
+                            );
                         self.renderer.draw_array(
                             &size_info,
                             &opengl_data.0,
@@ -713,13 +719,14 @@ impl Display {
                         );
                     }
                     for series_idx in 0..chart_config.charts[chart_idx].sources.len() {
-                        let opengl_data = alacritty_charts::async_utils::get_metric_opengl_data(
-                            charts_tx.clone(),
-                            chart_idx,
-                            series_idx,
-                            "metric_data",
-                            tokio_handle.clone(),
-                        );
+                        let opengl_data =
+                            alacritty_terminal::charts::async_utils::get_metric_opengl_data(
+                                charts_tx.clone(),
+                                chart_idx,
+                                series_idx,
+                                "metric_data",
+                                tokio_handle.clone(),
+                            );
                         self.renderer.draw_array(
                             &size_info,
                             &opengl_data.0,

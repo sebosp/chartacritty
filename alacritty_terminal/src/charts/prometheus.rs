@@ -7,6 +7,7 @@ use hyper::Client;
 use hyper_tls::HttpsConnector;
 use log::*;
 use percent_encoding::{utf8_percent_encode, DEFAULT_ENCODE_SET};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, UNIX_EPOCH};
 // The below data structures for parsing something like:
@@ -156,7 +157,7 @@ impl Default for PrometheusTimeSeries {
             pull_interval: 15,
             data_type: String::from("vector"),
             required_labels: HashMap::new(),
-            color: crate::Rgb::default(),
+            color: Rgb::default(),
             alpha: 1.0,
         }
     }

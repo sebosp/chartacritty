@@ -694,7 +694,7 @@ pub struct Processor<N> {
     display: Display,
     font_size: Size,
     tokio_handle: tokio::runtime::Handle,
-    charts_tx: tokio_mpsc::Sender<alacritty_charts::async_utils::AsyncChartTask>,
+    charts_tx: tokio_mpsc::Sender<alacritty_terminal::charts::async_utils::AsyncChartTask>,
     event_queue: Vec<GlutinEvent<'static, Event>>,
     search_state: SearchState,
     cli_options: CLIOptions,
@@ -710,7 +710,7 @@ impl<N: Notify + OnResize> Processor<N> {
         config: Config,
         display: Display,
         tokio_handle: tokio::runtime::Handle,
-        charts_tx: tokio_mpsc::Sender<alacritty_charts::async_utils::AsyncChartTask>,
+        charts_tx: tokio_mpsc::Sender<alacritty_terminal::charts::async_utils::AsyncChartTask>,
         cli_options: CLIOptions,
     ) -> Processor<N> {
         #[cfg(not(any(target_os = "macos", windows)))]
@@ -1141,8 +1141,8 @@ impl<N: Notify + OnResize> Processor<N> {
             self.search_state.regex.is_some(),
             &self.config,
             display_update_pending,
-            self.tokio_handle,
-            self.charts_tx,
+            self.tokio_handle.clone(),
+            self.charts_tx.clone(),
         );
 
         // Scroll to make sure search origin is visible and content moves as little as possible.

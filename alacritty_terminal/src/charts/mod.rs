@@ -19,8 +19,6 @@
 //    send/fetch the updates to the background every half a second or so?
 
 #![warn(rust_2018_idioms)]
-#[macro_use]
-extern crate serde_derive;
 
 pub mod async_utils;
 pub mod config;
@@ -37,7 +35,7 @@ use crate::term::color::Rgb;
 use crate::term::SizeInfo;
 use decorations::*;
 use log::*;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::time::UNIX_EPOCH;
 use tracing::{event, span, Level};
