@@ -121,6 +121,10 @@ pub struct HexagonPointBackground {
     pub alpha: f32,
     size_info: SizeInfo,
     radius: f32,
+    /// Now and then, certain points will be chosen to be moved horizontally
+    chosen_vertices: Vec<usize>,
+    /// Every these many seconds, chose new points to move
+    next_update_interval: u64,
     pub vecs: Vec<f32>,
 }
 pub struct HexagonLineBackground {
@@ -289,6 +293,8 @@ impl HexagonPointBackground {
             size_info,
             radius,
             vecs: vec![],
+            chosen_vertices: vec![],
+            next_update_interval: 15u64,
         }
     }
     pub fn update_opengl_vecs(&mut self) {
