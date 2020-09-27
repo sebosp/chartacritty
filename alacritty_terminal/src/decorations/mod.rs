@@ -26,16 +26,16 @@ pub enum DecorationPoints {
     Hexagon(HexagonPointBackground),
 }
 
-/// DecorationFans represents OpenGL Triangle Fan of x,y points.
+/// DecorationTriangles represents OpenGL Triangle Triangle of x,y points.
 /// The usize represents the number of coordinates that make up one fan
-pub enum DecorationFans {
-    Hexagon((HexagonFanBackground, usize)),
+pub enum DecorationTriangles {
+    Hexagon((HexagonTriangleBackground, usize)),
 }
 
 /// DecorationGLPrimitives Allows grouping of
 pub enum DecorationTypes {
     Lines(DecorationLines),
-    Fans(DecorationFans), // Number of triangles per turn
+    Triangles(DecorationTriangles), // Number of triangles per turn
     Points(DecorationPoints),
 }
 
@@ -63,9 +63,9 @@ pub fn create_hexagon_fan(
     // TODO: This is for now unused
     let num_vertices: usize = 6usize * 6usize * 3;
     let mut hexagon_fan_background =
-        HexagonFanBackground::new(vertex_color, center_color, alpha, size_info, radius);
+        HexagonTriangleBackground::new(vertex_color, center_color, alpha, size_info, radius);
     hexagon_fan_background.update_opengl_vecs();
-    DecorationTypes::Fans(DecorationFans::Hexagon((hexagon_fan_background, num_vertices)))
+    DecorationTypes::Triangles(DecorationTriangles::Hexagon((hexagon_fan_background, num_vertices)))
 }
 
 pub fn create_hexagon_points(
@@ -138,7 +138,7 @@ pub struct HexagonLineBackground {
 }
 
 // TODO: This is no longer a FAN, but a set of triangles
-pub struct HexagonFanBackground {
+pub struct HexagonTriangleBackground {
     // shader_vertex_path: String,
     // shader_fragment_path: String,
     pub vertex_color: Rgb,
@@ -149,7 +149,7 @@ pub struct HexagonFanBackground {
     pub vecs: Vec<f32>,
 }
 
-impl HexagonFanBackground {
+impl HexagonTriangleBackground {
     pub fn new(
         vertex_color: Rgb,
         center_color: Rgb,
@@ -157,7 +157,7 @@ impl HexagonFanBackground {
         size_info: SizeInfo,
         radius: f32,
     ) -> Self {
-        HexagonFanBackground {
+        HexagonTriangleBackground {
             // shader_fragment_path: String::from("Unimplemented"),
             // shader_vertex_path: String::from("Unimplemented"),
             vertex_color,

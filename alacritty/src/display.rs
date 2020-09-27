@@ -45,7 +45,7 @@ use crate::window::{self, Window};
 
 // Chartacritty:
 use alacritty_terminal::decorations::{
-    DecorationFans, DecorationLines, DecorationPoints, DecorationTypes,
+    DecorationLines, DecorationPoints, DecorationTriangles, DecorationTypes,
 };
 use alacritty_terminal::term::color::Rgb;
 
@@ -317,7 +317,7 @@ impl Display {
             size_info,
             hexagon_radius,
         );
-        let hexagon_fan_decorator = alacritty_terminal::decorations::create_hexagon_fan(
+        let hexagon_triangles_decorator = alacritty_terminal::decorations::create_hexagon_fan(
             hexagon_color,
             Rgb { r: 0, g: 0, b: 0 },
             0.05f32,
@@ -345,7 +345,7 @@ impl Display {
             wayland_event_queue,
             decorations: vec![
                 hexagon_line_decorator,
-                hexagon_fan_decorator,
+                hexagon_triangles_decorator,
                 hexagon_point_decorator,
             ],
         })
@@ -521,7 +521,7 @@ impl Display {
             self.size_info,
             hexagon_radius,
         );
-        let hexagon_fan_decorator = alacritty_terminal::decorations::create_hexagon_fan(
+        let hexagon_triangles_decorator = alacritty_terminal::decorations::create_hexagon_fan(
             hexagon_color,
             Rgb { r: 0, g: 0, b: 0 },
             0.05f32,
@@ -535,7 +535,7 @@ impl Display {
             hexagon_radius,
         );
         self.decorations =
-            vec![hexagon_line_decorator, hexagon_fan_decorator, hexagon_point_decorator];
+            vec![hexagon_line_decorator, hexagon_triangles_decorator, hexagon_point_decorator];
     }
 
     /// Draw the screen.
@@ -787,12 +787,12 @@ impl Display {
                             }
                         }
                     },
-                    DecorationTypes::Fans(fan_decor) => match fan_decor {
-                        DecorationFans::Hexagon((hex_fans, _number_vertices)) => {
+                    DecorationTypes::Triangles(tri_decor) => match tri_decor {
+                        DecorationTriangles::Hexagon((hex_tris, _number_vertices)) => {
                             info!("- Drawing hexagon fans");
-                            info!("- - Decorations Hexagon Fans: {:?}", hex_fans.vecs);
+                            info!("- - Decorations Hexagon Triangles: {:?}", hex_tris.vecs);
                             // Triangle fans decorators contain the number of sides
-                            self.renderer.draw_hex_bg(&size_info, &hex_fans.vecs);
+                            self.renderer.draw_hex_bg(&size_info, &hex_tris.vecs);
                         }
                     },
                     DecorationTypes::Points(point_decor) => match point_decor {
