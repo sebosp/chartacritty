@@ -29,7 +29,7 @@ pub enum DecorationPoints {
 /// DecorationTriangles represents OpenGL Triangle Triangle of x,y points.
 /// The usize represents the number of coordinates that make up one fan
 pub enum DecorationTriangles {
-    Hexagon((HexagonTriangleBackground, usize)),
+    Hexagon(HexagonTriangleBackground),
 }
 
 /// DecorationGLPrimitives Allows grouping of
@@ -50,7 +50,7 @@ pub fn create_hexagon_line(
     DecorationTypes::Lines(DecorationLines::Hexagon(hexagon_line_background))
 }
 
-pub fn create_hexagon_fan(
+pub fn create_hexagon_triangles(
     vertex_color: Rgb,
     center_color: Rgb,
     alpha: f32,
@@ -58,14 +58,10 @@ pub fn create_hexagon_fan(
     radius: f32,
 ) -> DecorationTypes {
     // Each vertex has 6 data points, x, y, r, g, b, a
-    // To draw the hexagons, it needs to build 6 triangles
-    // each vertex contains x,y,r,g,b,a
-    // TODO: This is for now unused
-    let num_vertices: usize = 6usize * 6usize * 3;
     let mut hexagon_fan_background =
         HexagonTriangleBackground::new(vertex_color, center_color, alpha, size_info, radius);
     hexagon_fan_background.update_opengl_vecs();
-    DecorationTypes::Triangles(DecorationTriangles::Hexagon((hexagon_fan_background, num_vertices)))
+    DecorationTypes::Triangles(DecorationTriangles::Hexagon(hexagon_fan_background))
 }
 
 pub fn create_hexagon_points(

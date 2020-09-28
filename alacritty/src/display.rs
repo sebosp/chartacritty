@@ -317,7 +317,7 @@ impl Display {
             size_info,
             hexagon_radius,
         );
-        let hexagon_triangles_decorator = alacritty_terminal::decorations::create_hexagon_fan(
+        let hexagon_triangles_decorator = alacritty_terminal::decorations::create_hexagon_triangles(
             hexagon_color,
             Rgb { r: 0, g: 0, b: 0 },
             0.05f32,
@@ -521,7 +521,7 @@ impl Display {
             self.size_info,
             hexagon_radius,
         );
-        let hexagon_triangles_decorator = alacritty_terminal::decorations::create_hexagon_fan(
+        let hexagon_triangles_decorator = alacritty_terminal::decorations::create_hexagon_triangles(
             hexagon_color,
             Rgb { r: 0, g: 0, b: 0 },
             0.05f32,
@@ -765,11 +765,9 @@ impl Display {
             let wind_screen_size = 0.5f32;
             let x_move_in_time = (curr_second_cycle * wind_screen_size) / seconds_cycle;
             for decoration in &self.decorations {
-                debug!("Traversing Decorations");
                 match decoration {
                     DecorationTypes::Lines(line_decor) => match line_decor {
                         DecorationLines::Hexagon(hex_lines) => {
-                            debug!("- Drawing hexagon lines");
                             // Draw chunks of 12, since it's 2 points (x,y) per coordinate
                             for opengl_data in hex_lines.vecs.chunks(12) {
                                 // Mid-left is the 6th in the array
@@ -788,16 +786,12 @@ impl Display {
                         }
                     },
                     DecorationTypes::Triangles(tri_decor) => match tri_decor {
-                        DecorationTriangles::Hexagon((hex_tris, _number_vertices)) => {
-                            info!("- Drawing hexagon fans");
-                            info!("- - Decorations Hexagon Triangles: {:?}", hex_tris.vecs);
-                            // Triangle fans decorators contain the number of sides
+                        DecorationTriangles::Hexagon(hex_tris) => {
                             self.renderer.draw_hex_bg(&size_info, &hex_tris.vecs);
                         }
                     },
                     DecorationTypes::Points(point_decor) => match point_decor {
                         DecorationPoints::Hexagon(hex_points) => {
-                            debug!("- Drawing hexagon points");
                             // Draw chunks of 2, since it's 2 points (x,y) per coordinate
                             self.renderer.draw_array(
                                 &size_info,
@@ -811,7 +805,7 @@ impl Display {
                 }
             }
         } else {
-            debug!("Charts are not enabled");
+            debug!("Decorations are not enabled");
         }
 
         self.draw_render_timer(config, &size_info);
