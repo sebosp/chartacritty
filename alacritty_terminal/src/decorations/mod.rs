@@ -1,6 +1,7 @@
 use crate::charts::Value2D;
 use crate::term::color::Rgb;
 use crate::term::SizeInfo;
+use serde::{Deserialize, Serialize};
 //use log::*;
 
 const COS_60: f32 = 0.49999997f32;
@@ -16,29 +17,45 @@ pub trait Decoration {
     // }
 }
 
+/// `DecorationsConfig` contains a vector of decorations and their properties
+#[derive(Default, Debug, Serialize, Deserialize, PartialEq, Clone)]
+pub struct DecorationsConfig {
+    /// An array of active decorations
+    pub decorations: Vec<DecorationTypes>,
+}
 /// DecorationLines represents a line of x,y points.
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub enum DecorationLines {
     Hexagon(HexagonLineBackground),
 }
 
 /// DecorationPoints represents a line of x,y points.
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub enum DecorationPoints {
     Hexagon(HexagonPointBackground),
 }
 
 /// DecorationTriangles represents OpenGL Triangle Triangle of x,y points.
 /// The usize represents the number of coordinates that make up one fan
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub enum DecorationTriangles {
     Hexagon(HexagonTriangleBackground),
 }
 
 /// DecorationGLPrimitives Allows grouping of
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub enum DecorationTypes {
     Lines(DecorationLines),
     Triangles(DecorationTriangles), // Number of triangles per turn
     Points(DecorationPoints),
+    None,
 }
 
+impl Default for DecorationTypes {
+    fn default() -> Self {
+        DecorationTypes::None
+    }
+}
 pub fn create_hexagon_line(
     color: Rgb,
     alpha: f32,
@@ -110,6 +127,7 @@ pub fn gen_hexagon_vertices(size_info: SizeInfo, x: f32, y: f32, radius: f32) ->
     ]
 }
 
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct HexagonPointBackground {
     // shader_vertex_path: String,
     // shader_fragment_path: String,
@@ -123,6 +141,8 @@ pub struct HexagonPointBackground {
     next_update_interval: u64,
     pub vecs: Vec<f32>,
 }
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct HexagonLineBackground {
     // shader_vertex_path: String,
     // shader_fragment_path: String,
@@ -133,7 +153,7 @@ pub struct HexagonLineBackground {
     pub vecs: Vec<f32>,
 }
 
-// TODO: This is no longer a FAN, but a set of triangles
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct HexagonTriangleBackground {
     // shader_vertex_path: String,
     // shader_fragment_path: String,
