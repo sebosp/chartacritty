@@ -16,6 +16,7 @@ pub use crate::charts::ChartsConfig;
 pub use crate::config::bell::{BellAnimation, BellConfig};
 pub use crate::config::colors::Colors;
 pub use crate::config::scrolling::Scrolling;
+pub use crate::decorations::DecorationsConfig;
 
 pub const LOG_TARGET_CONFIG: &str = "alacritty_config";
 const MAX_SCROLLBACK_LINES: u32 = 100_000;
@@ -67,6 +68,9 @@ pub struct Config<T> {
 
     #[serde(default, deserialize_with = "option_explicit_none")]
     pub charts: Option<ChartsConfig>,
+
+    #[serde(default, deserialize_with = "option_explicit_none")]
+    pub decorations: Option<DecorationsConfig>,
 
     /// Additional configuration options not directly required by the terminal.
     #[serde(flatten)]
