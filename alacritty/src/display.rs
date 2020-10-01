@@ -45,7 +45,7 @@ use crate::window::{self, Window};
 
 // Chartacritty:
 use alacritty_terminal::decorations::{
-    DecorationLines, DecorationPoints, DecorationTriangles, DecorationTypes,
+    DecorationLines, DecorationPoints, DecorationTriangles, DecorationTypes, DecorationsConfig,
 };
 use alacritty_terminal::term::color::Rgb;
 
@@ -170,7 +170,7 @@ pub struct Display {
     #[cfg(not(any(target_os = "macos", windows)))]
     is_x11: bool,
 
-    decorations: Vec<DecorationTypes>,
+    decorations: DecorationsConfig,
 }
 
 impl Display {
@@ -309,7 +309,7 @@ impl Display {
             StartupMode::Maximized => window.set_maximized(true),
             _ => (),
         }
-        let hexagon_radius = 100f32;
+        /*let hexagon_radius = 100f32;
         let hexagon_color = Rgb { r: 25, g: 88, b: 167 };
         let hexagon_line_decorator = alacritty_terminal::decorations::create_hexagon_line(
             hexagon_color,
@@ -329,7 +329,11 @@ impl Display {
             0.4f32,
             size_info,
             hexagon_radius,
-        );
+        );*/
+        let mut decorations = config.decorations.clone();
+        for decor in decorations.iter_mut() {
+            decor.set_size_info(size_info);
+        }
         Ok(Self {
             window,
             renderer,
@@ -343,11 +347,7 @@ impl Display {
             is_x11,
             #[cfg(not(any(target_os = "macos", windows)))]
             wayland_event_queue,
-            decorations: vec![
-                hexagon_line_decorator,
-                hexagon_triangles_decorator,
-                hexagon_point_decorator,
-            ],
+            decorations,
         })
     }
 
@@ -513,7 +513,7 @@ impl Display {
             }
         });
         self.renderer.resize(&self.size_info);
-        let hexagon_color = Rgb { r: 25, g: 88, b: 167 };
+        /*        let hexagon_color = Rgb { r: 25, g: 88, b: 167 };
         let hexagon_radius = 100f32;
         let hexagon_line_decorator = alacritty_terminal::decorations::create_hexagon_line(
             hexagon_color,
@@ -533,9 +533,12 @@ impl Display {
             0.4f32,
             self.size_info,
             hexagon_radius,
-        );
-        self.decorations =
-            vec![hexagon_line_decorator, hexagon_triangles_decorator, hexagon_point_decorator];
+        );*/
+        let mut decorations = config.decorations.clone();
+        for decor in decorations.iter_mut() {
+            decor.set_size_info(size_info);
+        }
+        self.decorations = decorations;
     }
 
     /// Draw the screen.
@@ -759,7 +762,7 @@ impl Display {
 
             // |-------------------------------|---------------------------------|
             // 0.0 u                         0.25 u                             0.5
-            // 0.0 seconds                    15 seconds                        15 seconds
+            // 0.0 seconds                    7.5 seconds                       15 seconds
             // Every 15 seconds the opacity should go back to 100% of out top
             let max_hexagon_opacity = 0.5f32;
             let wind_screen_size = 0.5f32;
@@ -792,7 +795,6 @@ impl Display {
                     },
                     DecorationTypes::Points(point_decor) => match point_decor {
                         DecorationPoints::Hexagon(hex_points) => {
-                            // Draw chunks of 2, since it's 2 points (x,y) per coordinate
                             self.renderer.draw_array(
                                 &size_info,
                                 &hex_points.vecs,

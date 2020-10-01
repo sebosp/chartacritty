@@ -1,9 +1,11 @@
 use crate::charts::Value2D;
 use crate::term::color::Rgb;
 use crate::term::SizeInfo;
+use log::*;
 use serde::{Deserialize, Serialize};
-//use log::*;
+use std::time::UNIX_EPOCH;
 
+// TODO: Use const init that calculates these magic numbers at compile time
 const COS_60: f32 = 0.49999997f32;
 const SIN_60: f32 = 0.86602545f32;
 
@@ -23,39 +25,97 @@ pub struct DecorationsConfig {
     /// An array of active decorations
     pub decorations: Vec<DecorationTypes>,
 }
-/// DecorationLines represents a line of x,y points.
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
-pub enum DecorationLines {
-    Hexagon(HexagonLineBackground),
-}
 
-/// DecorationPoints represents a line of x,y points.
+// TODO: Maybe we can change the <Type>(Decor<Type>) to simply Decor<Type>
+/// DecorationTypes Groups available decorations
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
-pub enum DecorationPoints {
-    Hexagon(HexagonPointBackground),
-}
-
-/// DecorationTriangles represents OpenGL Triangle Triangle of x,y points.
-/// The usize represents the number of coordinates that make up one fan
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
-pub enum DecorationTriangles {
-    Hexagon(HexagonTriangleBackground),
-}
-
-/// DecorationGLPrimitives Allows grouping of
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[serde(tag = "type", content = "props")]
 pub enum DecorationTypes {
     Lines(DecorationLines),
-    Triangles(DecorationTriangles), // Number of triangles per turn
+    Triangles(DecorationTriangles),
     Points(DecorationPoints),
     None,
 }
-
 impl Default for DecorationTypes {
     fn default() -> Self {
         DecorationTypes::None
     }
 }
+
+impl DecorationTypes {
+    pub fn set_size_info(&mut self, size_info: SizeInfo) {
+        info!("Updating Triangle decorations");
+        match self {
+            DecorationTypes::Triangles(ref mut hexagon_triangles) => {
+                hexagon_triangles.set_size_info(size_info);
+            }
+            DecorationTypes::Points(ref mut hexagon_points) => {
+                hexagon_points.set_size_info(size_info);
+            }
+            DecorationTypes::Lines(ref mut hexagon_lines) => {
+                hexagon_lines.set_size_info(size_info);
+            }
+            DecorationTypes::None => {
+                unreachable!("Attempting to update decorations on None variant");
+            }
+        }
+    }
+}
+
+/// DecorationLines represents lines of x,y points.
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+pub enum DecorationLines {
+    Hexagon(HexagonLineBackground),
+}
+
+impl DecorationLines {
+    pub fn set_size_info(&mut self, size_info: SizeInfo) {
+        match self {
+            DecorationLines::Hexagon(ref mut hex_lines) => {
+                hex_lines.size_info = size_info;
+                hex_lines.update_opengl_vecs();
+            }
+        }
+    }
+}
+
+/// DecorationPoints represents sets of x,y points.
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[serde(tag = "type", content = "props")]
+pub enum DecorationPoints {
+    Hexagon(HexagonPointBackground),
+}
+
+impl DecorationPoints {
+    pub fn set_size_info(&mut self, size_info: SizeInfo) {
+        match self {
+            DecorationPoints::Hexagon(ref mut hex_points) => {
+                hex_points.size_info = size_info;
+                hex_points.update_opengl_vecs();
+            }
+        }
+    }
+}
+
+/// DecorationTriangles represents sets of triangle of x,y,r,g,b,a properties
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[serde(tag = "type", content = "props")]
+pub enum DecorationTriangles {
+    Hexagon(HexagonTriangleBackground),
+}
+
+impl DecorationTriangles {
+    // TODO: Maybe make it a trait?
+    pub fn set_size_info(&mut self, size_info: SizeInfo) {
+        match self {
+            DecorationTriangles::Hexagon(ref mut hex_triangles) => {
+                hex_triangles.size_info = size_info;
+                hex_triangles.update_opengl_vecs();
+            }
+        }
+    }
+}
+
 pub fn create_hexagon_line(
     color: Rgb,
     alpha: f32,
@@ -75,10 +135,10 @@ pub fn create_hexagon_triangles(
     radius: f32,
 ) -> DecorationTypes {
     // Each vertex has 6 data points, x, y, r, g, b, a
-    let mut hexagon_fan_background =
+    let mut hexagon_triangles_background =
         HexagonTriangleBackground::new(vertex_color, center_color, alpha, size_info, radius);
-    hexagon_fan_background.update_opengl_vecs();
-    DecorationTypes::Triangles(DecorationTriangles::Hexagon(hexagon_fan_background))
+    hexagon_triangles_background.update_opengl_vecs();
+    DecorationTypes::Triangles(DecorationTriangles::Hexagon(hexagon_triangles_background))
 }
 
 pub fn create_hexagon_points(
@@ -87,9 +147,9 @@ pub fn create_hexagon_points(
     size_info: SizeInfo,
     radius: f32,
 ) -> DecorationTypes {
-    let mut hexagon_point_bakcground = HexagonPointBackground::new(color, alpha, size_info, radius);
-    hexagon_point_bakcground.update_opengl_vecs();
-    DecorationTypes::Points(DecorationPoints::Hexagon(hexagon_point_bakcground))
+    let mut hexagon_point_background = HexagonPointBackground::new(color, alpha, size_info, radius);
+    hexagon_point_background.update_opengl_vecs();
+    DecorationTypes::Points(DecorationPoints::Hexagon(hexagon_point_background))
 }
 
 /// `gen_hexagon_vertices` Returns the vertices for an hexagon created at center x,y with a
@@ -138,6 +198,8 @@ pub struct HexagonPointBackground {
     /// Now and then, certain points will be chosen to be moved horizontally
     chosen_vertices: Vec<usize>,
     /// Every these many seconds, chose new points to move
+    update_interval: usize,
+    /// The next epoch in which the horizontal move is active
     next_update_interval: u64,
     pub vecs: Vec<f32>,
 }
@@ -186,7 +248,7 @@ impl HexagonTriangleBackground {
     }
     pub fn update_opengl_vecs(&mut self) {
         let mut res = vec![];
-        // To avoid colliding with the HexagonLines, the fans ocupy a radius a bit smaller
+        // To avoid colliding with the HexagonLines, the inner triangles ocupy a radius a bit smaller
         let inner_hexagon_radius_percent = 0.92f32; // XXX: Maybe this can be a field?
         let coords = background_fill_hexagon_positions(self.size_info, self.radius);
         // TODO: The alpha should be calculated inside the shaders
@@ -301,6 +363,7 @@ impl HexagonLineBackground {
 
 impl HexagonPointBackground {
     pub fn new(color: Rgb, alpha: f32, size_info: SizeInfo, radius: f32) -> Self {
+        let update_interval = 15usize;
         HexagonPointBackground {
             // shader_fragment_path: String::from("Unimplemented"),
             // shader_vertex_path: String::from("Unimplemented"),
@@ -310,7 +373,12 @@ impl HexagonPointBackground {
             radius,
             vecs: vec![],
             chosen_vertices: vec![],
-            next_update_interval: 15u64,
+            update_interval,
+            next_update_interval: std::time::SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+                + (update_interval as u64),
         }
     }
     pub fn update_opengl_vecs(&mut self) {
