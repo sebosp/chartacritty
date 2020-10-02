@@ -332,7 +332,7 @@ impl Display {
         );*/
         let mut decorations = config.decorations.clone();
         for decor in decorations.iter_mut() {
-            decor.set_size_info(size_info);
+            decor.set_size_info(self.size_info);
         }
         Ok(Self {
             window,
@@ -536,7 +536,7 @@ impl Display {
         );*/
         let mut decorations = config.decorations.clone();
         for decor in decorations.iter_mut() {
-            decor.set_size_info(size_info);
+            decor.set_size_info(self.size_info);
         }
         self.decorations = decorations;
     }
@@ -767,7 +767,7 @@ impl Display {
             let max_hexagon_opacity = 0.5f32;
             let wind_screen_size = 0.5f32;
             let x_move_in_time = (curr_second_cycle * wind_screen_size) / seconds_cycle;
-            for decoration in &self.decorations {
+            for decoration in self.decorations {
                 match decoration {
                     DecorationTypes::Lines(line_decor) => match line_decor {
                         DecorationLines::Hexagon(hex_lines) => {
