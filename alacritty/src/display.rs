@@ -330,10 +330,9 @@ impl Display {
             size_info,
             hexagon_radius,
         );*/
-        let mut decorations = config.decorations.clone();
-        for decor in decorations.iter_mut() {
-            decor.set_size_info(self.size_info);
-        }
+        // SEB: TODO: do not call when decorations are not enabled
+        let decorations =
+            DecorationsConfig::to_sized_decor_vec(config.decorations.clone(), size_info);
         Ok(Self {
             window,
             renderer,
@@ -534,11 +533,9 @@ impl Display {
             self.size_info,
             hexagon_radius,
         );*/
-        let mut decorations = config.decorations.clone();
-        for decor in decorations.iter_mut() {
-            decor.set_size_info(self.size_info);
-        }
-        self.decorations = decorations;
+        // SEB: TODO: do not call when decorations are not enabled
+        self.decorations =
+            DecorationsConfig::to_sized_decor_vec(config.decorations.clone(), self.size_info);
     }
 
     /// Draw the screen.
@@ -767,7 +764,7 @@ impl Display {
             let max_hexagon_opacity = 0.5f32;
             let wind_screen_size = 0.5f32;
             let x_move_in_time = (curr_second_cycle * wind_screen_size) / seconds_cycle;
-            for decoration in self.decorations {
+            for decoration in &self.decorations.decorations {
                 match decoration {
                     DecorationTypes::Lines(line_decor) => match line_decor {
                         DecorationLines::Hexagon(hex_lines) => {
@@ -804,6 +801,9 @@ impl Display {
                             );
                         }
                     },
+                    DecorationTypes::None => {
+                        unreachable!("Attempting to draw decoration of type None")
+                    }
                 }
             }
         } else {
