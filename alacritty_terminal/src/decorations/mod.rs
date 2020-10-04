@@ -26,6 +26,31 @@ pub struct DecorationsConfig {
     pub decorations: Vec<DecorationTypes>,
 }
 
+impl DecorationsConfig {
+    /// `set_size_info` iterates over the enabled decorations and calls the resize method for any
+    /// registered decorations
+    pub fn set_size_info(&mut self, size_info: SizeInfo) {
+        info!("Sizing decorations");
+        for decor in self.decorations.iter_mut() {
+            decor.set_size_info(size_info);
+        }
+    }
+    /// `to_sized_decor_vec` transforms an optional DecorationsConfig into an
+    /// DecorationsConfig with resized vector items
+    pub fn to_sized_decor_vec(config_decorations: Option<Self>, size_info: SizeInfo) -> Self {
+        match config_decorations {
+            Some(mut decors) => {
+                decors.set_size_info(size_info);
+                decors
+            }
+            None => {
+                info!("No decorations to size");
+                DecorationsConfig::default()
+            }
+        }
+    }
+}
+
 // TODO: Maybe we can change the <Type>(Decor<Type>) to simply Decor<Type>
 /// DecorationTypes Groups available decorations
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
