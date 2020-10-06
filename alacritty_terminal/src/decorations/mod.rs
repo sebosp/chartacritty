@@ -85,6 +85,15 @@ impl DecorationTypes {
             }
         }
     }
+    /// `tick` is called every time there is a draw request for the terminal
+    pub fn tick(&mut self, time: u64) {
+        match self {
+            DecorationTypes::Points(ref mut hexagon_points) => {
+                hexagon_points.tick(time);
+            }
+            _ => {}
+        }
+    }
 }
 
 /// DecorationLines represents lines of x,y points.
@@ -117,6 +126,13 @@ impl DecorationPoints {
             DecorationPoints::Hexagon(ref mut hex_points) => {
                 hex_points.size_info = size_info;
                 hex_points.update_opengl_vecs();
+            }
+        }
+    }
+    pub fn tick(&mut self, time: u64) {
+        match self {
+            DecorationPoints::Hexagon(ref mut hex_points) => {
+                hex_points.tick();
             }
         }
     }
@@ -166,17 +182,6 @@ pub fn create_hexagon_triangles(
     DecorationTypes::Triangles(DecorationTriangles::Hexagon(hexagon_triangles_background))
 }
 
-pub fn create_hexagon_points(
-    color: Rgb,
-    alpha: f32,
-    size_info: SizeInfo,
-    radius: f32,
-) -> DecorationTypes {
-    let mut hexagon_point_background = HexagonPointBackground::new(color, alpha, size_info, radius);
-    hexagon_point_background.update_opengl_vecs();
-    DecorationTypes::Points(DecorationPoints::Hexagon(hexagon_point_background))
-}
-
 /// `gen_hexagon_vertices` Returns the vertices for an hexagon created at center x,y with a
 /// specific radius
 pub fn gen_hexagon_vertices(size_info: SizeInfo, x: f32, y: f32, radius: f32) -> Vec<f32> {
@@ -224,9 +229,26 @@ pub struct HexagonPointBackground {
     chosen_vertices: Vec<usize>,
     /// Every these many seconds, chose new points to move
     update_interval: usize,
+    /// At which epoch ms in time the point animation should start
+    start_animation_ms: u128,
+    /// The duration of the animation
+    animation_duration_ms: u32,
+    /// The horizontal distance that should be covered during the animation time
+    animation_offset: f32,
     /// The next epoch in which the horizontal move is active
-    next_update_interval: u64,
+    next_update_epoch: u64,
     pub vecs: Vec<f32>,
+}
+
+pub fn create_hexagon_points(
+    color: Rgb,
+    alpha: f32,
+    size_info: SizeInfo,
+    radius: f32,
+) -> DecorationTypes {
+    let mut hexagon_point_background = HexagonPointBackground::new(color, alpha, size_info, radius);
+    hexagon_point_background.update_opengl_vecs();
+    DecorationTypes::Points(DecorationPoints::Hexagon(hexagon_point_background))
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -389,6 +411,8 @@ impl HexagonLineBackground {
 impl HexagonPointBackground {
     pub fn new(color: Rgb, alpha: f32, size_info: SizeInfo, radius: f32) -> Self {
         let update_interval = 15usize;
+        let epoch = std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+        let animation_duration_ms = 2000u32;
         HexagonPointBackground {
             // shader_fragment_path: String::from("Unimplemented"),
             // shader_vertex_path: String::from("Unimplemented"),
@@ -399,11 +423,10 @@ impl HexagonPointBackground {
             vecs: vec![],
             chosen_vertices: vec![],
             update_interval,
-            next_update_interval: std::time::SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs()
-                + (update_interval as u64),
+            start_animation_ms: epoch.as_millis(),
+            animation_duration_ms,
+            animation_offset: 0f32, // SEB TODO: Calculate on top of the hexagon
+            next_update_epoch: epoch.as_secs() + (update_interval as u64),
         }
     }
     pub fn update_opengl_vecs(&mut self) {
@@ -419,6 +442,7 @@ impl HexagonPointBackground {
         }
         self.vecs = hexagons;
     }
+    pub fn tick(&mut self, time: u64) {}
 }
 
 /// Creates a vector with x,y coordinates in which new hexagons can be drawn
