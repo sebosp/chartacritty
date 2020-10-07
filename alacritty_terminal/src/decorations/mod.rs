@@ -3,6 +3,7 @@ use crate::term::color::Rgb;
 use crate::term::SizeInfo;
 use log::*;
 use serde::{Deserialize, Serialize};
+use std::convert::TryFrom;
 use std::time::UNIX_EPOCH;
 
 // TODO: Use const init that calculates these magic numbers at compile time
@@ -86,7 +87,7 @@ impl DecorationTypes {
         }
     }
     /// `tick` is called every time there is a draw request for the terminal
-    pub fn tick(&mut self, time: u64) {
+    pub fn tick(&mut self, time: u128) {
         match self {
             DecorationTypes::Points(ref mut hexagon_points) => {
                 hexagon_points.tick(time);
@@ -129,10 +130,10 @@ impl DecorationPoints {
             }
         }
     }
-    pub fn tick(&mut self, time: u64) {
+    pub fn tick(&mut self, time: u128) {
         match self {
             DecorationPoints::Hexagon(ref mut hex_points) => {
-                hex_points.tick();
+                hex_points.tick(time);
             }
         }
     }
@@ -232,7 +233,7 @@ pub struct HexagonPointBackground {
     /// At which epoch ms in time the point animation should start
     start_animation_ms: u128,
     /// The duration of the animation
-    animation_duration_ms: u32,
+    animation_duration_ms: u128,
     /// The horizontal distance that should be covered during the animation time
     animation_offset: f32,
     /// The next epoch in which the horizontal move is active
@@ -408,11 +409,28 @@ impl HexagonLineBackground {
     }
 }
 
+impl Decoration for HexagonLineBackground {
+    fn render(self) -> Vec<f32> {
+        let mut hexagons: Vec<f32> = vec![];
+        // Let's create an adjusted version of the values that is slightly less than the actual
+        // position
+        let coords = background_fill_hexagon_positions(self.size_info, self.radius);
+        for coord in coords {
+            hexagons.append(&mut gen_hexagon_vertices(
+                self.size_info,
+                coord.x,
+                coord.y,
+                self.radius,
+            ));
+        }
+        hexagons
+    }
+}
 impl HexagonPointBackground {
     pub fn new(color: Rgb, alpha: f32, size_info: SizeInfo, radius: f32) -> Self {
         let update_interval = 15usize;
         let epoch = std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-        let animation_duration_ms = 2000u32;
+        let animation_duration_ms = 2000u128;
         HexagonPointBackground {
             // shader_fragment_path: String::from("Unimplemented"),
             // shader_vertex_path: String::from("Unimplemented"),
@@ -441,8 +459,20 @@ impl HexagonPointBackground {
             ));
         }
         self.vecs = hexagons;
+        let hexagon_top_left_x = self.vecs[4];
+        let hexagon_top_right_x = self.vecs[2];
+        self.animation_offset = (hexagon_top_right_x - hexagon_top_left_x).abs();
     }
-    pub fn tick(&mut self, time: u64) {}
+    pub fn tick(&mut self, time: u128) {
+        if time > self.start_animation_ms
+            && time < self.start_animation_ms + self.animation_duration_ms
+        {
+            let current_animation_ms = time - self.start_animation_ms;
+            let current_ms_x_offset =
+                f32::try_from(current_animation_ms / self.animation_duration_ms).ok()
+                    * self.animation_offset;
+        }
+    }
 }
 
 /// Creates a vector with x,y coordinates in which new hexagons can be drawn
@@ -476,22 +506,4 @@ fn background_fill_hexagon_positions(size: SizeInfo, radius: f32) -> Vec<Value2D
         current_x_position += x_offset * 3f32;
     }
     res
-}
-
-impl Decoration for HexagonLineBackground {
-    fn render(self) -> Vec<f32> {
-        let mut hexagons: Vec<f32> = vec![];
-        // Let's create an adjusted version of the values that is slightly less than the actual
-        // position
-        let coords = background_fill_hexagon_positions(self.size_info, self.radius);
-        for coord in coords {
-            hexagons.append(&mut gen_hexagon_vertices(
-                self.size_info,
-                coord.x,
-                coord.y,
-                self.radius,
-            ));
-        }
-        hexagons
-    }
 }
