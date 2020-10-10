@@ -3,7 +3,6 @@ use crate::term::color::Rgb;
 use crate::term::SizeInfo;
 use log::*;
 use serde::{Deserialize, Serialize};
-use std::convert::TryFrom;
 use std::time::UNIX_EPOCH;
 
 // TODO: Use const init that calculates these magic numbers at compile time
@@ -87,7 +86,7 @@ impl DecorationTypes {
         }
     }
     /// `tick` is called every time there is a draw request for the terminal
-    pub fn tick(&mut self, time: u128) {
+    pub fn tick(&mut self, time: f32) {
         match self {
             DecorationTypes::Points(ref mut hexagon_points) => {
                 hexagon_points.tick(time);
@@ -130,7 +129,7 @@ impl DecorationPoints {
             }
         }
     }
-    pub fn tick(&mut self, time: u128) {
+    pub fn tick(&mut self, time: f32) {
         match self {
             DecorationPoints::Hexagon(ref mut hex_points) => {
                 hex_points.tick(time);
@@ -231,9 +230,9 @@ pub struct HexagonPointBackground {
     /// Every these many seconds, chose new points to move
     update_interval: usize,
     /// At which epoch ms in time the point animation should start
-    start_animation_ms: u128,
+    start_animation_ms: f32,
     /// The duration of the animation
-    animation_duration_ms: u128,
+    animation_duration_ms: f32,
     /// The horizontal distance that should be covered during the animation time
     animation_offset: f32,
     /// The next epoch in which the horizontal move is active
@@ -430,7 +429,8 @@ impl HexagonPointBackground {
     pub fn new(color: Rgb, alpha: f32, size_info: SizeInfo, radius: f32) -> Self {
         let update_interval = 15usize;
         let epoch = std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-        let animation_duration_ms = 2000u128;
+        let start_animation_ms = epoch.as_secs_f32() + epoch.subsec_millis() as f32 / 1000f32;
+        let animation_duration_ms = 2000f32;
         HexagonPointBackground {
             // shader_fragment_path: String::from("Unimplemented"),
             // shader_vertex_path: String::from("Unimplemented"),
@@ -441,7 +441,7 @@ impl HexagonPointBackground {
             vecs: vec![],
             chosen_vertices: vec![],
             update_interval,
-            start_animation_ms: epoch.as_millis(),
+            start_animation_ms,
             animation_duration_ms,
             animation_offset: 0f32, // SEB TODO: Calculate on top of the hexagon
             next_update_epoch: epoch.as_secs() + (update_interval as u64),
@@ -463,14 +463,14 @@ impl HexagonPointBackground {
         let hexagon_top_right_x = self.vecs[2];
         self.animation_offset = (hexagon_top_right_x - hexagon_top_left_x).abs();
     }
-    pub fn tick(&mut self, time: u128) {
+    pub fn tick(&mut self, time: f32) {
         if time > self.start_animation_ms
             && time < self.start_animation_ms + self.animation_duration_ms
         {
             let current_animation_ms = time - self.start_animation_ms;
-            let current_ms_x_offset =
-                f32::try_from(current_animation_ms / self.animation_duration_ms).ok()
-                    * self.animation_offset;
+            let current_ms_x_offset = (current_animation_ms as f32
+                / self.animation_duration_ms as f32)
+                * self.animation_offset;
         }
     }
 }
