@@ -447,6 +447,10 @@ impl HexagonPointBackground {
             next_update_epoch: epoch.as_secs() + (update_interval as u64),
         }
     }
+    pub fn choose_random_vertices(&mut self) {
+        let vertices_number = 5; // SEB TODO: unhardcode later
+        let total_verctices = self.vecs.len() / 6usize;
+    }
     pub fn update_opengl_vecs(&mut self) {
         let mut hexagons = vec![];
         let coords = background_fill_hexagon_positions(self.size_info, self.radius);
@@ -468,6 +472,7 @@ impl HexagonPointBackground {
             && time < self.start_animation_ms + self.animation_duration_ms
         {
             let current_animation_ms = time - self.start_animation_ms;
+            // Given this much time, the animation should have added this much offset
             let current_ms_x_offset = (current_animation_ms as f32
                 / self.animation_duration_ms as f32)
                 * self.animation_offset;
