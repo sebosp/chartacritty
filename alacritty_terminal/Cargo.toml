@@ -33,6 +33,7 @@ tracing = { version = "0.1", features = ["log", "log-always"] }
 tracing-log = { version = "0.1", features = ["env_logger"]}
 percent-encoding = "1.0.1"
 failure = "0.1.6"
+rand = "0.7.3"
 
 [target.'cfg(unix)'.dependencies]
 nix = "0.17.0"

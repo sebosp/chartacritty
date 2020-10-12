@@ -2,6 +2,7 @@ use crate::charts::Value2D;
 use crate::term::color::Rgb;
 use crate::term::SizeInfo;
 use log::*;
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::time::UNIX_EPOCH;
 
@@ -448,8 +449,20 @@ impl HexagonPointBackground {
         }
     }
     pub fn choose_random_vertices(&mut self) {
-        let vertices_number = 5; // SEB TODO: unhardcode later
-        let total_verctices = self.vecs.len() / 6usize;
+        let random_vertices_to_choose = 5; // SEB TODO: unhardcode later
+
+        // Of the six vertices, we only care about one of them, the top left.
+        let total_hexagon_vertices = self.vecs.len() / 6usize;
+        let mut rng = rand::thread_rng();
+        let current_vertex = 0;
+        while current_vertex <= random_vertices_to_choose {
+            let new_vertex = usize::from(rng.gen_range(0, total_hexagon_vertices));
+            if self.chosen_vertices.len() < current_vertex {
+                self.chosen_vertices.push(new_vertex);
+            } else {
+                self.chosen_vertices[current_vertex] = new_vertex;
+            }
+        }
     }
     pub fn update_opengl_vecs(&mut self) {
         let mut hexagons = vec![];
