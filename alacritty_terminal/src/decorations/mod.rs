@@ -237,7 +237,7 @@ pub struct HexagonPointBackground {
     /// The horizontal distance that should be covered during the animation time
     animation_offset: f32,
     /// The next epoch in which the horizontal move is active
-    next_update_epoch: u64,
+    next_update_epoch: f32,
     pub vecs: Vec<f32>,
 }
 
@@ -445,7 +445,7 @@ impl HexagonPointBackground {
             start_animation_ms,
             animation_duration_ms,
             animation_offset: 0f32, // SEB TODO: Calculate on top of the hexagon
-            next_update_epoch: epoch.as_secs() + (update_interval as u64),
+            next_update_epoch: epoch.as_secs_f32() + (update_interval as f32),
         }
     }
     pub fn choose_random_vertices(&mut self) {
@@ -489,6 +489,11 @@ impl HexagonPointBackground {
             let current_ms_x_offset = (current_animation_ms as f32
                 / self.animation_duration_ms as f32)
                 * self.animation_offset;
+        } else if time > self.start_animation_ms + self.animation_duration_ms
+            && time > self.next_update_epoch
+        {
+            self.choose_random_vertices();
+            self.next_update_epoch += self.animation_duration_ms;
         }
     }
 }
