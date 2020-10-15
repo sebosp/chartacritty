@@ -448,15 +448,20 @@ impl HexagonPointBackground {
             next_update_epoch: epoch.as_secs_f32() + (update_interval as f32),
         }
     }
+    /// `choose_random_vertices` should be called once a new animation should take place,
+    /// it selects new vertices to animate from the hexagons
     pub fn choose_random_vertices(&mut self) {
-        let random_vertices_to_choose = 5; // SEB TODO: unhardcode later
-
-        // Of the six vertices, we only care about one of them, the top left.
-        let total_hexagon_vertices = self.vecs.len() / 6usize;
+        // Of the six vertices of x,y values, we only care about one of them, the top left.
+        let total_hexagons = self.vecs.len() / 6usize / 2usize;
+        // Let's animate 1/5 of the top-left hexagons
+        let random_vertices_to_choose = (total_hexagons / 5usize) as usize;
         let mut rng = rand::thread_rng();
         let current_vertex = 0;
         while current_vertex <= random_vertices_to_choose {
-            let new_vertex = usize::from(rng.gen_range(0, total_hexagon_vertices));
+            let new_vertex = usize::from(rng.gen_range(0, total_hexagons));
+            if self.chosen_vertices.contains(&new_vertex) {
+                continue;
+            }
             if self.chosen_vertices.len() < current_vertex {
                 self.chosen_vertices.push(new_vertex);
             } else {
