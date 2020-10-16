@@ -494,6 +494,25 @@ impl HexagonPointBackground {
             let current_ms_x_offset = (current_animation_ms as f32
                 / self.animation_duration_ms as f32)
                 * self.animation_offset;
+            let is_dirty = false;
+            for curr_vertex in self.chosen_vertices {
+                // This vertex is static, so we can use it as a start
+                let bottom_left_vertex_offset_idx = (curr_vertex * 6usize * 2usize) + 8usize;
+                // This is the vertex we will move horizontally
+                let top_left_vertex_offset_idx = (curr_vertex * 6usize * 2usize) + 4usize;
+                if top_left_vertex_offset_idx > self.vecs.len()
+                    || bottom_left_vertex_offset_idx > self.vecs.len()
+                {
+                    warn!("Out of bounds calculation");
+                } else {
+                    self.vecs[top_left_vertex_offset_idx] =
+                        self.vecs[bottom_left_vertex_offset_idx] + current_ms_x_offset;
+                    is_dirty = true;
+                }
+            }
+            if is_dirty {
+                self.update_opengl_vecs();
+            }
         } else if time > self.start_animation_ms + self.animation_duration_ms
             && time > self.next_update_epoch
         {
