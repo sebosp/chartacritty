@@ -494,8 +494,8 @@ impl HexagonPointBackground {
             let current_ms_x_offset = (current_animation_ms as f32
                 / self.animation_duration_ms as f32)
                 * self.animation_offset;
-            let is_dirty = false;
-            for curr_vertex in self.chosen_vertices {
+            let mut is_dirty = false;
+            for curr_vertex in &self.chosen_vertices {
                 // This vertex is static, so we can use it as a start
                 let bottom_left_vertex_offset_idx = (curr_vertex * 6usize * 2usize) + 8usize;
                 // This is the vertex we will move horizontally
