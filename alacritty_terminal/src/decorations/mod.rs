@@ -31,8 +31,9 @@ impl DecorationsConfig {
     /// `set_size_info` iterates over the enabled decorations and calls the resize method for any
     /// registered decorations
     pub fn set_size_info(&mut self, size_info: SizeInfo) {
-        info!("Sizing decorations");
+        info!("DecorationsConfig::set_size_info()");
         for decor in self.decorations.iter_mut() {
+            info!("DecorationsConfig:: iter_mut: {:?}", decor);
             decor.set_size_info(size_info);
         }
     }
@@ -99,6 +100,7 @@ impl DecorationTypes {
 
 /// DecorationLines represents lines of x,y points.
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[serde(tag = "type", content = "props")]
 pub enum DecorationLines {
     Hexagon(HexagonLineBackground),
 }
@@ -218,29 +220,6 @@ pub fn gen_hexagon_vertices(size_info: SizeInfo, x: f32, y: f32, radius: f32) ->
     ]
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
-pub struct HexagonPointBackground {
-    // shader_vertex_path: String,
-    // shader_fragment_path: String,
-    pub color: Rgb,
-    pub alpha: f32,
-    size_info: SizeInfo,
-    radius: f32,
-    /// Now and then, certain points will be chosen to be moved horizontally
-    chosen_vertices: Vec<usize>,
-    /// Every these many seconds, chose new points to move
-    update_interval: usize,
-    /// At which epoch ms in time the point animation should start
-    start_animation_ms: f32,
-    /// The duration of the animation
-    animation_duration_ms: f32,
-    /// The horizontal distance that should be covered during the animation time
-    animation_offset: f32,
-    /// The next epoch in which the horizontal move is active
-    next_update_epoch: f32,
-    pub vecs: Vec<f32>,
-}
-
 pub fn create_hexagon_points(
     color: Rgb,
     alpha: f32,
@@ -253,13 +232,41 @@ pub fn create_hexagon_points(
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+pub struct HexagonPointBackground {
+    // shader_vertex_path: String,
+    // shader_fragment_path: String,
+    pub color: Rgb,
+    pub alpha: f32,
+    #[serde(default)]
+    size_info: SizeInfo,
+    radius: f32,
+    /// Now and then, certain points will be chosen to be moved horizontally
+    #[serde(default)]
+    chosen_vertices: Vec<usize>,
+    /// Every these many seconds, chose new points to move
+    update_interval: usize,
+    /// At which epoch ms in time the point animation should start
+    start_animation_ms: f32,
+    /// The duration of the animation
+    animation_duration_ms: f32,
+    /// The horizontal distance that should be covered during the animation time
+    animation_offset: f32,
+    /// The next epoch in which the horizontal move is active
+    next_update_epoch: f32,
+    #[serde(default)]
+    pub vecs: Vec<f32>,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct HexagonLineBackground {
     // shader_vertex_path: String,
     // shader_fragment_path: String,
     pub color: Rgb,
     pub alpha: f32,
+    #[serde(default)]
     size_info: SizeInfo,
     radius: f32,
+    #[serde(default)]
     pub vecs: Vec<f32>,
 }
 
@@ -270,8 +277,10 @@ pub struct HexagonTriangleBackground {
     pub vertex_color: Rgb,
     pub center_color: Rgb,
     pub alpha: f32,
+    #[serde(default)]
     size_info: SizeInfo,
     radius: f32,
+    #[serde(default)]
     pub vecs: Vec<f32>,
 }
 
@@ -428,6 +437,7 @@ impl Decoration for HexagonLineBackground {
 }
 impl HexagonPointBackground {
     pub fn new(color: Rgb, alpha: f32, size_info: SizeInfo, radius: f32) -> Self {
+        info!("HexagonPointBackground::new()");
         let update_interval = 15usize;
         let epoch = std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
         let start_animation_ms = epoch.as_secs_f32() + epoch.subsec_millis() as f32 / 1000f32;
@@ -451,6 +461,7 @@ impl HexagonPointBackground {
     /// `choose_random_vertices` should be called once a new animation should take place,
     /// it selects new vertices to animate from the hexagons
     pub fn choose_random_vertices(&mut self) {
+        info!("HexagonPointBackground::choose_random_vertices INIT");
         // Of the six vertices of x,y values, we only care about one of them, the top left.
         let total_hexagons = self.vecs.len() / 6usize / 2usize;
         // Let's animate 1/5 of the top-left hexagons
@@ -468,6 +479,7 @@ impl HexagonPointBackground {
                 self.chosen_vertices[current_vertex] = new_vertex;
             }
         }
+        info!("HexagonPointBackground::choose_random_vertices DONE");
     }
     pub fn update_opengl_vecs(&mut self) {
         let mut hexagons = vec![];
