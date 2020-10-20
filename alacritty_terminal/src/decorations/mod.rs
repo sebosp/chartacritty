@@ -23,16 +23,16 @@ pub trait Decoration {
 /// `DecorationsConfig` contains a vector of decorations and their properties
 #[derive(Default, Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct DecorationsConfig {
-    /// An array of active decorations
-    pub decorations: Vec<DecorationTypes>,
+    /// An array of active decorators
+    pub decorators: Vec<DecorationTypes>,
 }
 
 impl DecorationsConfig {
     /// `set_size_info` iterates over the enabled decorations and calls the resize method for any
-    /// registered decorations
+    /// registered decorators
     pub fn set_size_info(&mut self, size_info: SizeInfo) {
         info!("DecorationsConfig::set_size_info()");
-        for decor in self.decorations.iter_mut() {
+        for decor in self.decorators.iter_mut() {
             info!("DecorationsConfig:: iter_mut: {:?}", decor);
             decor.set_size_info(size_info);
         }
