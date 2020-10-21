@@ -236,23 +236,38 @@ pub struct HexagonPointBackground {
     // shader_vertex_path: String,
     // shader_fragment_path: String,
     pub color: Rgb,
+
     pub alpha: f32,
+
     #[serde(default)]
     size_info: SizeInfo,
+
     radius: f32,
+
     /// Now and then, certain points will be chosen to be moved horizontally
     #[serde(default)]
     chosen_vertices: Vec<usize>,
+
     /// Every these many seconds, chose new points to move
+    #[serde(default)]
     update_interval: usize,
+
     /// At which epoch ms in time the point animation should start
+    #[serde(default)]
     start_animation_ms: f32,
+
     /// The duration of the animation
+    #[serde(default)]
     animation_duration_ms: f32,
+
     /// The horizontal distance that should be covered during the animation time
+    #[serde(default)]
     animation_offset: f32,
+
     /// The next epoch in which the horizontal move is active
+    #[serde(default)]
     next_update_epoch: f32,
+
     #[serde(default)]
     pub vecs: Vec<f32>,
 }
