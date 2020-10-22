@@ -51,6 +51,14 @@ impl DecorationsConfig {
             }
         }
     }
+
+    /// `tick` calls the underlying decorators to update decorations that depend on time
+    /// such as animations
+    pub fn tick(&mut self, time: f32) {
+        for decor in self.decorators.iter_mut() {
+            decor.tick(time);
+        }
+    }
 }
 
 // TODO: Maybe we can change the <Type>(Decor<Type>) to simply Decor<Type>
@@ -231,6 +239,8 @@ pub fn create_hexagon_points(
     DecorationTypes::Points(DecorationPoints::Hexagon(hexagon_point_background))
 }
 
+// TODO: When deserialized, the animation_duration_ms, the offset, etc, everything is set to 0
+// We should find a way for the Serializer to use a Default function maybe?
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct HexagonPointBackground {
     // shader_vertex_path: String,
@@ -513,6 +523,12 @@ impl HexagonPointBackground {
         self.animation_offset = (hexagon_top_right_x - hexagon_top_left_x).abs();
     }
     pub fn tick(&mut self, time: f32) {
+        info!("tick for self: {:?}", self);
+        // If the start animation is set to 0.0 it means that it has not been initalized.
+        if self.start_animation_ms == 0.0 {
+            let epoch = std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+            self.start_animation_ms = epoch.as_secs_f32() + epoch.subsec_millis() as f32 / 1000f32;
+        }
         if time > self.start_animation_ms
             && time < self.start_animation_ms + self.animation_duration_ms
         {
@@ -521,7 +537,6 @@ impl HexagonPointBackground {
             let current_ms_x_offset = (current_animation_ms as f32
                 / self.animation_duration_ms as f32)
                 * self.animation_offset;
-            let mut is_dirty = false;
             for curr_vertex in &self.chosen_vertices {
                 // This vertex is static, so we can use it as a start
                 let bottom_left_vertex_offset_idx = (curr_vertex * 6usize * 2usize) + 8usize;
@@ -534,15 +549,19 @@ impl HexagonPointBackground {
                 } else {
                     self.vecs[top_left_vertex_offset_idx] =
                         self.vecs[bottom_left_vertex_offset_idx] + current_ms_x_offset;
-                    is_dirty = true;
                 }
-            }
-            if is_dirty {
-                self.update_opengl_vecs();
             }
         } else if time > self.start_animation_ms + self.animation_duration_ms
             && time > self.next_update_epoch
         {
+            // The animation is over, we can reset the position of the chosen vertices
+            for curr_vertex in &self.chosen_vertices {
+                // This vertex is static, so we can use it as a start
+                let bottom_left_vertex_offset_idx = (curr_vertex * 6usize * 2usize) + 8usize;
+                // This is the vertex we will move horizontally
+                let top_left_vertex_offset_idx = (curr_vertex * 6usize * 2usize) + 4usize;
+                self.vecs[top_left_vertex_offset_idx] = self.vecs[bottom_left_vertex_offset_idx];
+            }
             self.choose_random_vertices();
             self.next_update_epoch += self.animation_duration_ms;
         }
