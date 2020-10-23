@@ -239,8 +239,6 @@ pub fn create_hexagon_points(
     DecorationTypes::Points(DecorationPoints::Hexagon(hexagon_point_background))
 }
 
-// TODO: When deserialized, the animation_duration_ms, the offset, etc, everything is set to 0
-// We should find a way for the Serializer to use a Default function maybe?
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct HexagonPointBackground {
     // shader_vertex_path: String,
@@ -280,6 +278,30 @@ pub struct HexagonPointBackground {
 
     #[serde(default)]
     pub vecs: Vec<f32>,
+}
+
+impl Default for HexagonPointBackground {
+    fn default() -> Self {
+        let epoch = std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+        let start_animation_ms = epoch.as_secs_f32() + epoch.subsec_millis() as f32 / 1000f32;
+        let animation_duration_ms = 2000f32;
+        let mut res = HexagonPointBackground {
+            color: Rgb { r: 25, g: 88, b: 167 },
+            alpha: 0.4f32,
+            size_info: SizeInfo::default(),
+            radius: 100f32,
+            chosen_vertices: vec![],
+            update_interval: 15usize,
+            start_animation_ms,
+            animation_duration_ms,
+            animation_offset: 0.0f32,
+            next_update_epoch: start_animation_ms + animation_duration_ms,
+            vecs: vec![],
+        };
+        res.update_opengl_vecs();
+        res.choose_random_vertices();
+        res
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -479,7 +501,7 @@ impl HexagonPointBackground {
             update_interval,
             start_animation_ms,
             animation_duration_ms,
-            animation_offset: 0f32, // SEB TODO: Calculate on top of the hexagon
+            animation_offset: 0f32, // This si calculated on the `update_opengl_vecs` function
             next_update_epoch: epoch.as_secs_f32() + (update_interval as f32),
         }
     }
