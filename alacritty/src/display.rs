@@ -750,13 +750,13 @@ impl Display {
             // Create a "wind" effect of a moving curtain by making it very transparent as it
             // reaches 1000
             //
+            // TODO: Move to the decorations module and implement with tick()
             let seconds_cycle = 15f32;
-            let curr_second_cycle = (std::time::SystemTime::now()
+            let epoch = std::time::SystemTime::now()
                 .duration_since(std::time::SystemTime::UNIX_EPOCH)
-                .unwrap()
-                .as_secs()
-                % (seconds_cycle as u64)) as f32;
+                .unwrap();
 
+            let curr_second_cycle = (epoch.as_secs() % (seconds_cycle as u64)) as f32;
             // |-------------------------------|---------------------------------|
             // 0.0 u                         0.25 u                             0.5
             // 0.0 seconds                    7.5 seconds                       15 seconds
@@ -764,6 +764,7 @@ impl Display {
             let max_hexagon_opacity = 0.5f32;
             let wind_screen_size = 0.5f32;
             let x_move_in_time = (curr_second_cycle * wind_screen_size) / seconds_cycle;
+            self.decorations.tick(epoch.as_secs_f32() + epoch.subsec_millis() as f32 / 1000f32);
             for decoration in &self.decorations.decorators {
                 match decoration {
                     DecorationTypes::Lines(line_decor) => match line_decor {
