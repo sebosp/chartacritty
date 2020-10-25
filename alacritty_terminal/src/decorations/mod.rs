@@ -137,6 +137,8 @@ impl DecorationPoints {
             DecorationPoints::Hexagon(ref mut hex_points) => {
                 hex_points.size_info = size_info;
                 hex_points.update_opengl_vecs();
+                hex_points.choose_random_vertices();
+                hex_points.init_timers();
             }
         }
     }
@@ -258,7 +260,7 @@ pub struct HexagonPointBackground {
 
     /// Every these many seconds, chose new points to move
     #[serde(default)]
-    update_interval: usize,
+    update_interval_s: i32,
 
     /// At which epoch ms in time the point animation should start
     #[serde(default)]
@@ -291,7 +293,7 @@ impl Default for HexagonPointBackground {
             size_info: SizeInfo::default(),
             radius: 100f32,
             chosen_vertices: vec![],
-            update_interval: 15usize,
+            update_interval_s: 15i32,
             start_animation_ms,
             animation_duration_ms,
             animation_offset: 0.0f32,
@@ -300,6 +302,7 @@ impl Default for HexagonPointBackground {
         };
         res.update_opengl_vecs();
         res.choose_random_vertices();
+        res.init_timers();
         res
     }
 }
@@ -482,14 +485,22 @@ impl Decoration for HexagonLineBackground {
         hexagons
     }
 }
+
 impl HexagonPointBackground {
+    /// `init_timers` will initialize times/epochs in the animation to some chosen defaults
+    pub fn init_timers(&mut self) {
+        // If the start animation is set to 0.0 it means that it has not been initalized.
+        if self.start_animation_ms == 0.0 {
+            self.update_interval_s = 15i32;
+            let epoch = std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+            self.animation_duration_ms = 2000f32;
+            self.start_animation_ms = epoch.as_secs_f32() + epoch.subsec_millis() as f32 / 1000f32;
+            self.next_update_epoch = epoch.as_secs_f32() + (self.update_interval_s as f32);
+        }
+    }
     pub fn new(color: Rgb, alpha: f32, size_info: SizeInfo, radius: f32) -> Self {
         info!("HexagonPointBackground::new()");
-        let update_interval = 15usize;
-        let epoch = std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-        let start_animation_ms = epoch.as_secs_f32() + epoch.subsec_millis() as f32 / 1000f32;
-        let animation_duration_ms = 2000f32;
-        HexagonPointBackground {
+        let mut res = HexagonPointBackground {
             // shader_fragment_path: String::from("Unimplemented"),
             // shader_vertex_path: String::from("Unimplemented"),
             color,
@@ -498,12 +509,16 @@ impl HexagonPointBackground {
             radius,
             vecs: vec![],
             chosen_vertices: vec![],
-            update_interval,
-            start_animation_ms,
-            animation_duration_ms,
-            animation_offset: 0f32, // This si calculated on the `update_opengl_vecs` function
-            next_update_epoch: epoch.as_secs_f32() + (update_interval as f32),
-        }
+            update_interval_s: 0i32,
+            start_animation_ms: 0.0f32,
+            animation_duration_ms: 0.0f32,
+            animation_offset: 0f32, // This is calculated on the `update_opengl_vecs` function
+            next_update_epoch: 0.0,
+        };
+        res.update_opengl_vecs();
+        res.choose_random_vertices();
+        res.init_timers();
+        res
     }
     /// `choose_random_vertices` should be called once a new animation should take place,
     /// it selects new vertices to animate from the hexagons
@@ -546,11 +561,6 @@ impl HexagonPointBackground {
     }
     pub fn tick(&mut self, time: f32) {
         info!("tick for self: {:?}", self);
-        // If the start animation is set to 0.0 it means that it has not been initalized.
-        if self.start_animation_ms == 0.0 {
-            let epoch = std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-            self.start_animation_ms = epoch.as_secs_f32() + epoch.subsec_millis() as f32 / 1000f32;
-        }
         if time > self.start_animation_ms
             && time < self.start_animation_ms + self.animation_duration_ms
         {
