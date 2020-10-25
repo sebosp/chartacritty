@@ -331,8 +331,9 @@ impl Display {
             hexagon_radius,
         );*/
         // SEB: TODO: do not call when decorations are not enabled
-        let decorations =
+        let mut decorations =
             DecorationsConfig::to_sized_decor_vec(config.decorations.clone(), size_info);
+        decorations.init_timers();
         Ok(Self {
             window,
             renderer,

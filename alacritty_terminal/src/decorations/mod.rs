@@ -59,6 +59,13 @@ impl DecorationsConfig {
             decor.tick(time);
         }
     }
+
+    /// `init_timers` will initialize times/epochs in the animation to some chosen defaults
+    pub fn init_timers(&mut self) {
+        for decor in self.decorators.iter_mut() {
+            decor.init_timers();
+        }
+    }
 }
 
 // TODO: Maybe we can change the <Type>(Decor<Type>) to simply Decor<Type>
@@ -104,6 +111,15 @@ impl DecorationTypes {
             _ => {}
         }
     }
+    /// `init_timers` will initialize times/epochs in the animation to some chosen defaults
+    pub fn init_timers(&mut self) {
+        match self {
+            DecorationTypes::Points(ref mut hexagon_points) => {
+                hexagon_points.init_timers();
+            }
+            _ => {}
+        }
+    }
 }
 
 /// DecorationLines represents lines of x,y points.
@@ -132,13 +148,21 @@ pub enum DecorationPoints {
 }
 
 impl DecorationPoints {
+    /// `init_timers` will initialize times/epochs in the animation to some chosen defaults
+    pub fn init_timers(&mut self) {
+        match self {
+            DecorationPoints::Hexagon(ref mut hex_points) => {
+                hex_points.init_timers();
+            }
+        }
+    }
+
     pub fn set_size_info(&mut self, size_info: SizeInfo) {
         match self {
             DecorationPoints::Hexagon(ref mut hex_points) => {
                 hex_points.size_info = size_info;
                 hex_points.update_opengl_vecs();
                 hex_points.choose_random_vertices();
-                hex_points.init_timers();
             }
         }
     }
@@ -577,7 +601,7 @@ impl HexagonPointBackground {
                 if top_left_vertex_offset_idx > self.vecs.len()
                     || bottom_left_vertex_offset_idx > self.vecs.len()
                 {
-                    warn!("Out of bounds calculation");
+                    warn!("The number of hexagons may have been decreased on window resize");
                 } else {
                     self.vecs[top_left_vertex_offset_idx] =
                         self.vecs[bottom_left_vertex_offset_idx] + current_ms_x_offset;
