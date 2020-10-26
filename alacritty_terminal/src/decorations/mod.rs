@@ -511,17 +511,6 @@ impl Decoration for HexagonLineBackground {
 }
 
 impl HexagonPointBackground {
-    /// `init_timers` will initialize times/epochs in the animation to some chosen defaults
-    pub fn init_timers(&mut self) {
-        // If the start animation is set to 0.0 it means that it has not been initalized.
-        if self.start_animation_ms == 0.0 {
-            self.update_interval_s = 15i32;
-            let epoch = std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-            self.animation_duration_ms = 2000f32;
-            self.start_animation_ms = epoch.as_secs_f32() + epoch.subsec_millis() as f32 / 1000f32;
-            self.next_update_epoch = epoch.as_secs_f32() + (self.update_interval_s as f32);
-        }
-    }
     pub fn new(color: Rgb, alpha: f32, size_info: SizeInfo, radius: f32) -> Self {
         info!("HexagonPointBackground::new()");
         let mut res = HexagonPointBackground {
@@ -544,29 +533,51 @@ impl HexagonPointBackground {
         res.init_timers();
         res
     }
+
+    /// `init_timers` will initialize times/epochs in the animation to some chosen defaults
+    pub fn init_timers(&mut self) {
+        info!(
+            "HexagonPointBackground::init_timers() start_animation_ms: {}, == 0.0: {}",
+            self.start_animation_ms,
+            self.start_animation_ms == 0.0
+        );
+        // If the start animation is very close to 0, maybe this should be an Option<>
+        if self.start_animation_ms == 0.0 {
+            self.update_interval_s = 15i32;
+            let epoch = std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+            self.animation_duration_ms = 2000f32;
+            self.start_animation_ms = epoch.as_secs_f32() + epoch.subsec_millis() as f32 / 1000f32;
+            self.next_update_epoch = epoch.as_secs_f32() + (self.update_interval_s as f32);
+        }
+    }
+
     /// `choose_random_vertices` should be called once a new animation should take place,
     /// it selects new vertices to animate from the hexagons
     pub fn choose_random_vertices(&mut self) {
-        info!("HexagonPointBackground::choose_random_vertices INIT");
         // Of the six vertices of x,y values, we only care about one of them, the top left.
         let total_hexagons = self.vecs.len() / 6usize / 2usize;
         // Let's animate 1/5 of the top-left hexagons
         let random_vertices_to_choose = (total_hexagons / 5usize) as usize;
+        self.chosen_vertices = vec![1, 2, 3, 4, 5];
+        info!("HexagonPointBackground::choose_random_vertices INIT. Total hexagons: {}, random_vertices_to_choose: {}", total_hexagons, random_vertices_to_choose);
+        return;
         let mut rng = rand::thread_rng();
-        let current_vertex = 0;
+        let mut current_vertex = 0;
         while current_vertex <= random_vertices_to_choose {
             let new_vertex = usize::from(rng.gen_range(0, total_hexagons));
             if self.chosen_vertices.contains(&new_vertex) {
                 continue;
             }
             if self.chosen_vertices.len() < current_vertex {
-                self.chosen_vertices.push(new_vertex);
-            } else {
                 self.chosen_vertices[current_vertex] = new_vertex;
+            } else {
+                self.chosen_vertices.push(new_vertex);
             }
+            current_vertex += 1;
         }
         info!("HexagonPointBackground::choose_random_vertices DONE");
     }
+
     pub fn update_opengl_vecs(&mut self) {
         let mut hexagons = vec![];
         let coords = background_fill_hexagon_positions(self.size_info, self.radius);
@@ -583,11 +594,12 @@ impl HexagonPointBackground {
         let hexagon_top_right_x = self.vecs[2];
         self.animation_offset = (hexagon_top_right_x - hexagon_top_left_x).abs();
     }
+
     pub fn tick(&mut self, time: f32) {
-        info!("tick for self: {:?}", self);
         if time > self.start_animation_ms
             && time < self.start_animation_ms + self.animation_duration_ms
         {
+            info!("tick for update range");
             let current_animation_ms = time - self.start_animation_ms;
             // Given this much time, the animation should have added this much offset
             let current_ms_x_offset = (current_animation_ms as f32
@@ -610,6 +622,7 @@ impl HexagonPointBackground {
         } else if time > self.start_animation_ms + self.animation_duration_ms
             && time > self.next_update_epoch
         {
+            info!("tick after update range. time: {}, start_animation_ms: {}, animation_duration_ms: {}, next_update_epoch: {}", time, self.start_animation_ms, self.animation_duration_ms, self.next_update_epoch);
             // The animation is over, we can reset the position of the chosen vertices
             for curr_vertex in &self.chosen_vertices {
                 // This vertex is static, so we can use it as a start
