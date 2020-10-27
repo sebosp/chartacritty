@@ -309,28 +309,6 @@ impl Display {
             StartupMode::Maximized => window.set_maximized(true),
             _ => (),
         }
-        /*let hexagon_radius = 100f32;
-        let hexagon_color = Rgb { r: 25, g: 88, b: 167 };
-        let hexagon_line_decorator = alacritty_terminal::decorations::create_hexagon_line(
-            hexagon_color,
-            0.3f32,
-            size_info,
-            hexagon_radius,
-        );
-        let hexagon_triangles_decorator = alacritty_terminal::decorations::create_hexagon_triangles(
-            hexagon_color,
-            Rgb { r: 0, g: 0, b: 0 },
-            0.05f32,
-            size_info,
-            hexagon_radius,
-        );
-        let hexagon_point_decorator = alacritty_terminal::decorations::create_hexagon_points(
-            hexagon_color,
-            0.4f32,
-            size_info,
-            hexagon_radius,
-        );*/
-        // SEB: TODO: do not call when decorations are not enabled
         let mut decorations =
             DecorationsConfig::to_sized_decor_vec(config.decorations.clone(), size_info);
         decorations.init_timers();
@@ -513,30 +491,8 @@ impl Display {
             }
         });
         self.renderer.resize(&self.size_info);
-        /*        let hexagon_color = Rgb { r: 25, g: 88, b: 167 };
-        let hexagon_radius = 100f32;
-        let hexagon_line_decorator = alacritty_terminal::decorations::create_hexagon_line(
-            hexagon_color,
-            0.3f32,
-            self.size_info,
-            hexagon_radius,
-        );
-        let hexagon_triangles_decorator = alacritty_terminal::decorations::create_hexagon_triangles(
-            hexagon_color,
-            Rgb { r: 0, g: 0, b: 0 },
-            0.05f32,
-            self.size_info,
-            hexagon_radius,
-        );
-        let hexagon_point_decorator = alacritty_terminal::decorations::create_hexagon_points(
-            hexagon_color,
-            0.4f32,
-            self.size_info,
-            hexagon_radius,
-        );*/
         // SEB: TODO: do not call when decorations are not enabled
-        self.decorations =
-            DecorationsConfig::to_sized_decor_vec(config.decorations.clone(), self.size_info);
+        self.decorations.set_size_info(self.size_info);
     }
 
     /// Draw the screen.
