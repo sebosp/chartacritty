@@ -554,11 +554,13 @@ impl HexagonPointBackground {
     /// `choose_random_vertices` should be called once a new animation should take place,
     /// it selects new vertices to animate from the hexagons
     pub fn choose_random_vertices(&mut self) {
+        // Schedule the next update epoch to be in the future
+        self.next_update_epoch += self.animation_duration_ms;
         // Of the six vertices of x,y values, we only care about one of them, the top left.
         let total_hexagons = self.vecs.len() / 6usize / 2usize;
         // Let's animate 1/5 of the top-left hexagons
         let random_vertices_to_choose = (total_hexagons / 5usize) as usize;
-        self.chosen_vertices = vec![1, 2, 3, 4, 5];
+        self.chosen_vertices = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
         info!("HexagonPointBackground::choose_random_vertices INIT. Total hexagons: {}, random_vertices_to_choose: {}", total_hexagons, random_vertices_to_choose);
         return;
         let mut rng = rand::thread_rng();
@@ -596,10 +598,13 @@ impl HexagonPointBackground {
     }
 
     pub fn tick(&mut self, time: f32) {
+        info!(
+            "tick for update range, time: {}, start_animation_ms: {}, animation_duration_ms: {}, MAX: {}",
+            time, self.start_animation_ms, self.animation_duration_ms, f32::MAX
+        );
         if time > self.start_animation_ms
             && time < self.start_animation_ms + self.animation_duration_ms
         {
-            info!("tick for update range");
             let current_animation_ms = time - self.start_animation_ms;
             // Given this much time, the animation should have added this much offset
             let current_ms_x_offset = (current_animation_ms as f32
@@ -619,9 +624,7 @@ impl HexagonPointBackground {
                         self.vecs[bottom_left_vertex_offset_idx] + current_ms_x_offset;
                 }
             }
-        } else if time > self.start_animation_ms + self.animation_duration_ms
-            && time > self.next_update_epoch
-        {
+        } else if time > self.next_update_epoch {
             info!("tick after update range. time: {}, start_animation_ms: {}, animation_duration_ms: {}, next_update_epoch: {}", time, self.start_animation_ms, self.animation_duration_ms, self.next_update_epoch);
             // The animation is over, we can reset the position of the chosen vertices
             for curr_vertex in &self.chosen_vertices {
@@ -632,7 +635,6 @@ impl HexagonPointBackground {
                 self.vecs[top_left_vertex_offset_idx] = self.vecs[bottom_left_vertex_offset_idx];
             }
             self.choose_random_vertices();
-            self.next_update_epoch += self.animation_duration_ms;
         }
     }
 }
