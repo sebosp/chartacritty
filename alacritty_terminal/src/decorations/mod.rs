@@ -4,6 +4,7 @@ use crate::term::SizeInfo;
 use log::*;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
+use std::time::Instant;
 use std::time::UNIX_EPOCH;
 
 // TODO: Use const init that calculates these magic numbers at compile time
@@ -302,8 +303,13 @@ pub struct HexagonPointBackground {
     #[serde(default)]
     next_update_epoch: f32,
 
+    /// The OpenGL representation of the dots for a buffer array object
     #[serde(default)]
     pub vecs: Vec<f32>,
+
+    /// The time at which this point struct was initialized
+    #[serde(skip)]
+    init_start: Option<Instant>,
 }
 
 impl Default for HexagonPointBackground {
@@ -323,6 +329,7 @@ impl Default for HexagonPointBackground {
             animation_offset: 0.0f32,
             next_update_epoch: start_animation_ms + animation_duration_ms,
             vecs: vec![],
+            init_start: Some(Instant::now()),
         };
         res.update_opengl_vecs();
         res.choose_random_vertices();
@@ -527,6 +534,7 @@ impl HexagonPointBackground {
             animation_duration_ms: 0.0f32,
             animation_offset: 0f32, // This is calculated on the `update_opengl_vecs` function
             next_update_epoch: 0.0,
+            init_start: Some(Instant::now()),
         };
         res.update_opengl_vecs();
         res.choose_random_vertices();
@@ -541,8 +549,8 @@ impl HexagonPointBackground {
             self.start_animation_ms,
             self.start_animation_ms == 0.0
         );
-        // If the start animation is very close to 0, maybe this should be an Option<>
-        if self.start_animation_ms == 0.0 {
+        if self.init_start.is_none() {
+            self.init_start = Some(Instant::now());
             self.update_interval_s = 15i32;
             let epoch = std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
             self.animation_duration_ms = 2000f32;
@@ -598,6 +606,10 @@ impl HexagonPointBackground {
     }
 
     pub fn tick(&mut self, time: f32) {
+        let mut time = 0f32;
+        if let Some(val) = self.init_start {
+            time = val.elapsed().as_secs_f32();
+        }
         info!(
             "tick for update range, time: {}, start_animation_ms: {}, animation_duration_ms: {}, MAX: {}",
             time, self.start_animation_ms, self.animation_duration_ms, f32::MAX
