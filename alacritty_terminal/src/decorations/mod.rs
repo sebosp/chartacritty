@@ -26,6 +26,10 @@ pub trait Decoration {
 pub struct DecorationsConfig {
     /// An array of active decorators
     pub decorators: Vec<DecorationTypes>,
+
+    /// The time at which config was initialized
+    #[serde(skip)]
+    init_start: Option<Instant>,
 }
 
 impl DecorationsConfig {
@@ -55,16 +59,23 @@ impl DecorationsConfig {
 
     /// `tick` calls the underlying decorators to update decorations that depend on time
     /// such as animations
-    pub fn tick(&mut self, time: f32) {
+    pub fn tick(&mut self) {
+        let mut time_ms = 0.0f32;
+        if let Some(val) = self.init_start {
+            let elapsed = val.elapsed();
+            time_ms = elapsed.as_secs_f32() + elapsed.subsec_millis() as f32 / 1000f32;
+        }
         for decor in self.decorators.iter_mut() {
-            decor.tick(time);
+            decor.tick(time_ms);
         }
     }
 
     /// `init_timers` will initialize times/epochs in the animation to some chosen defaults
     pub fn init_timers(&mut self) {
+        let curr_time = Instant::now();
+        self.init_start = Some(curr_time);
         for decor in self.decorators.iter_mut() {
-            decor.init_timers();
+            decor.init_timers(curr_time);
         }
     }
 }
@@ -113,10 +124,10 @@ impl DecorationTypes {
         }
     }
     /// `init_timers` will initialize times/epochs in the animation to some chosen defaults
-    pub fn init_timers(&mut self) {
+    pub fn init_timers(&mut self, time: Instant) {
         match self {
             DecorationTypes::Points(ref mut hexagon_points) => {
-                hexagon_points.init_timers();
+                hexagon_points.init_timers(time);
             }
             _ => {}
         }
@@ -150,10 +161,10 @@ pub enum DecorationPoints {
 
 impl DecorationPoints {
     /// `init_timers` will initialize times/epochs in the animation to some chosen defaults
-    pub fn init_timers(&mut self) {
+    pub fn init_timers(&mut self, time: Instant) {
         match self {
             DecorationPoints::Hexagon(ref mut hex_points) => {
-                hex_points.init_timers();
+                hex_points.init_timers(time);
             }
         }
     }
@@ -306,10 +317,6 @@ pub struct HexagonPointBackground {
     /// The OpenGL representation of the dots for a buffer array object
     #[serde(default)]
     pub vecs: Vec<f32>,
-
-    /// The time at which this point struct was initialized
-    #[serde(skip)]
-    init_start: Option<Instant>,
 }
 
 impl Default for HexagonPointBackground {
@@ -329,11 +336,10 @@ impl Default for HexagonPointBackground {
             animation_offset: 0.0f32,
             next_update_epoch: start_animation_ms + animation_duration_ms,
             vecs: vec![],
-            init_start: Some(Instant::now()),
         };
         res.update_opengl_vecs();
         res.choose_random_vertices();
-        res.init_timers();
+        res.init_timers(Instant::now());
         res
     }
 }
@@ -534,36 +540,27 @@ impl HexagonPointBackground {
             animation_duration_ms: 0.0f32,
             animation_offset: 0f32, // This is calculated on the `update_opengl_vecs` function
             next_update_epoch: 0.0,
-            init_start: Some(Instant::now()),
         };
         res.update_opengl_vecs();
         res.choose_random_vertices();
-        res.init_timers();
+        res.init_timers(Instant::now());
         res
     }
 
     /// `init_timers` will initialize times/epochs in the animation to some chosen defaults
-    pub fn init_timers(&mut self) {
-        info!(
-            "HexagonPointBackground::init_timers() start_animation_ms: {}, == 0.0: {}",
-            self.start_animation_ms,
-            self.start_animation_ms == 0.0
-        );
-        if self.init_start.is_none() {
-            self.init_start = Some(Instant::now());
-            self.update_interval_s = 15i32;
-            let epoch = std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-            self.animation_duration_ms = 2000f32;
-            self.start_animation_ms = epoch.as_secs_f32() + epoch.subsec_millis() as f32 / 1000f32;
-            self.next_update_epoch = epoch.as_secs_f32() + (self.update_interval_s as f32);
-        }
+    pub fn init_timers(&mut self, time: Instant) {
+        info!("HexagonPointBackground::init_timers()");
+        self.update_interval_s = 15i32;
+        self.animation_duration_ms = 2000f32;
+        self.start_animation_ms = 0.0f32;
+        self.next_update_epoch = 0.0f32 + (self.update_interval_s as f32);
     }
 
     /// `choose_random_vertices` should be called once a new animation should take place,
     /// it selects new vertices to animate from the hexagons
     pub fn choose_random_vertices(&mut self) {
-        // Schedule the next update epoch to be in the future
-        self.next_update_epoch += self.animation_duration_ms;
+        // Schedule the next update to be in the future
+        self.next_update_epoch += self.update_interval_s as f32;
         // Of the six vertices of x,y values, we only care about one of them, the top left.
         let total_hexagons = self.vecs.len() / 6usize / 2usize;
         // Let's animate 1/5 of the top-left hexagons
@@ -606,13 +603,9 @@ impl HexagonPointBackground {
     }
 
     pub fn tick(&mut self, time: f32) {
-        let mut time = 0f32;
-        if let Some(val) = self.init_start {
-            time = val.elapsed().as_secs_f32();
-        }
         info!(
-            "tick for update range, time: {}, start_animation_ms: {}, animation_duration_ms: {}, MAX: {}",
-            time, self.start_animation_ms, self.animation_duration_ms, f32::MAX
+            "tick for update range, time: {}, as f32: {}, start_animation_ms: {}",
+            time, time as f32, self.start_animation_ms
         );
         if time > self.start_animation_ms
             && time < self.start_animation_ms + self.animation_duration_ms
