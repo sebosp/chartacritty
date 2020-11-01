@@ -721,7 +721,7 @@ impl Display {
             let max_hexagon_opacity = 0.5f32;
             let wind_screen_size = 0.5f32;
             let x_move_in_time = (curr_second_cycle * wind_screen_size) / seconds_cycle;
-            self.decorations.tick(epoch.as_secs_f32() + epoch.subsec_millis() as f32 / 1000f32);
+            self.decorations.tick();
             for decoration in &self.decorations.decorators {
                 match decoration {
                     DecorationTypes::Lines(line_decor) => match line_decor {
