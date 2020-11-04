@@ -193,6 +193,18 @@ pub struct TimeSeries {
 
     /// How many items are active in our circular buffer
     pub active_items: usize,
+
+    /// The previous to current metric snapshot, for debug purposes
+    /// TODO: drop when upsert is sttable
+    pub prev_snapshot: Vec<(u64, Option<f64>)>,
+
+    /// The previous value inserted
+    /// TODO: drop when upsert is stable
+    pub prev_value: (u64, Option<f64>),
+
+    /// The last upsert type
+    /// TODO: drop when upsert is stable
+    pub upsert_type: UpsertType,
 }
 
 /// `IterTimeSeries` provides the Iterator Trait for TimeSeries metrics.
@@ -722,6 +734,9 @@ impl Default for TimeSeries {
             missing_values_policy: MissingValuesPolicy::default(),
             first_idx: 0,
             active_items: 0,
+            prev_snapshot: Vec::with_capacity(default_capacity),
+            prev_value: (0, None),
+            upsert_type: UpsertType::default(),
         }
     }
 }
@@ -870,6 +885,18 @@ impl TimeSeries {
             % self.metrics.len() as i64) as usize
     }
 
+    fn sync_prev_snapshot(&mut self) {
+        if self.metrics.len() == self.prev_snapshot.len() {
+            for item_num in 0..self.metrics.len() {
+                if self.prev_snapshot[item_num] != self.metrics[item_num] {
+                    self.prev_snapshot[item_num] = self.metrics[item_num];
+                }
+            }
+        } else {
+            self.prev_snapshot.push(self.metrics[self.metrics.len() - 1]);
+        }
+    }
+
     /// `upsert` Adds values to the circular buffer adding empty entries for
     /// missing entries, may invalidate the buffer if all data is outdated
     /// it returns the number of inserted records
@@ -879,6 +906,8 @@ impl TimeSeries {
         let _enter = span.enter();
         if self.metrics.is_empty() {
             self.circular_push(input);
+            self.upsert_type = UpsertType::Empty;
+            self.prev_value = input;
             return 1;
         }
         if !self.sanity_check() {
@@ -892,6 +921,8 @@ impl TimeSeries {
             // i.e. if the date of the computer needs to go back in time
             // we would need to restart the terminal to see metrics
             // XXX: What about timezones?
+            self.upsert_type = UpsertType::TooOld;
+            self.prev_value = input;
             return 0;
         }
         // as_vec() is 5, 6, 7, 3, 4
@@ -901,9 +932,12 @@ impl TimeSeries {
         let inactive_time = input.0 as i64 - self.metrics[last_idx].0 as i64;
         if inactive_time > self.metrics_capacity as i64 {
             // The whole vector should be discarded
+            self.sync_prev_snapshot();
             self.first_idx = 0;
             self.metrics[0] = input;
             self.active_items = 1;
+            self.upsert_type = UpsertType::VectorDiscarded;
+            self.prev_value = input;
             1
         } else if inactive_time < 0 {
             // We have a metric for an epoch in the past.
@@ -917,6 +951,7 @@ impl TimeSeries {
                 // XXX: This is wrong, we should add as many padding_items as possible without
                 // breaking the metrics_capacity.
                 if self.metrics.len() + 1 < self.metrics_capacity {
+                    self.sync_prev_snapshot();
                     // The vector is not full, let's shift the items to the right
                     // The array items have not been allocated at this point:
                     self.metrics.insert(0, input);
@@ -924,8 +959,11 @@ impl TimeSeries {
                         self.metrics.insert(idx, (input.0 + idx as u64, None));
                     }
                     self.active_items += padding_items;
+                    self.upsert_type = UpsertType::PrevEpochInputVecNotFull;
+                    self.prev_value = input;
                     padding_items
                 } else {
+                    self.sync_prev_snapshot();
                     // The vector is full, write the new epoch at first_idx and then fill the rest
                     // up to current_min value with None
                     let previous_min_epoch = self.metrics[self.first_idx].0;
@@ -941,6 +979,8 @@ impl TimeSeries {
                     for fill_epoch in (input.0 + 1)..previous_min_epoch {
                         self.circular_push((fill_epoch, None));
                     }
+                    self.upsert_type = UpsertType::PrevEpochInputVecFull;
+                    self.prev_value = input;
                     // XXX: make sure this doesn't go above the metrics_capacity
                     self.active_items += previous_active_items;
                     (previous_min_epoch - input.0) as usize
@@ -948,9 +988,13 @@ impl TimeSeries {
             } else {
                 // The input epoch has already been inserted in our array
                 let target_idx = self.get_tail_backwards_offset_idx(inactive_time);
-                if self.metrics[target_idx].0 != input.0 {
+                if self.metrics[target_idx].0 == input.0 {
+                    self.sync_prev_snapshot();
+                    self.metrics[target_idx].1 =
+                        self.resolve_metric_collision(self.metrics[target_idx].1, input.1);
+                } else {
                     event!(Level::ERROR,
-                        "upsert: lost synchrony len: {}, first_idx: {}, last_idx: {}, target_idx: {}, inactive_time: {}, input: {}, target_idx data: {}, metrics: {:?}",
+                        "upsert: lost synchrony len: {}, first_idx: {}, last_idx: {}, target_idx: {}, inactive_time: {}, input: {}, target_idx data: {}, prev_value: {:?}, upsert_type: {:?}, prev_snapshot: {:?}, metrics: {:?}",
                         self.metrics.len(),
                         self.first_idx,
                         last_idx,
@@ -958,24 +1002,31 @@ impl TimeSeries {
                         inactive_time,
                         input.0,
                         self.metrics[target_idx].0,
+                        self.prev_value,
+                        self.upsert_type,
+                        self.prev_snapshot,
                         self.metrics
                     );
+                    self.sync_prev_snapshot();
                     // Let's reset the whole vector if we lost synchrony
                     self.first_idx = 0;
                     self.metrics[0] = input;
                     self.active_items = 1;
-                } else {
-                    self.metrics[target_idx].1 =
-                        self.resolve_metric_collision(self.metrics[target_idx].1, input.1);
                 }
+                self.upsert_type = UpsertType::OverwritePrevEpoch;
+                self.prev_value = input;
                 0
             }
         } else if inactive_time == 0 {
+            self.sync_prev_snapshot();
             // We have a metric for the last indexed epoch
             self.metrics[last_idx].1 =
                 self.resolve_metric_collision(self.metrics[last_idx].1, input.1);
+            self.upsert_type = UpsertType::OverwriteLastEpoch;
+            self.prev_value = input;
             0
         } else {
+            self.sync_prev_snapshot();
             // The input epoch is in the future
             let max_epoch = self.metrics[last_idx].0;
             // Fill missing entries with None
@@ -983,6 +1034,8 @@ impl TimeSeries {
                 self.circular_push((fill_epoch, None));
             }
             self.circular_push(input);
+            self.upsert_type = UpsertType::NewEpoch;
+            self.prev_value = input;
             1
         }
     }
@@ -1995,6 +2048,9 @@ mod tests {
             missing_values_policy: MissingValuesPolicy::default(),
             stats: TimeSeriesStats::default(),
             first_idx: 0,
+            prev_snapshot: vec![],
+            upsert_type: UpsertType::default(),
+            prev_value: (0, None),
         };
         assert_eq!(bad.sanity_check(), false);
         let good = TimeSeries {
@@ -2005,6 +2061,9 @@ mod tests {
             missing_values_policy: MissingValuesPolicy::default(),
             stats: TimeSeriesStats::default(),
             first_idx: 0,
+            prev_snapshot: vec![],
+            upsert_type: UpsertType::default(),
+            prev_value: (0, None),
         };
         assert_eq!(good.sanity_check(), true);
     }
@@ -2074,6 +2133,9 @@ mod tests {
             missing_values_policy: MissingValuesPolicy::default(),
             stats: TimeSeriesStats::default(),
             first_idx: 0,
+            prev_snapshot: Vec::with_capacity(25),
+            upsert_type: UpsertType::default(),
+            prev_value: (0, None),
         };
         let previous_min_epoch = corrupt.metrics[corrupt.first_idx].0;
         assert_eq!(previous_min_epoch, 65916);
