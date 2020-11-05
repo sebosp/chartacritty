@@ -700,7 +700,7 @@ impl Display {
         &mut self,
         config: &Config,
         size_info: &SizeInfo,
-        charts_tx: mpsc::Sender<AsyncChartTask>,
+        charts_tx: futures_mpsc::Sender<alacritty_terminal::charts::async_utils::AsyncChartTask>,
         tokio_handle: tokio::runtime::Handle,
     ) {
         if let Some(chart_config) = &config.charts {
