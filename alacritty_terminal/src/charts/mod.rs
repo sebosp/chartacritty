@@ -858,12 +858,20 @@ impl TimeSeries {
     /// `circular_push` adds an item to the circular buffer
     fn circular_push(&mut self, input: (u64, Option<f64>)) {
         if self.metrics.len() < self.metrics_capacity {
-            self.metrics.push(input);
+            if self.active_items < self.metrics.len() {
+                // This means that there are items in our array that can be overwritten, basically
+                // the whole array was discarded at some point, but we cannot .push() to the array
+                // because that would leave these items unaccounted for.
+                let next_idx = (self.get_last_idx() + 1) % self.metrics_capacity;
+                self.metrics[next_idx] = input;
+            } else {
+                self.metrics.push(input);
+            }
             self.active_items += 1;
         } else {
             let target_idx = (self.first_idx + self.active_items) % self.metrics_capacity;
             self.metrics[target_idx] = input;
-            match self.active_items.cmp(&self.active_items) {
+            match self.active_items.cmp(&self.metrics_capacity) {
                 Ordering::Less => self.active_items += 1,
                 Ordering::Equal => self.first_idx = (self.first_idx + 1) % self.metrics_capacity,
                 Ordering::Greater => unreachable!(),
@@ -1030,6 +1038,10 @@ impl TimeSeries {
             // The input epoch is in the future
             let max_epoch = self.metrics[last_idx].0;
             // Fill missing entries with None
+            // input = 12
+            // active_items = 1
+            // metrics_capacity = 15
+            // [9] [2] [3] [4]
             for fill_epoch in (max_epoch + 1)..input.0 {
                 self.circular_push((fill_epoch, None));
             }
@@ -2178,5 +2190,74 @@ mod tests {
                 (65915, None),
             ]
         );
+        let mut date_20201106 = TimeSeries {
+            metrics: vec![
+                (1604568598, Some(3.0)),
+                (1604568599, Some(3.0)),
+                (1604568600, None),
+                (1604568601, Some(9.0)),
+                (1604568602, Some(6.0)),
+            ],
+            metrics_capacity: 300,
+            stats: TimeSeriesStats::default(),
+            collision_policy: ValueCollisionPolicy::Increment,
+            missing_values_policy: MissingValuesPolicy::Zero,
+            first_idx: 0,
+            active_items: 5,
+            prev_snapshot: vec![],
+            prev_value: (1604568602, Some(6.0)),
+            upsert_type: UpsertType::NewEpoch,
+        };
+        assert!(date_20201106.sanity_check());
+        date_20201106.upsert((1604645848, Some(2.0)));
+        assert_eq!(date_20201106.metrics[0], (1604645848, Some(2.0)));
+        assert_eq!(date_20201106.first_idx, 0);
+        assert_eq!(date_20201106.upsert_type, UpsertType::VectorDiscarded);
+        assert_eq!(date_20201106.active_items, 1);
+        assert_eq!(date_20201106.get_last_idx(), 0);
+        assert_eq!(date_20201106.metrics.len(), 5);
+        assert_eq!(((date_20201106.get_last_idx() + 1) % date_20201106.metrics_capacity), 1);
+        date_20201106.upsert((1604645851, Some(1.0)));
+        assert_eq!(date_20201106.metrics[0], (1604645848, Some(2.0)));
+        assert_eq!(date_20201106.metrics[1], (1604645849, None));
+        assert_eq!(date_20201106.metrics[2], (1604645850, None));
+        assert_eq!(date_20201106.metrics[3], (1604645851, Some(1.0)));
+        let date_20201106 = TimeSeries {
+            metrics: vec![
+                (1604645848, Some(2.0)),
+                (1604568599, Some(3.0)),
+                (1604568600, None),
+                (1604568601, Some(9.0)),
+                (1604568602, Some(6.0)),
+                (1604645849, None),
+                (1604645850, None),
+                (1604645851, Some(1.0)),
+            ],
+            metrics_capacity: 300,
+            stats: TimeSeriesStats {
+                max: 9.0,
+                min: 1.0,
+                avg: 4.0,
+                first: 3.0,
+                last: 1.0,
+                count: 4,
+                sum: 16.0,
+                last_epoch: 1604568602,
+                is_dirty: true,
+            },
+            collision_policy: ValueCollisionPolicy::Increment,
+            missing_values_policy: MissingValuesPolicy::Zero,
+            first_idx: 0,
+            active_items: 4,
+            prev_snapshot: vec![
+                (1604645848, Some(2.0)),
+                (1604568599, Some(3.0)),
+                (1604568600, None),
+                (1604568601, Some(9.0)),
+                (1604568602, Some(6.0)),
+            ],
+            prev_value: (1604645851, Some(1.0)),
+            upsert_type: UpsertType::NewEpoch,
+        };
     }
 }
