@@ -407,6 +407,7 @@ mod tests {
     use crate::charts::MissingValuesPolicy;
     use crate::charts::TimeSeries;
     use crate::charts::TimeSeriesStats;
+    use crate::charts::UpsertType;
     fn init_log() {
         let _ = env_logger::builder().is_test(true).try_init();
     }
@@ -974,6 +975,9 @@ mod tests {
                 missing_values_policy: MissingValuesPolicy::Zero,
                 first_idx: 0,
                 active_items: 5,
+                prev_snapshot: vec![],
+                prev_value: (1604568602, Some(6.0)),
+                upsert_type: UpsertType::NewEpoch,
             },
             data: Vector {
                 result: vec![HTTPVectorResult { labels: test_labels.clone(), value: vec![] }],
@@ -1364,6 +1368,9 @@ mod tests {
                 missing_values_policy: MissingValuesPolicy::Zero,
                 first_idx: 0,
                 active_items: 1,
+                prev_snapshot: vec![],
+                prev_value: (1604568602, Some(6.0)),
+                upsert_type: UpsertType::NewEpoch,
             },
             data: Vector {
                 result: vec![HTTPVectorResult { labels: test_labels.clone(), value: vec![] }],
