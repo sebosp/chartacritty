@@ -2222,42 +2222,5 @@ mod tests {
         assert_eq!(date_20201106.metrics[1], (1604645849, None));
         assert_eq!(date_20201106.metrics[2], (1604645850, None));
         assert_eq!(date_20201106.metrics[3], (1604645851, Some(1.0)));
-        let date_20201106 = TimeSeries {
-            metrics: vec![
-                (1604645848, Some(2.0)),
-                (1604568599, Some(3.0)),
-                (1604568600, None),
-                (1604568601, Some(9.0)),
-                (1604568602, Some(6.0)),
-                (1604645849, None),
-                (1604645850, None),
-                (1604645851, Some(1.0)),
-            ],
-            metrics_capacity: 300,
-            stats: TimeSeriesStats {
-                max: 9.0,
-                min: 1.0,
-                avg: 4.0,
-                first: 3.0,
-                last: 1.0,
-                count: 4,
-                sum: 16.0,
-                last_epoch: 1604568602,
-                is_dirty: true,
-            },
-            collision_policy: ValueCollisionPolicy::Increment,
-            missing_values_policy: MissingValuesPolicy::Zero,
-            first_idx: 0,
-            active_items: 4,
-            prev_snapshot: vec![
-                (1604645848, Some(2.0)),
-                (1604568599, Some(3.0)),
-                (1604568600, None),
-                (1604568601, Some(9.0)),
-                (1604568602, Some(6.0)),
-            ],
-            prev_value: (1604645851, Some(1.0)),
-            upsert_type: UpsertType::NewEpoch,
-        };
     }
 }
