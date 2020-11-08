@@ -372,13 +372,16 @@ impl ChartSizeInfo {
 /// allowing to use a global position instead of individually setting up the chart position
 #[derive(Default, Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct ChartsConfig {
-    /// The x,y coordinates in which the time series will start
+    /// The x,y coordinates in which chart drawing should start
     pub position: Option<Value2D>,
+
     /// The default dimensions of the chart
     pub default_dimensions: Option<Value2D>,
+
     /// The default spacing between the charts
     pub spacing: f32,
-    // An array of charts to draw
+
+    /// An array of charts to draw
     pub charts: Vec<TimeSeriesChart>,
 }
 
