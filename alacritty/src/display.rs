@@ -13,7 +13,7 @@ use std::time::UNIX_EPOCH;
 
 use glutin::dpi::{PhysicalPosition, PhysicalSize};
 use glutin::event::ModifiersState;
-use glutin::event_loop::EventLoop;
+use glutin::event_loop::{EventLoop, EventLoopProxy};
 #[cfg(not(any(target_os = "macos", windows)))]
 use glutin::platform::unix::EventLoopWindowTargetExtUnix;
 use glutin::window::CursorIcon;
@@ -35,7 +35,7 @@ use alacritty_terminal::term::{RenderableCell, SizeInfo, Term, TermMode};
 use crate::config::font::Font;
 use crate::config::window::StartupMode;
 use crate::config::Config;
-use crate::event::{Mouse, SearchState};
+use crate::event::{Event, Mouse, SearchState};
 use crate::message_bar::{MessageBuffer, MessageType};
 use crate::meter::Meter;
 use crate::renderer::rects::{RenderLines, RenderRect};
@@ -166,7 +166,10 @@ pub struct Display {
     renderer: QuadRenderer,
     glyph_cache: GlyphCache,
     meter: Meter,
-    // charts_last_drawn: u64,
+
+    /// The last time the charts were drawn.
+    charts_last_drawn: u64, // SEB TODO: Charts could be moved to decorations as they are decorations?
+
     #[cfg(not(any(target_os = "macos", windows)))]
     is_x11: bool,
 
@@ -320,7 +323,7 @@ impl Display {
             size_info,
             urls: Urls::new(),
             highlighted_url: None,
-            // charts_last_drawn: 0u64,
+            charts_last_drawn: 0u64,
             #[cfg(not(any(target_os = "macos", windows)))]
             is_x11,
             #[cfg(not(any(target_os = "macos", windows)))]
@@ -648,7 +651,7 @@ impl Display {
             debug!("Charts are not enabled");
         }
         if decorations_enabled {
-            self.draw_decorations(&config, &size_info);
+            self.draw_decorations(&size_info);
         } else {
             debug!("Decorations are not enabled");
         }
@@ -704,6 +707,11 @@ impl Display {
         tokio_handle: tokio::runtime::Handle,
     ) {
         if let Some(chart_config) = &config.charts {
+            let now = std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+            if self.charts_last_drawn + 1u64 > now {
+                // Let's draw once per second
+                return;
+            }
             for chart_idx in 0..chart_config.charts.len() {
                 debug!("draw: Drawing chart: {}", chart_config.charts[chart_idx].name);
                 for decoration_idx in 0..chart_config.charts[chart_idx].decorations.len() {
@@ -750,14 +758,13 @@ impl Display {
                         renderer::DrawArrayMode::GlLineStrip,
                     );
                 }
-                let _chart_last_drawn =
-                    std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+                self.charts_last_drawn = now;
             }
         }
     }
 
     /// Iterates over the decorations
-    pub fn draw_decorations(&mut self, config: &Config, size_info: &SizeInfo) {
+    pub fn draw_decorations(&mut self, size_info: &SizeInfo) {
         // Create a "wind" effect of a moving curtain by making it very transparent as it
         // reaches 1000
         //
