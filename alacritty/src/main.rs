@@ -256,9 +256,7 @@ fn run(
     // Start event loop and block until shutdown.
     processor.run(terminal, window_event_loop);
 
-    tokio_shutdown.send(()).expect("Unable to send shutdown signal to tokio runtime"); // FIXME: For some reason if I try this it will never finish.
-                                                                                       // I believe this is because the interval runs from Tokio have not been cancelled.
-                                                                                       // tokio_thread.join().expect("Unable to shutdown tokio channel");
+    tokio_shutdown.send(()).expect("Unable to send shutdown signal to tokio runtime");
 
     // This explicit drop is needed for Windows, ConPTY backend. Otherwise a deadlock can occur.
     // The cause:
