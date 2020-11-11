@@ -29,6 +29,7 @@ use crossfont::set_font_smoothing;
 use crossfont::{self, Size};
 
 use alacritty_terminal::config::LOG_TARGET_CONFIG;
+use alacritty_terminal::decorations;
 use alacritty_terminal::event::{Event as TerminalEvent, EventListener, Notify, OnResize};
 use alacritty_terminal::grid::{Dimensions, Scroll};
 use alacritty_terminal::index::{Boundary, Column, Direction, Line, Point, Side};
@@ -67,6 +68,8 @@ pub enum Event {
     ConfigReload(PathBuf),
     Message(Message),
     SearchNext,
+    DecorUpdate, // a decoration may request an update to draw the terminal
+    ChartUpdate, // Chart data has been updated and charts should be redrawn
 }
 
 impl From<Event> for GlutinEvent<'_, Event> {
@@ -78,6 +81,12 @@ impl From<Event> for GlutinEvent<'_, Event> {
 impl From<TerminalEvent> for Event {
     fn from(event: TerminalEvent) -> Self {
         Event::TerminalEvent(event)
+    }
+}
+
+impl From<decorations::DecorationsEvent> for Event {
+    fn from(event: DecorationsEvent) -> Self {
+        Event::DecorUpdate
     }
 }
 
@@ -945,6 +954,8 @@ impl<N: Notify + OnResize> Processor<N> {
                     TerminalEvent::MouseCursorDirty => processor.reset_mouse_cursor(),
                     TerminalEvent::Exit => (),
                 },
+                Event::DecorUpdate => processor.ctx.terminal.dirty = true,
+                Event::ChartUpdate => processor.ctx.terminal.dirty = true,
             },
             GlutinEvent::RedrawRequested(_) => processor.ctx.terminal.dirty = true,
             GlutinEvent::WindowEvent { event, window_id, .. } => {
