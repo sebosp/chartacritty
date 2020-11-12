@@ -13,7 +13,7 @@ use std::time::UNIX_EPOCH;
 
 use glutin::dpi::{PhysicalPosition, PhysicalSize};
 use glutin::event::ModifiersState;
-use glutin::event_loop::{EventLoop, EventLoopProxy};
+use glutin::event_loop::EventLoop;
 #[cfg(not(any(target_os = "macos", windows)))]
 use glutin::platform::unix::EventLoopWindowTargetExtUnix;
 use glutin::window::CursorIcon;
@@ -35,7 +35,7 @@ use alacritty_terminal::term::{RenderableCell, SizeInfo, Term, TermMode};
 use crate::config::font::Font;
 use crate::config::window::StartupMode;
 use crate::config::Config;
-use crate::event::{Event, Mouse, SearchState};
+use crate::event::{Mouse, SearchState};
 use crate::message_bar::{MessageBuffer, MessageType};
 use crate::meter::Meter;
 use crate::renderer::rects::{RenderLines, RenderRect};
