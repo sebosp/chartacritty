@@ -1295,7 +1295,7 @@ mod tests {
                     dpr: 1.0,
                 };
                 // Create the tokio handle, transmission channel and shutdown channel
-                let (tokio_handle, charts_tx, _tokio_shutdown) = alacritty_terminal::charts::async_utils::tokio_default_setup();
+                let (tokio_handle, charts_tx, _tokio_shutdown) = alacritty_terminal::charts::async_utils::tokio_default_setup(MockEventProxy);
 
                 let mut clipboard = Clipboard::new_nop();
 

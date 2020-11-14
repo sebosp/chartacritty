@@ -5,6 +5,7 @@
 //! channel that may contain new data, may request OpenGL data or increment
 //! internal counters.
 use crate::charts::{prometheus, ChartSizeInfo, TimeSeriesChart, TimeSeriesSource};
+use crate::event::{Event, EventListener};
 use crate::term::SizeInfo;
 use log::*;
 use std::thread;
@@ -140,12 +141,12 @@ pub fn load_http_response(
     charts: &mut Vec<TimeSeriesChart>,
     response: MetricRequest,
     size: ChartSizeInfo,
-) {
+) -> Option<usize> {
     let span = span!(Level::DEBUG, "load_http_response", idx = response.chart_index);
     let _enter = span.enter();
     if let Some(data) = response.data {
         if data.status != "success" {
-            return;
+            return None;
         }
         let mut ok_records = 0;
         if response.chart_index < charts.len()
@@ -182,6 +183,9 @@ pub fn load_http_response(
         }
         let now = std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
         increment_internal_counter(charts, "async_loaded_items", now, ok_records as f64, size);
+        Some(ok_records)
+    } else {
+        None
     }
 }
 
@@ -308,14 +312,17 @@ pub fn change_display_size(
 /// `async_coordinator` receives messages from the tasks about data loaded from
 /// the network, it owns the charts array and is the single point by which data can
 /// be loaded or requested. XXX: Config updates are not possible yet.
-pub async fn async_coordinator(
+pub async fn async_coordinator<U>(
     mut rx: mpsc::Receiver<AsyncChartTask>,
     mut chart_config: crate::charts::ChartsConfig,
     height: f32,
     width: f32,
     padding_y: f32,
     padding_x: f32,
-) {
+    event_proxy: U,
+) where
+    U: EventListener + Send + 'static,
+{
     event!(
         Level::DEBUG,
         "async_coordinator: Starting, terminal height: {}, width: {}, padding_y: {}, padding_x {}",
@@ -340,7 +347,9 @@ pub async fn async_coordinator(
         event!(Level::DEBUG, "async_coordinator: message: {:?}", message);
         match message {
             AsyncChartTask::LoadResponse(req) => {
-                load_http_response(&mut chart_config.charts, req, size)
+                if let Some(_items) = load_http_response(&mut chart_config.charts, req, size) {
+                    event_proxy.send_event(Event::ChartEvent);
+                }
             }
             AsyncChartTask::SendMetricsOpenGLData(chart_index, data_index, channel) => {
                 send_metrics_opengl_vecs(&chart_config.charts, chart_index, data_index, channel);
@@ -611,8 +620,12 @@ pub fn get_metric_opengl_data(
 /// `tokio_default_setup` creates a default channels and handles, this should be used mostly for testing
 /// to avoid having to create all the tokio boilerplate, I would like to return a struct but
 /// the ownership and cloning and moving of the separate parts does not seem possible then
-pub fn tokio_default_setup(
-) -> (tokio::runtime::Handle, mpsc::Sender<AsyncChartTask>, oneshot::Sender<()>) {
+pub fn tokio_default_setup<U>(
+    event_proxy: U,
+) -> (tokio::runtime::Handle, mpsc::Sender<AsyncChartTask>, oneshot::Sender<()>)
+where
+    U: EventListener + Send + 'static,
+{
     // Create the channel that is used to communicate with the
     // charts background task.
     let (charts_tx, charts_rx) = mpsc::channel(4_096usize);
@@ -627,6 +640,7 @@ pub fn tokio_default_setup(
         charts_rx,
         handle_tx,
         ChartSizeInfo::default(),
+        event_proxy,
     );
     let tokio_handle =
         handle_rx.recv().expect("Unable to get the tokio handle in a background thread");
@@ -635,13 +649,17 @@ pub fn tokio_default_setup(
 }
 
 /// `spawn_async_tasks` Starts a background thread to be used for tokio for async tasks
-pub fn spawn_async_tasks(
+pub fn spawn_async_tasks<U>(
     chart_config: Option<crate::charts::ChartsConfig>,
     charts_tx: mpsc::Sender<AsyncChartTask>,
     charts_rx: mpsc::Receiver<AsyncChartTask>,
     handle_tx: std::sync::mpsc::Sender<tokio::runtime::Handle>,
     charts_size_info: ChartSizeInfo,
-) -> (thread::JoinHandle<()>, oneshot::Sender<()>) {
+    event_proxy: U,
+) -> (thread::JoinHandle<()>, oneshot::Sender<()>)
+where
+    U: EventListener + Send + 'static,
+{
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let tokio_thread = ::std::thread::Builder::new()
         .name("async I/O".to_owned())
@@ -666,6 +684,7 @@ pub fn spawn_async_tasks(
                         charts_size_info.term_size.width,
                         charts_size_info.term_size.padding_y,
                         charts_size_info.term_size.padding_x,
+                        event_proxy,
                     )
                     .await;
                 });
@@ -687,7 +706,10 @@ pub fn spawn_async_tasks(
 }
 
 /// `run` is an example use of the crate without drawing the data.
-pub fn run(config: crate::config::MockConfig) {
+pub fn run<U>(config: crate::config::MockConfig, event_proxy: U)
+where
+    U: EventListener + Send + 'static,
+{
     let charts_size_info = ChartSizeInfo {
         term_size: SizeInfo {
             width: 100.,
@@ -709,8 +731,14 @@ pub fn run(config: crate::config::MockConfig) {
     let (handle_tx, handle_rx) = std::sync::mpsc::channel();
     // Start the Async I/O runtime, this needs to run in a background thread because in OSX, only
     // the main thread can write to the graphics card.
-    let (tokio_thread, tokio_shutdown) =
-        spawn_async_tasks(config.charts, charts_tx, charts_rx, handle_tx, charts_size_info);
+    let (tokio_thread, tokio_shutdown) = spawn_async_tasks(
+        config.charts,
+        charts_tx,
+        charts_rx,
+        handle_tx,
+        charts_size_info,
+        event_proxy,
+    );
     let _tokio_handle =
         handle_rx.recv().expect("Unable to get the tokio handle in a background thread");
 

@@ -162,6 +162,7 @@ fn run(
             charts_rx,
             handle_tx,
             charts_size_info,
+            event_proxy.clone(),
         );
     let tokio_handle =
         handle_rx.recv().expect("Unable to get the tokio handle in a background thread");
@@ -207,7 +208,6 @@ fn run(
     // The event loop channel allows write requests from the event processor
     // to be sent to the pty loop and ultimately written to the pty.
     let loop_tx = event_loop.channel();
-
     // XXX: Figure out what happened with needs_draw
     // let mut chart_last_drawn = 0; // Keep an epoch for the last time we drew the charts
     // if terminal_lock.needs_draw()

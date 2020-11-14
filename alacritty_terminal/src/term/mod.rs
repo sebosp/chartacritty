@@ -2414,6 +2414,11 @@ pub mod test {
     use crate::config::Config;
     use crate::index::Column;
 
+    struct Mock;
+    impl EventListener for Mock {
+        fn send_event(&self, _event: Event) {}
+    }
+
     /// Construct a terminal from its content as string.
     ///
     /// A `\n` will break line and `\r\n` will break line without wrapping.
@@ -2452,7 +2457,7 @@ pub mod test {
             dpr: 1.,
         };
         let (tokio_handle, charts_tx, _tokio_shutdown) =
-            crate::charts::async_utils::tokio_default_setup();
+            crate::charts::async_utils::tokio_default_setup(Mock);
         let mut term = Term::new(&Config::<()>::default(), size, (), tokio_handle, charts_tx);
 
         // Fill terminal with content.
@@ -2513,7 +2518,7 @@ mod tests {
             dpr: 1.0,
         };
         let (tokio_handle, charts_tx, _tokio_shutdown) =
-            crate::charts::async_utils::tokio_default_setup();
+            crate::charts::async_utils::tokio_default_setup(Mock);
         let mut term = Term::new(&MockConfig::default(), size, Mock, tokio_handle, charts_tx);
         let mut grid: Grid<Cell> = Grid::new(Line(3), Column(5), 0, Cell::default());
         for i in 0..5 {
@@ -2571,7 +2576,7 @@ mod tests {
             dpr: 1.0,
         };
         let (tokio_handle, charts_tx, _tokio_shutdown) =
-            crate::charts::async_utils::tokio_default_setup();
+            crate::charts::async_utils::tokio_default_setup(Mock);
         let mut term = Term::new(&MockConfig::default(), size, Mock, tokio_handle, charts_tx);
         let mut grid: Grid<Cell> = Grid::new(Line(1), Column(5), 0, Cell::default());
         for i in 0..5 {
@@ -2602,7 +2607,7 @@ mod tests {
             dpr: 1.0,
         };
         let (tokio_handle, charts_tx, _tokio_shutdown) =
-            crate::charts::async_utils::tokio_default_setup();
+            crate::charts::async_utils::tokio_default_setup(Mock);
         let mut term = Term::new(&MockConfig::default(), size, Mock, tokio_handle, charts_tx);
         let mut grid: Grid<Cell> = Grid::new(Line(3), Column(3), 0, Cell::default());
         for l in 0..3 {
@@ -2649,7 +2654,7 @@ mod tests {
             dpr: 1.0,
         };
         let (tokio_handle, charts_tx, _tokio_shutdown) =
-            crate::charts::async_utils::tokio_default_setup();
+            crate::charts::async_utils::tokio_default_setup(Mock);
         let mut term = Term::new(&MockConfig::default(), size, Mock, tokio_handle, charts_tx);
         let cursor = Point::new(Line(0), Column(0));
         term.configure_charset(CharsetIndex::G0, StandardCharset::SpecialCharacterAndLineDrawing);
@@ -2670,7 +2675,7 @@ mod tests {
             dpr: 1.0,
         };
         let (tokio_handle, charts_tx, _tokio_shutdown) =
-            crate::charts::async_utils::tokio_default_setup();
+            crate::charts::async_utils::tokio_default_setup(Mock);
         let mut term = Term::new(&MockConfig::default(), size, Mock, tokio_handle, charts_tx);
 
         // Add one line of scrollback.
@@ -2702,7 +2707,7 @@ mod tests {
             dpr: 1.0,
         };
         let (tokio_handle, charts_tx, _tokio_shutdown) =
-            crate::charts::async_utils::tokio_default_setup();
+            crate::charts::async_utils::tokio_default_setup(Mock);
         let mut term = Term::new(&MockConfig::default(), size, Mock, tokio_handle, charts_tx);
 
         // Create 10 lines of scrollback.
@@ -2732,7 +2737,7 @@ mod tests {
             dpr: 1.0,
         };
         let (tokio_handle, charts_tx, _tokio_shutdown) =
-            crate::charts::async_utils::tokio_default_setup();
+            crate::charts::async_utils::tokio_default_setup(Mock);
         let mut term = Term::new(&MockConfig::default(), size, Mock, tokio_handle, charts_tx);
 
         // Create 10 lines of scrollback.
@@ -2768,7 +2773,7 @@ mod tests {
             dpr: 1.0,
         };
         let (tokio_handle, charts_tx, _tokio_shutdown) =
-            crate::charts::async_utils::tokio_default_setup();
+            crate::charts::async_utils::tokio_default_setup(Mock);
         let mut term = Term::new(&MockConfig::default(), size, Mock, tokio_handle, charts_tx);
 
         // Create 10 lines of scrollback.
@@ -2798,7 +2803,7 @@ mod tests {
             dpr: 1.0,
         };
         let (tokio_handle, charts_tx, _tokio_shutdown) =
-            crate::charts::async_utils::tokio_default_setup();
+            crate::charts::async_utils::tokio_default_setup(Mock);
         let mut term = Term::new(&MockConfig::default(), size, Mock, tokio_handle, charts_tx);
 
         // Create 10 lines of scrollback.
@@ -2834,7 +2839,7 @@ mod tests {
             dpr: 1.0,
         };
         let (tokio_handle, charts_tx, _tokio_shutdown) =
-            crate::charts::async_utils::tokio_default_setup();
+            crate::charts::async_utils::tokio_default_setup(Mock);
         let mut term = Term::new(&MockConfig::default(), size, Mock, tokio_handle, charts_tx);
 
         // Title None by default.
@@ -2939,7 +2944,7 @@ mod benches {
         let config = MockConfig::default();
 
         let (tokio_handle, charts_tx, _tokio_shutdown) =
-            crate::charts::async_utils::tokio_default_setup();
+            crate::charts::async_utils::tokio_default_setup(Mock);
         let mut terminal = Term::new(&config, &size, Mock, tokio_handle, charts_tx);
         mem::swap(&mut terminal.grid, &mut grid);
 
