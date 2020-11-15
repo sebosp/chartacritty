@@ -9,7 +9,6 @@ use std::fmt::{self, Formatter};
 #[cfg(not(any(target_os = "macos", windows)))]
 use std::sync::atomic::Ordering;
 use std::time::Instant;
-use std::time::UNIX_EPOCH;
 
 use glutin::dpi::{PhysicalPosition, PhysicalSize};
 use glutin::event::ModifiersState;
@@ -167,9 +166,6 @@ pub struct Display {
     glyph_cache: GlyphCache,
     meter: Meter,
 
-    /// The last time the charts were drawn.
-    charts_last_drawn: u64, // SEB TODO: Charts could be moved to decorations as they are decorations?
-
     #[cfg(not(any(target_os = "macos", windows)))]
     is_x11: bool,
 
@@ -323,7 +319,6 @@ impl Display {
             size_info,
             urls: Urls::new(),
             highlighted_url: None,
-            charts_last_drawn: 0u64,
             #[cfg(not(any(target_os = "macos", windows)))]
             is_x11,
             #[cfg(not(any(target_os = "macos", windows)))]
@@ -644,12 +639,7 @@ impl Display {
             // Draw rectangles.
             self.renderer.draw_rects(&size_info, rects);
         }
-        // Draw the charts
-        if charts_enabled {
-            self.draw_charts(&config, &size_info, charts_tx, tokio_handle);
-        } else {
-            debug!("Charts are not enabled");
-        }
+
         if decorations_enabled {
             self.draw_decorations(&size_info);
         } else {
@@ -657,6 +647,12 @@ impl Display {
         }
 
         self.draw_render_timer(config, &size_info);
+        // Draw the charts
+        if charts_enabled {
+            self.draw_charts(&config, &size_info, charts_tx, tokio_handle);
+        } else {
+            debug!("Charts are not enabled");
+        }
 
         // Handle search and IME positioning.
         let ime_position = match search_state.regex() {
@@ -707,11 +703,6 @@ impl Display {
         tokio_handle: tokio::runtime::Handle,
     ) {
         if let Some(chart_config) = &config.charts {
-            let now = std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-            if self.charts_last_drawn + 1u64 > now {
-                // Let's draw once per second
-                return;
-            }
             for chart_idx in 0..chart_config.charts.len() {
                 debug!("draw: Drawing chart: {}", chart_config.charts[chart_idx].name);
                 for decoration_idx in 0..chart_config.charts[chart_idx].decorations.len() {
@@ -758,7 +749,6 @@ impl Display {
                         renderer::DrawArrayMode::GlLineStrip,
                     );
                 }
-                self.charts_last_drawn = now;
             }
         }
     }
