@@ -9,7 +9,6 @@ use std::fmt::{self, Formatter};
 #[cfg(not(any(target_os = "macos", windows)))]
 use std::sync::atomic::Ordering;
 use std::time::Instant;
-use std::time::UNIX_EPOCH;
 
 use glutin::dpi::{PhysicalPosition, PhysicalSize};
 use glutin::event::ModifiersState;
@@ -45,7 +44,7 @@ use crate::window::{self, Window};
 
 // Chartacritty:
 use alacritty_terminal::decorations::{
-    DecorationFans, DecorationLines, DecorationPoints, DecorationTypes,
+    DecorationLines, DecorationPoints, DecorationTriangles, DecorationTypes, DecorationsConfig,
 };
 use alacritty_terminal::term::color::Rgb;
 
@@ -166,11 +165,11 @@ pub struct Display {
     renderer: QuadRenderer,
     glyph_cache: GlyphCache,
     meter: Meter,
-    // charts_last_drawn: u64,
+
     #[cfg(not(any(target_os = "macos", windows)))]
     is_x11: bool,
 
-    decorations: Vec<DecorationTypes>,
+    decorations: DecorationsConfig,
 }
 
 impl Display {
@@ -309,27 +308,9 @@ impl Display {
             StartupMode::Maximized => window.set_maximized(true),
             _ => (),
         }
-        let hexagon_radius = 100f32;
-        let hexagon_color = Rgb { r: 25, g: 88, b: 167 };
-        let hexagon_line_decorator = alacritty_terminal::decorations::create_hexagon_line(
-            hexagon_color,
-            0.3f32,
-            size_info,
-            hexagon_radius,
-        );
-        let hexagon_fan_decorator = alacritty_terminal::decorations::create_hexagon_fan(
-            hexagon_color,
-            Rgb { r: 0, g: 0, b: 0 },
-            0.05f32,
-            size_info,
-            hexagon_radius,
-        );
-        let hexagon_point_decorator = alacritty_terminal::decorations::create_hexagon_points(
-            hexagon_color,
-            0.4f32,
-            size_info,
-            hexagon_radius,
-        );
+        let mut decorations =
+            DecorationsConfig::to_sized_decor_vec(config.decorations.clone(), size_info);
+        decorations.init_timers();
         Ok(Self {
             window,
             renderer,
@@ -338,16 +319,11 @@ impl Display {
             size_info,
             urls: Urls::new(),
             highlighted_url: None,
-            // charts_last_drawn: 0u64,
             #[cfg(not(any(target_os = "macos", windows)))]
             is_x11,
             #[cfg(not(any(target_os = "macos", windows)))]
             wayland_event_queue,
-            decorations: vec![
-                hexagon_line_decorator,
-                hexagon_fan_decorator,
-                hexagon_point_decorator,
-            ],
+            decorations,
         })
     }
 
@@ -513,29 +489,8 @@ impl Display {
             }
         });
         self.renderer.resize(&self.size_info);
-        let hexagon_color = Rgb { r: 25, g: 88, b: 167 };
-        let hexagon_radius = 100f32;
-        let hexagon_line_decorator = alacritty_terminal::decorations::create_hexagon_line(
-            hexagon_color,
-            0.3f32,
-            self.size_info,
-            hexagon_radius,
-        );
-        let hexagon_fan_decorator = alacritty_terminal::decorations::create_hexagon_fan(
-            hexagon_color,
-            Rgb { r: 0, g: 0, b: 0 },
-            0.05f32,
-            self.size_info,
-            hexagon_radius,
-        );
-        let hexagon_point_decorator = alacritty_terminal::decorations::create_hexagon_points(
-            hexagon_color,
-            0.4f32,
-            self.size_info,
-            hexagon_radius,
-        );
-        self.decorations =
-            vec![hexagon_line_decorator, hexagon_fan_decorator, hexagon_point_decorator];
+        // SEB: TODO: do not call when decorations are not enabled
+        self.decorations.set_size_info(self.size_info);
     }
 
     /// Draw the screen.
@@ -684,137 +639,20 @@ impl Display {
             // Draw rectangles.
             self.renderer.draw_rects(&size_info, rects);
         }
-        // Draw the charts
-        if charts_enabled {
-            if let Some(chart_config) = &config.charts {
-                for chart_idx in 0..chart_config.charts.len() {
-                    debug!("draw: Drawing chart: {}", chart_config.charts[chart_idx].name);
-                    for decoration_idx in 0..chart_config.charts[chart_idx].decorations.len() {
-                        // TODO: Change this to return a ChartOpenglData that contains:
-                        // (ves: Vec<f32>, alpha: f32)
-                        let opengl_data =
-                            alacritty_terminal::charts::async_utils::get_metric_opengl_data(
-                                charts_tx.clone(),
-                                chart_idx,
-                                decoration_idx,
-                                "decoration",
-                                tokio_handle.clone(),
-                            );
-                        self.renderer.draw_array(
-                            &size_info,
-                            &opengl_data.0,
-                            Rgb {
-                                r: chart_config.charts[chart_idx].decorations[decoration_idx]
-                                    .color()
-                                    .r,
-                                g: chart_config.charts[chart_idx].decorations[decoration_idx]
-                                    .color()
-                                    .g,
-                                b: chart_config.charts[chart_idx].decorations[decoration_idx]
-                                    .color()
-                                    .b,
-                            },
-                            opengl_data.1,
-                            renderer::DrawArrayMode::GlLineStrip,
-                        );
-                    }
-                    for series_idx in 0..chart_config.charts[chart_idx].sources.len() {
-                        let opengl_data =
-                            alacritty_terminal::charts::async_utils::get_metric_opengl_data(
-                                charts_tx.clone(),
-                                chart_idx,
-                                series_idx,
-                                "metric_data",
-                                tokio_handle.clone(),
-                            );
-                        self.renderer.draw_array(
-                            &size_info,
-                            &opengl_data.0,
-                            Rgb {
-                                r: chart_config.charts[chart_idx].sources[series_idx].color().r,
-                                g: chart_config.charts[chart_idx].sources[series_idx].color().g,
-                                b: chart_config.charts[chart_idx].sources[series_idx].color().b,
-                            },
-                            opengl_data.1,
-                            renderer::DrawArrayMode::GlLineStrip,
-                        );
-                    }
-                    let _chart_last_drawn =
-                        std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-                }
-            }
-        } else {
-            debug!("Charts are not enabled");
-        }
-        if decorations_enabled {
-            // Create a "wind" effect of a moving curtain by making it very transparent as it
-            // reaches 1000
-            //
-            let seconds_cycle = 15f32;
-            let curr_second_cycle = (std::time::SystemTime::now()
-                .duration_since(std::time::SystemTime::UNIX_EPOCH)
-                .unwrap()
-                .as_secs()
-                % (seconds_cycle as u64)) as f32;
 
-            // |-------------------------------|---------------------------------|
-            // 0.0 u                         0.25 u                             0.5
-            // 0.0 seconds                    15 seconds                        15 seconds
-            // Every 15 seconds the opacity should go back to 100% of out top
-            let max_hexagon_opacity = 0.5f32;
-            let wind_screen_size = 0.5f32;
-            let x_move_in_time = (curr_second_cycle * wind_screen_size) / seconds_cycle;
-            for decoration in &self.decorations {
-                debug!("Traversing Decorations");
-                match decoration {
-                    DecorationTypes::Lines(line_decor) => match line_decor {
-                        DecorationLines::Hexagon(hex_lines) => {
-                            debug!("- Drawing hexagon lines");
-                            // Draw chunks of 12, since it's 2 points (x,y) per coordinate
-                            for opengl_data in hex_lines.vecs.chunks(12) {
-                                // Mid-left is the 6th in the array
-                                let curr_opacity = (((opengl_data[6] + x_move_in_time)
-                                    % wind_screen_size)
-                                    / wind_screen_size)
-                                    * max_hexagon_opacity;
-                                self.renderer.draw_array(
-                                    &size_info,
-                                    &opengl_data,
-                                    Rgb { r: 25, g: 88, b: 167 },
-                                    curr_opacity.abs(),
-                                    renderer::DrawArrayMode::GlLineLoop,
-                                );
-                            }
-                        }
-                    },
-                    DecorationTypes::Fans(fan_decor) => match fan_decor {
-                        DecorationFans::Hexagon((hex_fans, _number_vertices)) => {
-                            info!("- Drawing hexagon fans");
-                            info!("- - Decorations Hexagon Fans: {:?}", hex_fans.vecs);
-                            // Triangle fans decorators contain the number of sides
-                            self.renderer.draw_hex_bg(&size_info, &hex_fans.vecs);
-                        }
-                    },
-                    DecorationTypes::Points(point_decor) => match point_decor {
-                        DecorationPoints::Hexagon(hex_points) => {
-                            debug!("- Drawing hexagon points");
-                            // Draw chunks of 2, since it's 2 points (x,y) per coordinate
-                            self.renderer.draw_array(
-                                &size_info,
-                                &hex_points.vecs,
-                                Rgb { r: 25, g: 88, b: 167 },
-                                0.7f32,
-                                renderer::DrawArrayMode::GlPoints,
-                            );
-                        }
-                    },
-                }
-            }
+        if decorations_enabled {
+            self.draw_decorations(&size_info);
         } else {
-            debug!("Charts are not enabled");
+            debug!("Decorations are not enabled");
         }
 
         self.draw_render_timer(config, &size_info);
+        // Draw the charts
+        if charts_enabled {
+            self.draw_charts(&config, &size_info, charts_tx, tokio_handle);
+        } else {
+            debug!("Charts are not enabled");
+        }
 
         // Handle search and IME positioning.
         let ime_position = match search_state.regex() {
@@ -853,6 +691,126 @@ impl Display {
             self.renderer.with_api(&config.ui_config, config.cursor, &size_info, |api| {
                 api.finish();
             });
+        }
+    }
+
+    /// Iterates over the configured  charts and draws them
+    pub fn draw_charts(
+        &mut self,
+        config: &Config,
+        size_info: &SizeInfo,
+        charts_tx: futures_mpsc::Sender<alacritty_terminal::charts::async_utils::AsyncChartTask>,
+        tokio_handle: tokio::runtime::Handle,
+    ) {
+        if let Some(chart_config) = &config.charts {
+            for chart_idx in 0..chart_config.charts.len() {
+                debug!("draw: Drawing chart: {}", chart_config.charts[chart_idx].name);
+                for decoration_idx in 0..chart_config.charts[chart_idx].decorations.len() {
+                    // TODO: Change this to return a ChartOpenglData that contains:
+                    // (ves: Vec<f32>, alpha: f32)
+                    let opengl_data =
+                        alacritty_terminal::charts::async_utils::get_metric_opengl_data(
+                            charts_tx.clone(),
+                            chart_idx,
+                            decoration_idx,
+                            "decoration",
+                            tokio_handle.clone(),
+                        );
+                    self.renderer.draw_array(
+                        &size_info,
+                        &opengl_data.0,
+                        Rgb {
+                            r: chart_config.charts[chart_idx].decorations[decoration_idx].color().r,
+                            g: chart_config.charts[chart_idx].decorations[decoration_idx].color().g,
+                            b: chart_config.charts[chart_idx].decorations[decoration_idx].color().b,
+                        },
+                        opengl_data.1,
+                        renderer::DrawArrayMode::GlLineStrip,
+                    );
+                }
+                for series_idx in 0..chart_config.charts[chart_idx].sources.len() {
+                    let opengl_data =
+                        alacritty_terminal::charts::async_utils::get_metric_opengl_data(
+                            charts_tx.clone(),
+                            chart_idx,
+                            series_idx,
+                            "metric_data",
+                            tokio_handle.clone(),
+                        );
+                    self.renderer.draw_array(
+                        &size_info,
+                        &opengl_data.0,
+                        Rgb {
+                            r: chart_config.charts[chart_idx].sources[series_idx].color().r,
+                            g: chart_config.charts[chart_idx].sources[series_idx].color().g,
+                            b: chart_config.charts[chart_idx].sources[series_idx].color().b,
+                        },
+                        opengl_data.1,
+                        renderer::DrawArrayMode::GlLineStrip,
+                    );
+                }
+            }
+        }
+    }
+
+    /// Iterates over the decorations
+    pub fn draw_decorations(&mut self, size_info: &SizeInfo) {
+        // Create a "wind" effect of a moving curtain by making it very transparent as it
+        // reaches 1000
+        //
+        // TODO: Move to the decorations module and implement with tick()
+        let seconds_cycle = 15f32;
+        let epoch =
+            std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH).unwrap();
+
+        let curr_second_cycle = (epoch.as_secs() % (seconds_cycle as u64)) as f32;
+        // |-------------------------------|---------------------------------|
+        // 0.0 u                         0.25 u                             0.5
+        // 0.0 seconds                    7.5 seconds                       15 seconds
+        // Every 15 seconds the opacity should go back to 100% of out top
+        let max_hexagon_opacity = 0.5f32;
+        let wind_screen_size = 0.5f32;
+        let x_move_in_time = (curr_second_cycle * wind_screen_size) / seconds_cycle;
+        self.decorations.tick();
+        for decoration in &self.decorations.decorators {
+            match decoration {
+                DecorationTypes::Lines(line_decor) => match line_decor {
+                    DecorationLines::Hexagon(hex_lines) => {
+                        // Draw chunks of 12, since it's 2 points (x,y) per coordinate
+                        for opengl_data in hex_lines.vecs.chunks(12) {
+                            // Mid-left is the 6th in the array
+                            let curr_opacity = (((opengl_data[6] + x_move_in_time)
+                                % wind_screen_size)
+                                / wind_screen_size)
+                                * max_hexagon_opacity;
+                            self.renderer.draw_array(
+                                &size_info,
+                                &opengl_data,
+                                Rgb { r: 25, g: 88, b: 167 },
+                                curr_opacity.abs(),
+                                renderer::DrawArrayMode::GlLineLoop,
+                            );
+                        }
+                    }
+                },
+                DecorationTypes::Triangles(tri_decor) => match tri_decor {
+                    DecorationTriangles::Hexagon(hex_tris) => {
+                        self.renderer.draw_hex_bg(&size_info, &hex_tris.vecs);
+                    }
+                },
+                DecorationTypes::Points(point_decor) => match point_decor {
+                    DecorationPoints::Hexagon(hex_points) => {
+                        self.renderer.draw_array(
+                            &size_info,
+                            &hex_points.vecs,
+                            Rgb { r: 25, g: 88, b: 167 },
+                            0.7f32,
+                            renderer::DrawArrayMode::GlPoints,
+                        );
+                    }
+                },
+                DecorationTypes::None => unreachable!("Attempting to draw decoration of type None"),
+            }
         }
     }
 

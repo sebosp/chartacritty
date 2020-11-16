@@ -1,0 +1,25 @@
+# Example configuration for the decorations
+decorations:
+  - type: Triangles
+    props:
+      type: Hexagon
+      props: 
+        vertex_color: "0x1958a7"
+        center_color: "0x000000"
+        alpha: 0.05
+        radius: 100
+  - type: Points
+    props:
+      type: Hexagon
+      props: 
+        color: "0x1958a7"
+        alpha: 0.4
+        radius: 100
+        update_interval: 15
+  - type: Lines
+    props:
+      type: Hexagon
+      props: 
+        color: "0x1958a7"
+        alpha: 0.3
+        radius: 100

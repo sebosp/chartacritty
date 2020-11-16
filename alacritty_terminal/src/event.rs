@@ -14,6 +14,8 @@ pub enum Event {
     Wakeup,
     Bell,
     Exit,
+    DecorEvent, // a decoration may request an update to draw the terminal
+    ChartEvent, // Chart data has been updated and charts should be redrawn
 }
 
 impl Debug for Event {
@@ -27,6 +29,8 @@ impl Debug for Event {
             Event::Wakeup => write!(f, "Wakeup"),
             Event::Bell => write!(f, "Bell"),
             Event::Exit => write!(f, "Exit"),
+            Event::DecorEvent => write!(f, "DecorEvent"),
+            Event::ChartEvent => write!(f, "ChartEvent"),
         }
     }
 }

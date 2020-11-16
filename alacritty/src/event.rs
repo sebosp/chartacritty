@@ -944,6 +944,8 @@ impl<N: Notify + OnResize> Processor<N> {
                     }
                     TerminalEvent::MouseCursorDirty => processor.reset_mouse_cursor(),
                     TerminalEvent::Exit => (),
+                    TerminalEvent::DecorEvent => processor.ctx.terminal.dirty = true,
+                    TerminalEvent::ChartEvent => processor.ctx.terminal.dirty = true,
                 },
             },
             GlutinEvent::RedrawRequested(_) => processor.ctx.terminal.dirty = true,

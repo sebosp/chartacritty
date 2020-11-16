@@ -833,7 +833,7 @@ impl QuadRenderer {
         }
     }
 
-    /// `draw_hex_bg` draws one hexagon for the background
+    /// `draw_hex_bg` draws an array of triangles with properties (x,y,r,g,b,a)
     pub fn draw_hex_bg(&mut self, props: &SizeInfo, opengl_data: &[f32]) {
         // This function expects a vector that contains 6 data points per vertex:
         // 2 are x,y position and the other 4 are the r,g,b,a

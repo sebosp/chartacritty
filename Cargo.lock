@@ -85,6 +85,7 @@ dependencies = [
  "nix 0.17.0",
  "parking_lot",
  "percent-encoding 1.0.1",
+ "rand",
  "regex-automata",
  "serde",
  "serde_derive",
