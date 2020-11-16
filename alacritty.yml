@@ -876,6 +876,7 @@
 #          alpha: 0.4
 #          radius: 100
 #          update_interval: 15
+#          animated: true
 #    - type: Lines
 #      props:
 #        type: Hexagon
