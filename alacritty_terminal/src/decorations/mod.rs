@@ -290,6 +290,9 @@ pub struct HexagonPointBackground {
 
     radius: f32,
 
+    #[serde(default)]
+    pub animated: bool,
+
     /// Now and then, certain points will be chosen to be moved horizontally
     #[serde(default)]
     chosen_vertices: Vec<usize>,
@@ -336,6 +339,7 @@ impl Default for HexagonPointBackground {
             animation_offset: 0.0f32,
             next_update_epoch: start_animation_ms + animation_duration_ms,
             vecs: vec![],
+            animated: true,
         };
         res.update_opengl_vecs();
         res.choose_random_vertices();
@@ -540,6 +544,7 @@ impl HexagonPointBackground {
             animation_duration_ms: 0.0f32,
             animation_offset: 0f32, // This is calculated on the `update_opengl_vecs` function
             next_update_epoch: 0.0,
+            animated: true,
         };
         res.update_opengl_vecs();
         res.choose_random_vertices();
@@ -565,9 +570,10 @@ impl HexagonPointBackground {
         let total_hexagons = self.vecs.len() / 6usize / 2usize;
         // Let's animate 1/5 of the top-left hexagons
         let random_vertices_to_choose = (total_hexagons / 5usize) as usize;
-        self.chosen_vertices = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
         info!("HexagonPointBackground::choose_random_vertices INIT. Total hexagons: {}, random_vertices_to_choose: {}", total_hexagons, random_vertices_to_choose);
-        return;
+        // Testing, TODO: remove
+        // self.chosen_vertices = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
+        // return;
         let mut rng = rand::thread_rng();
         let mut current_vertex = 0;
         while current_vertex <= random_vertices_to_choose {
@@ -603,6 +609,9 @@ impl HexagonPointBackground {
     }
 
     pub fn tick(&mut self, time: f32) {
+        if !self.animated {
+            return;
+        }
         // The time is received as seconds.millis, let's transform all to ms
         let time_ms = time * 1000f32;
         info!(
