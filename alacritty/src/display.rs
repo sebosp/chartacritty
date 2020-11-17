@@ -391,9 +391,7 @@ impl Display {
         config: &Config,
         update_pending: DisplayUpdate,
         tokio_handle: tokio::runtime::Handle,
-        mut charts_tx: futures_mpsc::Sender<
-            alacritty_terminal::charts::async_utils::AsyncChartTask,
-        >,
+        mut charts_tx: futures_mpsc::Sender<alacritty_terminal::async_utils::AsyncChartTask>,
     ) where
         T: EventListener,
     {
@@ -460,15 +458,14 @@ impl Display {
         let (height, width) = (self.size_info.height, self.size_info.width);
         let (chart_resize_tx, chart_resize_rx) = oneshot::channel();
         tokio_handle.spawn(async move {
-            let send_display_size = charts_tx.send(
-                alacritty_terminal::charts::async_utils::AsyncChartTask::ChangeDisplaySize(
+            let send_display_size =
+                charts_tx.send(alacritty_terminal::async_utils::AsyncChartTask::ChangeDisplaySize(
                     height,
                     width,
                     padding_y,
                     padding_x,
                     chart_resize_tx,
-                ),
-            );
+                ));
             match send_display_size.await {
                 Err(e) => error!("Sending ChangeDisplaySize Task: err={:?}", e),
                 Ok(_) => debug!(
@@ -699,7 +696,7 @@ impl Display {
         &mut self,
         config: &Config,
         size_info: &SizeInfo,
-        charts_tx: futures_mpsc::Sender<alacritty_terminal::charts::async_utils::AsyncChartTask>,
+        charts_tx: futures_mpsc::Sender<alacritty_terminal::async_utils::AsyncChartTask>,
         tokio_handle: tokio::runtime::Handle,
     ) {
         if let Some(chart_config) = &config.charts {
@@ -708,14 +705,13 @@ impl Display {
                 for decoration_idx in 0..chart_config.charts[chart_idx].decorations.len() {
                     // TODO: Change this to return a ChartOpenglData that contains:
                     // (ves: Vec<f32>, alpha: f32)
-                    let opengl_data =
-                        alacritty_terminal::charts::async_utils::get_metric_opengl_data(
-                            charts_tx.clone(),
-                            chart_idx,
-                            decoration_idx,
-                            "decoration",
-                            tokio_handle.clone(),
-                        );
+                    let opengl_data = alacritty_terminal::async_utils::get_metric_opengl_data(
+                        charts_tx.clone(),
+                        chart_idx,
+                        decoration_idx,
+                        "decoration",
+                        tokio_handle.clone(),
+                    );
                     self.renderer.draw_array(
                         &size_info,
                         &opengl_data.0,
@@ -729,14 +725,13 @@ impl Display {
                     );
                 }
                 for series_idx in 0..chart_config.charts[chart_idx].sources.len() {
-                    let opengl_data =
-                        alacritty_terminal::charts::async_utils::get_metric_opengl_data(
-                            charts_tx.clone(),
-                            chart_idx,
-                            series_idx,
-                            "metric_data",
-                            tokio_handle.clone(),
-                        );
+                    let opengl_data = alacritty_terminal::async_utils::get_metric_opengl_data(
+                        charts_tx.clone(),
+                        chart_idx,
+                        series_idx,
+                        "metric_data",
+                        tokio_handle.clone(),
+                    );
                     self.renderer.draw_array(
                         &size_info,
                         &opengl_data.0,
