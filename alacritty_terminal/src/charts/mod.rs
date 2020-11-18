@@ -20,7 +20,6 @@
 
 #![warn(rust_2018_idioms)]
 
-pub mod async_utils;
 pub mod config;
 pub mod decorations;
 pub mod prometheus;

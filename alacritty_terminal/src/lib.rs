@@ -4,6 +4,7 @@
 #![cfg_attr(all(test, feature = "bench"), feature(test))]
 
 pub mod ansi;
+pub mod async_utils;
 pub mod charts;
 pub mod config;
 pub mod decorations;
