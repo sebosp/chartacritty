@@ -611,7 +611,7 @@ pub struct TermChartsHandle {
     pub tokio_handle: tokio::runtime::Handle,
 
     /// Channel to communicate with the chart background thread.
-    pub charts_tx: tokio_mpsc::Sender<crate::async_utils::AsyncChartTask>,
+    pub charts_tx: tokio_mpsc::Sender<crate::async_utils::AsyncTask>,
 
     /// Wether or not the charts are enabled
     enabled: bool,
@@ -803,7 +803,7 @@ impl<T> Term<T> {
         size: SizeInfo,
         event_proxy: T,
         tokio_handle: tokio::runtime::Handle,
-        charts_tx: tokio_mpsc::Sender<crate::async_utils::AsyncChartTask>,
+        charts_tx: tokio_mpsc::Sender<crate::async_utils::AsyncTask>,
     ) -> Term<T> {
         // TODO: On Update, we should refresh this.
         let num_cols = size.cols();
@@ -1067,9 +1067,9 @@ impl<T> Term<T> {
         let mut charts_tx = self.charts_handle.charts_tx.clone();
         self.charts_handle.tokio_handle.spawn(async move {
             let send_increment_input_counter = charts_tx.send(if counter_type == "input" {
-                crate::async_utils::AsyncChartTask::IncrementInputCounter(now, increment)
+                crate::async_utils::AsyncTask::IncrementInputCounter(now, increment)
             } else {
-                crate::async_utils::AsyncChartTask::IncrementOutputCounter(now, increment)
+                crate::async_utils::AsyncTask::IncrementOutputCounter(now, increment)
             });
             match send_increment_input_counter.await {
                 Err(err) => error!("Sending IncrementInputCounter Task: err={:?}", err),
