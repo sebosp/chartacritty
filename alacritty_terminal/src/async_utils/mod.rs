@@ -9,7 +9,7 @@ use crate::event::{Event, EventListener};
 use crate::term::SizeInfo;
 use log::*;
 use std::thread;
-use std::time::{Duration, UNIX_EPOCH};
+use std::time::{Duration, Instant, UNIX_EPOCH};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::interval_at;
 use tracing::{event, span, Level};
@@ -35,7 +35,9 @@ pub enum AsyncTask {
     SendLastUpdatedEpoch(oneshot::Sender<u64>),
     IncrementInputCounter(u64, f64),
     IncrementOutputCounter(u64, f64),
-    DecorUpdate, // Maybe add CloudWatch/etc
+    DecorUpdate(f32),
+    DecorTimeSync(Instant),
+    // Maybe add CloudWatch/etc
 }
 
 /// `get_last_updated_chart_epoch` Sends a request to the async_coordinator to
@@ -331,6 +333,9 @@ pub async fn async_coordinator<U>(
         padding_y,
         padding_x
     );
+    // This Instant is synchronized with the decorations thread, mainly used so that decorations
+    // are ran under specific circumstances
+    let mut init_time = Instant::now();
     chart_config.setup_chart_spacing();
     for chart in &mut chart_config.charts {
         // Calculate the spacing between charts
@@ -381,6 +386,19 @@ pub async fn async_coordinator<U>(
             }
             AsyncTask::SendLastUpdatedEpoch(channel) => {
                 send_last_updated_epoch(&mut chart_config.charts, channel);
+            }
+            AsyncTask::DecorTimeSync(time_instant) => {
+                init_time = time_instant;
+            }
+            AsyncTask::DecorUpdate(epoch_ms) => {
+                let elapsed = init_time.elapsed();
+                let time_ms = elapsed.as_secs_f32() + elapsed.subsec_millis() as f32 / 1000f32;
+                // Let's say that if an event is 200 ms old we won't act on it.
+                if (epoch_ms - time_ms).abs() < 0.2 {
+                    // XXX: Unharcode the 0.2 seconds
+                    // XXX: Maybe send over the decoration max time instead of the 0.2 seconds
+                    event_proxy.send_event(Event::DecorEvent);
+                }
             }
         };
     }
