@@ -391,7 +391,7 @@ impl Display {
         config: &Config,
         update_pending: DisplayUpdate,
         tokio_handle: tokio::runtime::Handle,
-        mut charts_tx: futures_mpsc::Sender<alacritty_terminal::async_utils::AsyncChartTask>,
+        mut charts_tx: futures_mpsc::Sender<alacritty_terminal::async_utils::AsyncTask>,
     ) where
         T: EventListener,
     {
@@ -459,7 +459,7 @@ impl Display {
         let (chart_resize_tx, chart_resize_rx) = oneshot::channel();
         tokio_handle.spawn(async move {
             let send_display_size =
-                charts_tx.send(alacritty_terminal::async_utils::AsyncChartTask::ChangeDisplaySize(
+                charts_tx.send(alacritty_terminal::async_utils::AsyncTask::ChangeDisplaySize(
                     height,
                     width,
                     padding_y,
@@ -696,7 +696,7 @@ impl Display {
         &mut self,
         config: &Config,
         size_info: &SizeInfo,
-        charts_tx: futures_mpsc::Sender<alacritty_terminal::async_utils::AsyncChartTask>,
+        charts_tx: futures_mpsc::Sender<alacritty_terminal::async_utils::AsyncTask>,
         tokio_handle: tokio::runtime::Handle,
     ) {
         if let Some(chart_config) = &config.charts {
