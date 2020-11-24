@@ -694,7 +694,7 @@ pub struct Processor<N> {
     display: Display,
     font_size: Size,
     tokio_handle: tokio::runtime::Handle,
-    charts_tx: tokio_mpsc::Sender<alacritty_terminal::async_utils::AsyncChartTask>,
+    charts_tx: tokio_mpsc::Sender<alacritty_terminal::async_utils::AsyncTask>,
     event_queue: Vec<GlutinEvent<'static, Event>>,
     search_state: SearchState,
     cli_options: CLIOptions,
@@ -710,7 +710,7 @@ impl<N: Notify + OnResize> Processor<N> {
         config: Config,
         display: Display,
         tokio_handle: tokio::runtime::Handle,
-        charts_tx: tokio_mpsc::Sender<alacritty_terminal::async_utils::AsyncChartTask>,
+        charts_tx: tokio_mpsc::Sender<alacritty_terminal::async_utils::AsyncTask>,
         cli_options: CLIOptions,
     ) -> Processor<N> {
         #[cfg(not(any(target_os = "macos", windows)))]
