@@ -156,7 +156,7 @@ fn run(
     // Start the Async I/O runtime, this needs to run in a background thread because in OSX, only
     // the main thread can write to the graphics card.
     let (_tokio_thread, tokio_shutdown) = alacritty_terminal::async_utils::spawn_async_tasks(
-        config.charts.clone(),
+        &config,
         charts_tx.clone(),
         charts_rx,
         handle_tx,

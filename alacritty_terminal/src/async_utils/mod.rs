@@ -5,6 +5,7 @@
 //! channel that may contain new data, may request OpenGL data or increment
 //! internal counters.
 use crate::charts::{prometheus, ChartSizeInfo, TimeSeriesChart, TimeSeriesSource};
+use crate::config::Config;
 use crate::event::{Event, EventListener};
 use crate::term::SizeInfo;
 use log::*;
@@ -653,7 +654,7 @@ where
     // Start the Async I/O runtime, this needs to run in a background thread because in OSX,
     // only the main thread can write to the graphics card.
     let (_tokio_thread, tokio_shutdown) = spawn_async_tasks(
-        Some(crate::charts::ChartsConfig::default()),
+        &crate::config::MockConfig::default(),
         charts_tx.clone(),
         charts_rx,
         handle_tx,
@@ -667,8 +668,8 @@ where
 }
 
 /// `spawn_async_tasks` Starts a background thread to be used for tokio for async tasks
-pub fn spawn_async_tasks<U>(
-    chart_config: Option<crate::charts::ChartsConfig>,
+pub fn spawn_async_tasks<C, U>(
+    config: &Config<C>,
     charts_tx: mpsc::Sender<AsyncTask>,
     charts_rx: mpsc::Receiver<AsyncTask>,
     handle_tx: std::sync::mpsc::Sender<tokio::runtime::Handle>,
@@ -679,6 +680,7 @@ where
     U: EventListener + Send + 'static,
 {
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let chart_config = config.charts.clone();
     let tokio_thread = ::std::thread::Builder::new()
         .name("async I/O".to_owned())
         .spawn(move || {
@@ -749,14 +751,8 @@ where
     let (handle_tx, handle_rx) = std::sync::mpsc::channel();
     // Start the Async I/O runtime, this needs to run in a background thread because in OSX, only
     // the main thread can write to the graphics card.
-    let (tokio_thread, tokio_shutdown) = spawn_async_tasks(
-        config.charts,
-        charts_tx,
-        charts_rx,
-        handle_tx,
-        charts_size_info,
-        event_proxy,
-    );
+    let (tokio_thread, tokio_shutdown) =
+        spawn_async_tasks(&config, charts_tx, charts_rx, handle_tx, charts_size_info, event_proxy);
     let _tokio_handle =
         handle_rx.recv().expect("Unable to get the tokio handle in a background thread");
 
