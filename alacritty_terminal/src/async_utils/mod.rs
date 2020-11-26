@@ -318,22 +318,12 @@ pub fn change_display_size(
 pub async fn async_coordinator<U>(
     mut rx: mpsc::Receiver<AsyncTask>,
     mut chart_config: crate::charts::ChartsConfig,
-    height: f32,
-    width: f32,
-    padding_y: f32,
-    padding_x: f32,
+    size_info: SizeInfo,
     event_proxy: U,
 ) where
     U: EventListener + Send + 'static,
 {
-    event!(
-        Level::DEBUG,
-        "async_coordinator: Starting, terminal height: {}, width: {}, padding_y: {}, padding_x {}",
-        height,
-        width,
-        padding_y,
-        padding_x
-    );
+    event!(Level::DEBUG, "async_coordinator: Starting, terminal size info: {:?}", size_info,);
     // This Instant is synchronized with the decorations thread, mainly used so that decorations
     // are ran under specific circumstances
     let mut init_time = Instant::now();
@@ -345,10 +335,7 @@ pub async fn async_coordinator<U>(
             series.init();
         }
     }
-    let mut size = ChartSizeInfo {
-        term_size: SizeInfo { height, width, padding_y, padding_x, ..SizeInfo::default() },
-        ..ChartSizeInfo::default()
-    };
+    let mut size = ChartSizeInfo { term_size: size_info, ..ChartSizeInfo::default() };
     while let Some(message) = rx.recv().await {
         event!(Level::DEBUG, "async_coordinator: message: {:?}", message);
         match message {
@@ -658,7 +645,7 @@ where
         charts_tx.clone(),
         charts_rx,
         handle_tx,
-        ChartSizeInfo::default(),
+        SizeInfo::default(),
         event_proxy,
     );
     let tokio_handle =
@@ -673,7 +660,7 @@ pub fn spawn_async_tasks<C, U>(
     charts_tx: mpsc::Sender<AsyncTask>,
     charts_rx: mpsc::Receiver<AsyncTask>,
     handle_tx: std::sync::mpsc::Sender<tokio::runtime::Handle>,
-    charts_size_info: ChartSizeInfo,
+    size_info: SizeInfo,
     event_proxy: U,
 ) -> (thread::JoinHandle<()>, oneshot::Sender<()>)
 where
@@ -681,6 +668,7 @@ where
 {
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let chart_config = config.charts.clone();
+    let decor_config = config.decorations.clone();
     let tokio_thread = ::std::thread::Builder::new()
         .name("async I/O".to_owned())
         .spawn(move || {
@@ -697,16 +685,7 @@ where
                 chart_array = chart_config.charts.clone();
                 let async_chart_config = chart_config.clone();
                 tokio_runtime.spawn(async move {
-                    async_coordinator(
-                        charts_rx,
-                        async_chart_config,
-                        charts_size_info.term_size.height,
-                        charts_size_info.term_size.width,
-                        charts_size_info.term_size.padding_y,
-                        charts_size_info.term_size.padding_x,
-                        event_proxy,
-                    )
-                    .await;
+                    async_coordinator(charts_rx, async_chart_config, size_info, event_proxy).await;
                 });
             }
             let tokio_handle = tokio_runtime.handle().clone();
@@ -730,18 +709,14 @@ pub fn run<U>(config: crate::config::MockConfig, event_proxy: U)
 where
     U: EventListener + Send + 'static,
 {
-    let charts_size_info = ChartSizeInfo {
-        term_size: SizeInfo {
-            width: 100.,
-            height: 100.,
-            cell_width: 0.,
-            cell_height: 0.,
-            padding_x: 0.,
-            padding_y: 0.,
-            ..SizeInfo::default()
-        },
-        chart_width: 100.,
-        chart_height: 100.,
+    let size_info = SizeInfo {
+        width: 100.,
+        height: 100.,
+        cell_width: 0.,
+        cell_height: 0.,
+        padding_x: 0.,
+        padding_y: 0.,
+        ..SizeInfo::default()
     };
     // Create the channel that is used to communicate with the
     // charts background task.
@@ -752,7 +727,7 @@ where
     // Start the Async I/O runtime, this needs to run in a background thread because in OSX, only
     // the main thread can write to the graphics card.
     let (tokio_thread, tokio_shutdown) =
-        spawn_async_tasks(&config, charts_tx, charts_rx, handle_tx, charts_size_info, event_proxy);
+        spawn_async_tasks(&config, charts_tx, charts_rx, handle_tx, size_info, event_proxy);
     let _tokio_handle =
         handle_rx.recv().expect("Unable to get the tokio handle in a background thread");
 

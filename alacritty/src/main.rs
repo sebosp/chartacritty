@@ -141,12 +141,6 @@ fn run(
 
     info!("PTY dimensions: {:?} x {:?}", display.size_info.lines(), display.size_info.cols());
 
-    // Copy the terminal size into the alacritty_terminal::charts SizeInfo copy.
-    let charts_size_info = alacritty_terminal::charts::ChartSizeInfo {
-        term_size: display.size_info,
-        ..alacritty_terminal::charts::ChartSizeInfo::default()
-    };
-
     // Create the channel that is used to communicate with the
     // charts background task.
     let (charts_tx, charts_rx) = mpsc::channel(4_096usize);
@@ -160,7 +154,7 @@ fn run(
         charts_tx.clone(),
         charts_rx,
         handle_tx,
-        charts_size_info,
+        displaye.size_info,
         event_proxy.clone(),
     );
     let tokio_handle =
