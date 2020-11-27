@@ -31,12 +31,12 @@ pub struct MetricRequest {
 pub enum AsyncTask {
     LoadResponse(MetricRequest),
     SendMetricsOpenGLData(usize, usize, oneshot::Sender<(Vec<f32>, f32)>),
-    SendDecorationsOpenGLData(usize, usize, oneshot::Sender<(Vec<f32>, f32)>),
+    SendChartDecorationsOpenGLData(usize, usize, oneshot::Sender<(Vec<f32>, f32)>),
     ChangeDisplaySize(f32, f32, f32, f32, oneshot::Sender<bool>),
     SendLastUpdatedEpoch(oneshot::Sender<u64>),
     IncrementInputCounter(u64, f64),
     IncrementOutputCounter(u64, f64),
-    DecorUpdate(f32),
+    DecorUpdate(usize, f32),
     DecorTimeSync(Instant),
     // Maybe add CloudWatch/etc
 }
@@ -237,9 +237,9 @@ pub fn send_metrics_opengl_vecs(
 }
 
 /// `send_decorations_opengl_data` handles the async_coordinator task of type
-/// SendDecorationsOpenGLData, it returns the chart index as opengl vertices
+/// SendChartDecorationsOpenGLData, it returns the chart index as opengl vertices
 /// representation and the alpha through the channel parameter
-pub fn send_decorations_opengl_data(
+pub fn send_chart_decorations_opengl_data(
     charts: &[TimeSeriesChart],
     chart_index: usize,
     data_index: usize,
@@ -326,7 +326,7 @@ pub async fn async_coordinator<U>(
     event!(Level::DEBUG, "async_coordinator: Starting, terminal size info: {:?}", size_info,);
     // This Instant is synchronized with the decorations thread, mainly used so that decorations
     // are ran under specific circumstances
-    let mut init_time = Instant::now();
+    let mut curr_decor_time = Instant::now();
     chart_config.setup_chart_spacing();
     for chart in &mut chart_config.charts {
         // Calculate the spacing between charts
@@ -347,8 +347,8 @@ pub async fn async_coordinator<U>(
             AsyncTask::SendMetricsOpenGLData(chart_index, data_index, channel) => {
                 send_metrics_opengl_vecs(&chart_config.charts, chart_index, data_index, channel);
             }
-            AsyncTask::SendDecorationsOpenGLData(chart_index, data_index, channel) => {
-                send_decorations_opengl_data(
+            AsyncTask::SendchartDecorationsOpenGLData(chart_index, data_index, channel) => {
+                send_chart_decorations_opengl_data(
                     &chart_config.charts,
                     chart_index,
                     data_index,
@@ -376,9 +376,9 @@ pub async fn async_coordinator<U>(
                 send_last_updated_epoch(&mut chart_config.charts, channel);
             }
             AsyncTask::DecorTimeSync(time_instant) => {
-                init_time = time_instant;
+                curr_decor_time = time_instant;
             }
-            AsyncTask::DecorUpdate(epoch_ms) => {
+            AsyncTask::DecorUpdate(idx, epoch_ms) => {
                 let elapsed = init_time.elapsed();
                 let time_ms = elapsed.as_secs_f32() + elapsed.subsec_millis() as f32 / 1000f32;
                 // Let's say that if an event is 200 ms old we won't act on it.
@@ -571,7 +571,7 @@ pub fn get_metric_opengl_data(
         let get_metric_request = charts_tx.send(if request_type == "metric_data" {
             AsyncTask::SendMetricsOpenGLData(chart_idx, series_idx, opengl_tx)
         } else {
-            AsyncTask::SendDecorationsOpenGLData(chart_idx, series_idx, opengl_tx)
+            AsyncTask::SendChartDecorationsOpenGLData(chart_idx, series_idx, opengl_tx)
         });
         match get_metric_request.await {
             Err(e) => event!(
