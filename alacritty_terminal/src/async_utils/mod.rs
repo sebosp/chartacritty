@@ -347,7 +347,7 @@ pub async fn async_coordinator<U>(
             AsyncTask::SendMetricsOpenGLData(chart_index, data_index, channel) => {
                 send_metrics_opengl_vecs(&chart_config.charts, chart_index, data_index, channel);
             }
-            AsyncTask::SendchartDecorationsOpenGLData(chart_index, data_index, channel) => {
+            AsyncTask::SendChartDecorationsOpenGLData(chart_index, data_index, channel) => {
                 send_chart_decorations_opengl_data(
                     &chart_config.charts,
                     chart_index,
@@ -379,7 +379,7 @@ pub async fn async_coordinator<U>(
                 curr_decor_time = time_instant;
             }
             AsyncTask::DecorUpdate(idx, epoch_ms) => {
-                let elapsed = init_time.elapsed();
+                let elapsed = curr_decor_time.elapsed();
                 let time_ms = elapsed.as_secs_f32() + elapsed.subsec_millis() as f32 / 1000f32;
                 // Let's say that if an event is 200 ms old we won't act on it.
                 if (epoch_ms - time_ms).abs() < 0.2 {
