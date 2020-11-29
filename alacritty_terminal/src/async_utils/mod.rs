@@ -41,36 +41,6 @@ pub enum AsyncTask {
     // Maybe add CloudWatch/etc
 }
 
-/// `get_last_updated_chart_epoch` Sends a request to the async_coordinator to
-/// get the latest update epoch of all the charts. This is used so that we know
-/// if the charts should be redrawn or not. XXX: This is not used yet.
-pub async fn get_last_updated_chart_epoch(
-    charts_tx: &mut mpsc::Sender<AsyncTask>,
-    tokio_handle: tokio::runtime::Handle,
-) -> u64 {
-    let mut charts_tx = charts_tx.clone();
-    let (last_updated_epoch_tx, last_updated_epoch_rx) = oneshot::channel();
-    tokio_handle.spawn(async move {
-        let get_latest_update_epoch =
-            charts_tx.send(AsyncTask::SendLastUpdatedEpoch(last_updated_epoch_tx)).await;
-        match get_latest_update_epoch {
-            Ok(_res) => debug!("Sent Request for SendLastUpdatedEpoch"),
-            Err(e) => error!("Sending SendLastUpdatedEpoch Task: err={:?}", e),
-        };
-    });
-    //.expect("Unable to queue async task for get_latest_update_epoch");
-    match last_updated_epoch_rx.await {
-        Ok(data) => {
-            debug!("Got response from SendLastUpdatedEpoch Task: {:?}", data);
-            data
-        }
-        Err(err) => {
-            error!("Error response from SendLastUpdatedEpoch Task: {:?}", err);
-            0u64
-        }
-    }
-}
-
 /// `increment_internal_counter` handles a request to increment different
 /// internal counter types.
 pub fn increment_internal_counter(
@@ -379,6 +349,7 @@ pub async fn async_coordinator<U>(
                 curr_decor_time = time_instant;
             }
             AsyncTask::DecorUpdate(idx, epoch_ms) => {
+                event!(Level::DEBUG, "DecorUpdate:(Idx:{})", idx);
                 let elapsed = curr_decor_time.elapsed();
                 let time_ms = elapsed.as_secs_f32() + elapsed.subsec_millis() as f32 / 1000f32;
                 // Let's say that if an event is 200 ms old we won't act on it.
