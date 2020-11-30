@@ -33,7 +33,6 @@ pub enum AsyncTask {
     SendMetricsOpenGLData(usize, usize, oneshot::Sender<(Vec<f32>, f32)>),
     SendChartDecorationsOpenGLData(usize, usize, oneshot::Sender<(Vec<f32>, f32)>),
     ChangeDisplaySize(f32, f32, f32, f32, oneshot::Sender<bool>),
-    SendLastUpdatedEpoch(oneshot::Sender<u64>),
     IncrementInputCounter(u64, f64),
     IncrementOutputCounter(u64, f64),
     DecorUpdate(usize, f32),
@@ -78,34 +77,6 @@ pub fn increment_internal_counter(
             chart.update_all_series_opengl_vecs(size);
         }
     }
-}
-
-/// `send_last_updated_epoch` handles the async_coordinator task of type
-/// SendLastUpdatedEpoch. Once the max epoch of all the charts is known, it is
-/// inserted it on the other series so that they also progress in time.
-pub fn send_last_updated_epoch(charts: &mut Vec<TimeSeriesChart>, channel: oneshot::Sender<u64>) {
-    // Under different timezones, this probably makes no sense
-    let max: u64 = charts.iter().map(|x| x.last_updated).max().unwrap_or_else(|| 0u64);
-    let updated_charts: usize = charts
-        .iter_mut()
-        .map(|x| {
-            if x.last_updated < max {
-                x.sources.iter_mut().map(|x| x.series_mut().upsert((max, None))).sum()
-            } else {
-                0usize
-            }
-        })
-        .sum();
-    debug!("send_last_updated_epoch: Progressed {} series to {} epoch", updated_charts, max);
-    match channel.send(max) {
-        Ok(()) => {
-            debug!(
-                "send_last_updated_epoch: oneshot::message sent with payload {}",
-                charts.iter().map(|x| x.last_updated).max().unwrap_or_else(|| 0u64)
-            );
-        }
-        Err(err) => error!("send_last_updated_epoch: Error sending: {:?}", err),
-    };
 }
 
 /// `load_http_response` handles the async_coordinator task of type LoadResponse
@@ -341,9 +312,6 @@ pub async fn async_coordinator<U>(
             }
             AsyncTask::IncrementOutputCounter(epoch, value) => {
                 increment_internal_counter(&mut chart_config.charts, "output", epoch, value, size);
-            }
-            AsyncTask::SendLastUpdatedEpoch(channel) => {
-                send_last_updated_epoch(&mut chart_config.charts, channel);
             }
             AsyncTask::DecorTimeSync(time_instant) => {
                 curr_decor_time = time_instant;
