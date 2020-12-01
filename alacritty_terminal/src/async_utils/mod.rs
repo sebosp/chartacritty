@@ -86,6 +86,7 @@ pub fn load_http_response(
     response: MetricRequest,
     size: ChartSizeInfo,
 ) -> Option<usize> {
+    // XXX: Move to prometheus.rs?
     let span = span!(Level::DEBUG, "load_http_response", idx = response.chart_index);
     let _enter = span.enter();
     if let Some(data) = response.data {
@@ -282,6 +283,7 @@ pub async fn async_coordinator<U>(
         match message {
             AsyncTask::LoadResponse(req) => {
                 if let Some(_items) = load_http_response(&mut chart_config.charts, req, size) {
+                    chart_config.sync_latest_epoch(size);
                     event_proxy.send_event(Event::ChartEvent);
                 }
             }

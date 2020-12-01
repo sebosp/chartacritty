@@ -409,6 +409,25 @@ impl ChartsConfig {
             }
         }
     }
+    /// Ensures that all the dashboards contain the same latest epoch.
+    pub fn sync_latest_epoch(&mut self, size_info: ChartSizeInfo) {
+        let max: u64 = self.charts.iter().map(|x| x.last_updated).max().unwrap_or_else(|| 0u64);
+        let updated_charts: usize = self
+            .charts
+            .iter_mut()
+            .map(|x| {
+                if x.last_updated < max {
+                    let total_updated =
+                        x.sources.iter_mut().map(|x| x.series_mut().upsert((max, None))).sum();
+                    x.update_all_series_opengl_vecs(size_info);
+                    total_updated
+                } else {
+                    0usize
+                }
+            })
+            .sum();
+        debug!("send_last_updated_epoch: Progressed {} series to {} epoch", updated_charts, max);
+    }
 }
 
 /// `TimeSeriesChart` has an array of TimeSeries to display, it contains the
