@@ -611,7 +611,7 @@ pub struct TermChartsHandle {
     pub tokio_handle: tokio::runtime::Handle,
 
     /// Channel to communicate with the chart background thread.
-    pub charts_tx: tokio_mpsc::Sender<crate::charts::async_utils::AsyncChartTask>,
+    pub charts_tx: tokio_mpsc::Sender<crate::async_utils::AsyncTask>,
 
     /// Wether or not the charts are enabled
     enabled: bool,
@@ -803,7 +803,7 @@ impl<T> Term<T> {
         size: SizeInfo,
         event_proxy: T,
         tokio_handle: tokio::runtime::Handle,
-        charts_tx: tokio_mpsc::Sender<crate::charts::async_utils::AsyncChartTask>,
+        charts_tx: tokio_mpsc::Sender<crate::async_utils::AsyncTask>,
     ) -> Term<T> {
         // TODO: On Update, we should refresh this.
         let num_cols = size.cols();
@@ -1067,9 +1067,9 @@ impl<T> Term<T> {
         let mut charts_tx = self.charts_handle.charts_tx.clone();
         self.charts_handle.tokio_handle.spawn(async move {
             let send_increment_input_counter = charts_tx.send(if counter_type == "input" {
-                crate::charts::async_utils::AsyncChartTask::IncrementInputCounter(now, increment)
+                crate::async_utils::AsyncTask::IncrementInputCounter(now, increment)
             } else {
-                crate::charts::async_utils::AsyncChartTask::IncrementOutputCounter(now, increment)
+                crate::async_utils::AsyncTask::IncrementOutputCounter(now, increment)
             });
             match send_increment_input_counter.await {
                 Err(err) => error!("Sending IncrementInputCounter Task: err={:?}", err),
@@ -2457,7 +2457,7 @@ pub mod test {
             dpr: 1.,
         };
         let (tokio_handle, charts_tx, _tokio_shutdown) =
-            crate::charts::async_utils::tokio_default_setup(Mock);
+            crate::async_utils::tokio_default_setup(Mock);
         let mut term = Term::new(&Config::<()>::default(), size, (), tokio_handle, charts_tx);
 
         // Fill terminal with content.
@@ -2518,7 +2518,7 @@ mod tests {
             dpr: 1.0,
         };
         let (tokio_handle, charts_tx, _tokio_shutdown) =
-            crate::charts::async_utils::tokio_default_setup(Mock);
+            crate::async_utils::tokio_default_setup(Mock);
         let mut term = Term::new(&MockConfig::default(), size, Mock, tokio_handle, charts_tx);
         let mut grid: Grid<Cell> = Grid::new(Line(3), Column(5), 0, Cell::default());
         for i in 0..5 {
@@ -2576,7 +2576,7 @@ mod tests {
             dpr: 1.0,
         };
         let (tokio_handle, charts_tx, _tokio_shutdown) =
-            crate::charts::async_utils::tokio_default_setup(Mock);
+            crate::async_utils::tokio_default_setup(Mock);
         let mut term = Term::new(&MockConfig::default(), size, Mock, tokio_handle, charts_tx);
         let mut grid: Grid<Cell> = Grid::new(Line(1), Column(5), 0, Cell::default());
         for i in 0..5 {
@@ -2607,7 +2607,7 @@ mod tests {
             dpr: 1.0,
         };
         let (tokio_handle, charts_tx, _tokio_shutdown) =
-            crate::charts::async_utils::tokio_default_setup(Mock);
+            crate::async_utils::tokio_default_setup(Mock);
         let mut term = Term::new(&MockConfig::default(), size, Mock, tokio_handle, charts_tx);
         let mut grid: Grid<Cell> = Grid::new(Line(3), Column(3), 0, Cell::default());
         for l in 0..3 {
@@ -2654,7 +2654,7 @@ mod tests {
             dpr: 1.0,
         };
         let (tokio_handle, charts_tx, _tokio_shutdown) =
-            crate::charts::async_utils::tokio_default_setup(Mock);
+            crate::async_utils::tokio_default_setup(Mock);
         let mut term = Term::new(&MockConfig::default(), size, Mock, tokio_handle, charts_tx);
         let cursor = Point::new(Line(0), Column(0));
         term.configure_charset(CharsetIndex::G0, StandardCharset::SpecialCharacterAndLineDrawing);
@@ -2675,7 +2675,7 @@ mod tests {
             dpr: 1.0,
         };
         let (tokio_handle, charts_tx, _tokio_shutdown) =
-            crate::charts::async_utils::tokio_default_setup(Mock);
+            crate::async_utils::tokio_default_setup(Mock);
         let mut term = Term::new(&MockConfig::default(), size, Mock, tokio_handle, charts_tx);
 
         // Add one line of scrollback.
@@ -2707,7 +2707,7 @@ mod tests {
             dpr: 1.0,
         };
         let (tokio_handle, charts_tx, _tokio_shutdown) =
-            crate::charts::async_utils::tokio_default_setup(Mock);
+            crate::async_utils::tokio_default_setup(Mock);
         let mut term = Term::new(&MockConfig::default(), size, Mock, tokio_handle, charts_tx);
 
         // Create 10 lines of scrollback.
@@ -2737,7 +2737,7 @@ mod tests {
             dpr: 1.0,
         };
         let (tokio_handle, charts_tx, _tokio_shutdown) =
-            crate::charts::async_utils::tokio_default_setup(Mock);
+            crate::async_utils::tokio_default_setup(Mock);
         let mut term = Term::new(&MockConfig::default(), size, Mock, tokio_handle, charts_tx);
 
         // Create 10 lines of scrollback.
@@ -2773,7 +2773,7 @@ mod tests {
             dpr: 1.0,
         };
         let (tokio_handle, charts_tx, _tokio_shutdown) =
-            crate::charts::async_utils::tokio_default_setup(Mock);
+            crate::async_utils::tokio_default_setup(Mock);
         let mut term = Term::new(&MockConfig::default(), size, Mock, tokio_handle, charts_tx);
 
         // Create 10 lines of scrollback.
@@ -2803,7 +2803,7 @@ mod tests {
             dpr: 1.0,
         };
         let (tokio_handle, charts_tx, _tokio_shutdown) =
-            crate::charts::async_utils::tokio_default_setup(Mock);
+            crate::async_utils::tokio_default_setup(Mock);
         let mut term = Term::new(&MockConfig::default(), size, Mock, tokio_handle, charts_tx);
 
         // Create 10 lines of scrollback.
@@ -2839,7 +2839,7 @@ mod tests {
             dpr: 1.0,
         };
         let (tokio_handle, charts_tx, _tokio_shutdown) =
-            crate::charts::async_utils::tokio_default_setup(Mock);
+            crate::async_utils::tokio_default_setup(Mock);
         let mut term = Term::new(&MockConfig::default(), size, Mock, tokio_handle, charts_tx);
 
         // Title None by default.
@@ -2944,7 +2944,7 @@ mod benches {
         let config = MockConfig::default();
 
         let (tokio_handle, charts_tx, _tokio_shutdown) =
-            crate::charts::async_utils::tokio_default_setup(Mock);
+            crate::async_utils::tokio_default_setup(Mock);
         let mut terminal = Term::new(&config, &size, Mock, tokio_handle, charts_tx);
         mem::swap(&mut terminal.grid, &mut grid);
 

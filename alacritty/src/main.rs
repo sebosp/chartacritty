@@ -141,12 +141,6 @@ fn run(
 
     info!("PTY dimensions: {:?} x {:?}", display.size_info.lines(), display.size_info.cols());
 
-    // Copy the terminal size into the alacritty_terminal::charts SizeInfo copy.
-    let charts_size_info = alacritty_terminal::charts::ChartSizeInfo {
-        term_size: display.size_info,
-        ..alacritty_terminal::charts::ChartSizeInfo::default()
-    };
-
     // Create the channel that is used to communicate with the
     // charts background task.
     let (charts_tx, charts_rx) = mpsc::channel(4_096usize);
@@ -155,15 +149,14 @@ fn run(
     let (handle_tx, handle_rx) = std::sync::mpsc::channel();
     // Start the Async I/O runtime, this needs to run in a background thread because in OSX, only
     // the main thread can write to the graphics card.
-    let (_tokio_thread, tokio_shutdown) =
-        alacritty_terminal::charts::async_utils::spawn_async_tasks(
-            config.charts.clone(),
-            charts_tx.clone(),
-            charts_rx,
-            handle_tx,
-            charts_size_info,
-            event_proxy.clone(),
-        );
+    let (_tokio_thread, tokio_shutdown) = alacritty_terminal::async_utils::spawn_async_tasks(
+        &config,
+        charts_tx.clone(),
+        charts_rx,
+        handle_tx,
+        displaye.size_info,
+        event_proxy.clone(),
+    );
     let tokio_handle =
         handle_rx.recv().expect("Unable to get the tokio handle in a background thread");
 
@@ -208,24 +201,7 @@ fn run(
     // The event loop channel allows write requests from the event processor
     // to be sent to the pty loop and ultimately written to the pty.
     let loop_tx = event_loop.channel();
-    // XXX: Figure out what happened with needs_draw
-    // let mut chart_last_drawn = 0; // Keep an epoch for the last time we drew the charts
-    // if terminal_lock.needs_draw()
-    // || chart_last_drawn
-    // != alacritty_terminal::charts::async_utils::get_last_updated_chart_epoch(
-    // charts_tx.clone(),
-    // tokio_handle.clone(),
-    // )
-    // {
-    // display.handle_resize(
-    // &mut terminal_lock,
-    // &config,
-    // &mut resize_handle,
-    // &mut processor,
-    // charts_tx.clone(),
-    // tokio_handle.clone(),
-    // );
-    //
+
     // Create a config monitor when config was loaded from path.
     //
     // The monitor watches the config file for changes and reloads it. Pending
