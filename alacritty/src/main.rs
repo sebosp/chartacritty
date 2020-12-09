@@ -154,7 +154,7 @@ fn run(
         charts_tx.clone(),
         charts_rx,
         handle_tx,
-        displaye.size_info,
+        display.size_info,
         event_proxy.clone(),
     );
     let tokio_handle =
