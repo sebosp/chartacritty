@@ -8,11 +8,14 @@ use crate::term::{ClipboardType, SizeInfo};
 pub enum Event {
     MouseCursorDirty,
     Title(String),
+    ResetTitle,
     ClipboardStore(ClipboardType, String),
     ClipboardLoad(ClipboardType, Arc<dyn Fn(&str) -> String + Sync + Send + 'static>),
     Wakeup,
-    Urgent,
+    Bell,
     Exit,
+    DecorEvent, // a decoration may request an update to draw the terminal
+    ChartEvent, // Chart data has been updated and charts should be redrawn
 }
 
 impl Debug for Event {
@@ -20,11 +23,14 @@ impl Debug for Event {
         match self {
             Event::MouseCursorDirty => write!(f, "MouseCursorDirty"),
             Event::Title(title) => write!(f, "Title({})", title),
+            Event::ResetTitle => write!(f, "ResetTitle"),
             Event::ClipboardStore(ty, text) => write!(f, "ClipboardStore({:?}, {})", ty, text),
             Event::ClipboardLoad(ty, _) => write!(f, "ClipboardLoad({:?})", ty),
             Event::Wakeup => write!(f, "Wakeup"),
-            Event::Urgent => write!(f, "Urgent"),
+            Event::Bell => write!(f, "Bell"),
             Event::Exit => write!(f, "Exit"),
+            Event::DecorEvent => write!(f, "DecorEvent"),
+            Event::ChartEvent => write!(f, "ChartEvent"),
         }
     }
 }

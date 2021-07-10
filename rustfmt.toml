@@ -11,3 +11,4 @@ newline_style = "Unix"
 format_strings = true
 wrap_comments = true
 comment_width = 100
+edition = "2018"

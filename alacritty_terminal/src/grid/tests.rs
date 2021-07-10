@@ -1,7 +1,6 @@
 //! Tests for the Grid.
 
-use super::{BidirectionalIterator, Grid};
-use crate::grid::GridCell;
+use super::{BidirectionalIterator, Dimensions, Grid, GridCell};
 use crate::index::{Column, Line, Point};
 use crate::term::cell::{Cell, Flags};
 
@@ -57,7 +56,7 @@ fn visible_to_buffer() {
     assert_eq!(point, Point::new(4, Column(3)));
 }
 
-// Scroll up moves lines upwards.
+// Scroll up moves lines upward.
 #[test]
 fn scroll_up() {
     let mut grid = Grid::new(Line(10), Column(1), 0, 0);
@@ -89,7 +88,7 @@ fn scroll_up() {
     assert_eq!(grid[Line(9)].occ, 0);
 }
 
-// Scroll down moves lines downwards.
+// Scroll down moves lines downward.
 #[test]
 fn scroll_down() {
     let mut grid = Grid::new(Line(10), Column(1), 0, 0);
@@ -171,7 +170,7 @@ fn shrink_reflow() {
 
     grid.resize(true, Line(1), Column(2));
 
-    assert_eq!(grid.len(), 3);
+    assert_eq!(grid.total_lines(), 3);
 
     assert_eq!(grid[2].len(), 2);
     assert_eq!(grid[2][Column(0)], cell('1'));
@@ -198,7 +197,7 @@ fn shrink_reflow_twice() {
     grid.resize(true, Line(1), Column(4));
     grid.resize(true, Line(1), Column(2));
 
-    assert_eq!(grid.len(), 3);
+    assert_eq!(grid.total_lines(), 3);
 
     assert_eq!(grid[2].len(), 2);
     assert_eq!(grid[2][Column(0)], cell('1'));
@@ -224,7 +223,7 @@ fn shrink_reflow_empty_cell_inside_line() {
 
     grid.resize(true, Line(1), Column(2));
 
-    assert_eq!(grid.len(), 2);
+    assert_eq!(grid.total_lines(), 2);
 
     assert_eq!(grid[1].len(), 2);
     assert_eq!(grid[1][Column(0)], cell('1'));
@@ -236,7 +235,7 @@ fn shrink_reflow_empty_cell_inside_line() {
 
     grid.resize(true, Line(1), Column(1));
 
-    assert_eq!(grid.len(), 4);
+    assert_eq!(grid.total_lines(), 4);
 
     assert_eq!(grid[3].len(), 1);
     assert_eq!(grid[3][Column(0)], wrap_cell('1'));
@@ -261,7 +260,7 @@ fn grow_reflow() {
 
     grid.resize(true, Line(2), Column(3));
 
-    assert_eq!(grid.len(), 2);
+    assert_eq!(grid.total_lines(), 2);
 
     assert_eq!(grid[1].len(), 3);
     assert_eq!(grid[1][Column(0)], cell('1'));
@@ -287,7 +286,7 @@ fn grow_reflow_multiline() {
 
     grid.resize(true, Line(3), Column(6));
 
-    assert_eq!(grid.len(), 3);
+    assert_eq!(grid.total_lines(), 3);
 
     assert_eq!(grid[2].len(), 6);
     assert_eq!(grid[2][Column(0)], cell('1'));
@@ -318,7 +317,7 @@ fn grow_reflow_disabled() {
 
     grid.resize(false, Line(2), Column(3));
 
-    assert_eq!(grid.len(), 2);
+    assert_eq!(grid.total_lines(), 2);
 
     assert_eq!(grid[1].len(), 3);
     assert_eq!(grid[1][Column(0)], cell('1'));
@@ -342,7 +341,7 @@ fn shrink_reflow_disabled() {
 
     grid.resize(false, Line(1), Column(2));
 
-    assert_eq!(grid.len(), 1);
+    assert_eq!(grid.total_lines(), 1);
 
     assert_eq!(grid[0].len(), 2);
     assert_eq!(grid[0][Column(0)], cell('1'));

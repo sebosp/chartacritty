@@ -2,8 +2,6 @@
 members = [
     "alacritty",
     "alacritty_terminal",
-    "alacritty_charts",
-    "font",
 ]
 
 [profile.release]
