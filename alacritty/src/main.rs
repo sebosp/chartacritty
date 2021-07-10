@@ -1,12 +1,16 @@
 //! Alacritty - The GPU Enhanced Terminal.
 
+#![warn(rust_2018_idioms, future_incompatible)]
 #![deny(clippy::all, clippy::if_not_else, clippy::enum_glob_use, clippy::wrong_pub_self_convention)]
-#![cfg_attr(all(test, feature = "bench"), feature(test))]
+#![cfg_attr(feature = "cargo-clippy", deny(warnings))]
 // With the default subsystem, 'console', windows creates an additional console
 // window for the program.
 // This is silently ignored on non-windows systems.
 // See https://msdn.microsoft.com/en-us/library/4cc7ya5b.aspx for more details.
 #![windows_subsystem = "windows"]
+
+#[cfg(not(any(feature = "x11", feature = "wayland", target_os = "macos", windows)))]
+compile_error!(r#"at least one of the "x11"/"wayland" features must be enabled"#);
 
 #[cfg(target_os = "macos")]
 use std::env;
@@ -22,6 +26,7 @@ use winapi::um::wincon::{AttachConsole, FreeConsole, ATTACH_PARENT_PROCESS};
 
 use alacritty_terminal::charts::tokio::sync::mpsc;
 use alacritty_terminal::event_loop::{self, EventLoop, Msg};
+use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::Term;
 use alacritty_terminal::tty;
@@ -29,25 +34,18 @@ use alacritty_terminal::tty;
 mod cli;
 mod clipboard;
 mod config;
-mod cursor;
 mod daemon;
 mod display;
 mod event;
 mod input;
-#[cfg(target_os = "macos")]
-mod locale;
 mod logging;
+#[cfg(target_os = "macos")]
+mod macos;
 mod message_bar;
-mod meter;
 #[cfg(windows)]
 mod panic;
 mod renderer;
 mod scheduler;
-mod url;
-mod window;
-
-#[cfg(not(any(target_os = "macos", windows)))]
-mod wayland_theme;
 
 mod gl {
     #![allow(clippy::all)]
@@ -59,6 +57,8 @@ use crate::config::monitor;
 use crate::config::Config;
 use crate::display::Display;
 use crate::event::{Event, EventProxy, Processor};
+#[cfg(target_os = "macos")]
+use crate::macos::locale;
 use crate::message_bar::MessageBuffer;
 
 fn main() {
@@ -124,10 +124,8 @@ fn run(
 ) -> Result<(), Box<dyn Error>> {
     info!("Welcome to Alacritty");
 
-    info!("Configuration files loaded from:");
-    for path in &config.ui_config.config_paths {
-        info!("  \"{}\"", path.display());
-    }
+    // Log the configuration paths.
+    log_config_path(&config);
 
     // Set environment variables.
     tty::setup_env(&config);
@@ -139,7 +137,11 @@ fn run(
     // The display manages a window and can draw the terminal.
     let display = Display::new(&config, &window_event_loop)?;
 
-    info!("PTY dimensions: {:?} x {:?}", display.size_info.lines(), display.size_info.cols());
+    info!(
+        "PTY dimensions: {:?} x {:?}",
+        display.size_info.screen_lines(),
+        display.size_info.columns()
+    );
 
     // Create the channel that is used to communicate with the
     // charts background task.
@@ -179,10 +181,7 @@ fn run(
     // The PTY forks a process to run the shell on the slave side of the
     // pseudoterminal. A file descriptor for the master side is retained for
     // reading/writing to the shell.
-    #[cfg(not(any(target_os = "macos", windows)))]
     let pty = tty::new(&config, &display.size_info, display.window.x11_window_id());
-    #[cfg(any(target_os = "macos", windows))]
-    let pty = tty::new(&config, &display.size_info, None);
 
     // Create the pseudoterminal I/O loop.
     //
@@ -206,7 +205,7 @@ fn run(
     //
     // The monitor watches the config file for changes and reloads it. Pending
     // config changes are processed in the main loop.
-    if config.ui_config.live_config_reload() {
+    if config.ui_config.live_config_reload {
         monitor::watch(config.ui_config.config_paths.clone(), event_proxy);
     }
 
@@ -263,4 +262,17 @@ fn run(
     info!("Goodbye");
 
     Ok(())
+}
+
+fn log_config_path(config: &Config) {
+    if config.ui_config.config_paths.is_empty() {
+        return;
+    }
+
+    let mut msg = String::from("Configuration files loaded from:");
+    for path in &config.ui_config.config_paths {
+        msg.push_str(&format!("\n  {:?}", path.display()));
+    }
+
+    info!("{}", msg);
 }

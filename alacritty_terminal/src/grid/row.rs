@@ -3,15 +3,17 @@
 use std::cmp::{max, min};
 use std::ops::{Index, IndexMut};
 use std::ops::{Range, RangeFrom, RangeFull, RangeTo, RangeToInclusive};
+use std::ptr;
 use std::slice;
 
 use serde::{Deserialize, Serialize};
 
 use crate::grid::GridCell;
 use crate::index::Column;
+use crate::term::cell::ResetDiscriminant;
 
 /// A row in the grid.
-#[derive(Default, Clone, Debug, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Default, Clone, Debug)]
 pub struct Row<T> {
     inner: Vec<T>,
 
@@ -28,37 +30,58 @@ impl<T: PartialEq> PartialEq for Row<T> {
     }
 }
 
-impl<T: Copy> Row<T> {
-    pub fn new(columns: Column, template: T) -> Row<T>
-    where
-        T: GridCell,
-    {
-        let occ = if template.is_empty() { 0 } else { columns.0 };
-        Row { inner: vec![template; columns.0], occ }
+impl<T: Clone + Default> Row<T> {
+    /// Create a new terminal row.
+    ///
+    /// Ideally the `template` should be `Copy` in all performance sensitive scenarios.
+    pub fn new(columns: usize) -> Row<T> {
+        debug_assert!(columns >= 1);
+
+        let mut inner: Vec<T> = Vec::with_capacity(columns);
+
+        // This is a slightly optimized version of `std::vec::Vec::resize`.
+        unsafe {
+            let mut ptr = inner.as_mut_ptr();
+
+            for _ in 1..columns {
+                ptr::write(ptr, T::default());
+                ptr = ptr.offset(1);
+            }
+            ptr::write(ptr, T::default());
+
+            inner.set_len(columns);
+        }
+
+        Row { inner, occ: 0 }
     }
 
-    pub fn grow(&mut self, cols: Column, template: T) {
-        if self.inner.len() >= cols.0 {
+    /// Increase the number of columns in the row.
+    #[inline]
+    pub fn grow(&mut self, columns: usize) {
+        if self.inner.len() >= columns {
             return;
         }
 
-        self.inner.append(&mut vec![template; cols.0 - self.len()]);
+        self.inner.resize_with(columns, T::default);
     }
 
-    pub fn shrink(&mut self, cols: Column) -> Option<Vec<T>>
+    /// Reduce the number of columns in the row.
+    ///
+    /// This will return all non-empty cells that were removed.
+    pub fn shrink(&mut self, columns: usize) -> Option<Vec<T>>
     where
         T: GridCell,
     {
-        if self.inner.len() <= cols.0 {
+        if self.inner.len() <= columns {
             return None;
         }
 
         // Split off cells for a new row.
-        let mut new_row = self.inner.split_off(cols.0);
+        let mut new_row = self.inner.split_off(columns);
         let index = new_row.iter().rposition(|c| !c.is_empty()).map(|i| i + 1).unwrap_or(0);
         new_row.truncate(index);
 
-        self.occ = min(self.occ, cols.0);
+        self.occ = min(self.occ, columns);
 
         if new_row.is_empty() {
             None
@@ -69,21 +92,22 @@ impl<T: Copy> Row<T> {
 
     /// Reset all cells in the row to the `template` cell.
     #[inline]
-    pub fn reset(&mut self, template: T)
+    pub fn reset<D>(&mut self, template: &T)
     where
-        T: GridCell + PartialEq,
+        T: ResetDiscriminant<D> + GridCell,
+        D: PartialEq,
     {
         debug_assert!(!self.inner.is_empty());
 
         // Mark all cells as dirty if template cell changed.
         let len = self.inner.len();
-        if !self.inner[len - 1].fast_eq(template) {
+        if self.inner[len - 1].discriminant() != template.discriminant() {
             self.occ = len;
         }
 
-        // Reset every dirty in the row.
-        for item in &mut self.inner[..self.occ] {
-            *item = template;
+        // Reset every dirty cell in the row.
+        for item in &mut self.inner[0..self.occ] {
+            item.reset(template);
         }
 
         self.occ = 0;

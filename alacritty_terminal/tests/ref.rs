@@ -2,14 +2,14 @@ use serde::Deserialize;
 use serde_json as json;
 
 use std::fs::{self, File};
-use std::io::{self, Read};
+use std::io::Read;
 use std::path::Path;
 
 use alacritty_terminal::ansi;
 use alacritty_terminal::config::MockConfig;
 use alacritty_terminal::event::{Event, EventListener};
 use alacritty_terminal::grid::{Dimensions, Grid};
-use alacritty_terminal::index::Column;
+use alacritty_terminal::index::{Column, Line};
 use alacritty_terminal::term::cell::Cell;
 use alacritty_terminal::term::{SizeInfo, Term};
 
@@ -84,7 +84,9 @@ struct RefConfig {
     history_size: u32,
 }
 
+#[derive(Copy, Clone)]
 struct Mock;
+
 impl EventListener for Mock {
     fn send_event(&self, _event: Event) {}
 }
@@ -108,19 +110,19 @@ fn ref_test(dir: &Path) {
     let mut parser = ansi::Processor::new();
 
     for byte in recording {
-        parser.advance(&mut terminal, byte, &mut io::sink());
+        parser.advance(&mut terminal, byte);
     }
 
     // Truncate invisible lines from the grid.
     let mut term_grid = terminal.grid().clone();
-    term_grid.initialize_all(Cell::default());
+    term_grid.initialize_all();
     term_grid.truncate();
 
     if grid != term_grid {
         for i in 0..grid.total_lines() {
-            for j in 0..grid.cols().0 {
-                let cell = term_grid[i][Column(j)];
-                let original_cell = grid[i][Column(j)];
+            for j in 0..grid.columns() {
+                let cell = &term_grid[Line(i as i32)][Column(j)];
+                let original_cell = &grid[Line(i as i32)][Column(j)];
                 if original_cell != cell {
                     println!(
                         "[{i}][{j}] {original:?} => {now:?}",

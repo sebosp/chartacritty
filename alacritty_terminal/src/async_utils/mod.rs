@@ -102,18 +102,28 @@ pub fn load_http_response(
             {
                 match prom.load_prometheus_response(data) {
                     Ok(num_records) => {
-                        event!(Level::DEBUG,
-                            "load_http_response:(Chart: {}, Series: {}) {} records from {} into TimeSeries",
-                            response.chart_index, response.series_index, num_records, response.source_url
+                        event!(
+                            Level::DEBUG,
+                            "load_http_response:(Chart: {}, Series: {}) {} records from {} into \
+                             TimeSeries",
+                            response.chart_index,
+                            response.series_index,
+                            num_records,
+                            response.source_url
                         );
                         ok_records = num_records;
-                    }
+                    },
                     Err(err) => {
-                        event!(Level::DEBUG,
-                            "load_http_response:(Chart: {}, Series: {}) Error Loading {} into TimeSeries: {:?}",
-                            response.chart_index, response.series_index, response.source_url, err
+                        event!(
+                            Level::DEBUG,
+                            "load_http_response:(Chart: {}, Series: {}) Error Loading {} into \
+                             TimeSeries: {:?}",
+                            response.chart_index,
+                            response.series_index,
+                            response.source_url,
+                            err
                         );
-                    }
+                    },
                 }
                 event!(
                     Level::DEBUG,
@@ -167,7 +177,7 @@ pub fn send_metrics_opengl_vecs(
                 chart_index,
                 series_index
             );
-        }
+        },
         Err(err) => event!(
             Level::ERROR,
             "send_metrics_opengl_vecs:(Chart: {}, Series: {}) Error sending: {:?}",
@@ -209,7 +219,7 @@ pub fn send_chart_decorations_opengl_data(
                 "send_decorations_opengl_data: oneshot::message sent for index: {}",
                 chart_index
             );
-        }
+        },
         Err(err) => event!(Level::ERROR, "send_decorations_opengl_data: Error sending: {:?}", err),
     };
 }
@@ -257,14 +267,12 @@ pub fn change_display_size(
 /// `async_coordinator` receives messages from the tasks about data loaded from
 /// the network, it owns the charts array and is the single point by which data can
 /// be loaded or requested. XXX: Config updates are not possible yet.
-pub async fn async_coordinator<U>(
+pub async fn async_coordinator<T>(
     mut rx: mpsc::Receiver<AsyncTask>,
     mut chart_config: crate::charts::ChartsConfig,
     size_info: SizeInfo,
-    event_proxy: U,
-) where
-    U: EventListener + Send + 'static,
-{
+    event_proxy: T,
+) {
     event!(Level::DEBUG, "async_coordinator: Starting, terminal size info: {:?}", size_info,);
     // This Instant is synchronized with the decorations thread, mainly used so that decorations
     // are ran under specific circumstances
@@ -286,10 +294,10 @@ pub async fn async_coordinator<U>(
                     chart_config.sync_latest_epoch(size);
                     event_proxy.send_event(Event::ChartEvent);
                 }
-            }
+            },
             AsyncTask::SendMetricsOpenGLData(chart_index, data_index, channel) => {
                 send_metrics_opengl_vecs(&chart_config.charts, chart_index, data_index, channel);
-            }
+            },
             AsyncTask::SendChartDecorationsOpenGLData(chart_index, data_index, channel) => {
                 send_chart_decorations_opengl_data(
                     &chart_config.charts,
@@ -297,7 +305,7 @@ pub async fn async_coordinator<U>(
                     data_index,
                     channel,
                 );
-            }
+            },
             AsyncTask::ChangeDisplaySize(height, width, padding_y, padding_x, channel) => {
                 change_display_size(
                     &mut chart_config.charts,
@@ -308,16 +316,16 @@ pub async fn async_coordinator<U>(
                     padding_x,
                     channel,
                 );
-            }
+            },
             AsyncTask::IncrementInputCounter(epoch, value) => {
                 increment_internal_counter(&mut chart_config.charts, "input", epoch, value, size);
-            }
+            },
             AsyncTask::IncrementOutputCounter(epoch, value) => {
                 increment_internal_counter(&mut chart_config.charts, "output", epoch, value, size);
-            }
+            },
             AsyncTask::DecorTimeSync(time_instant) => {
                 curr_decor_time = time_instant;
-            }
+            },
             AsyncTask::DecorUpdate(idx, epoch_ms) => {
                 event!(Level::DEBUG, "DecorUpdate:(Idx:{})", idx);
                 let elapsed = curr_decor_time.elapsed();
@@ -328,7 +336,7 @@ pub async fn async_coordinator<U>(
                     // XXX: Maybe send over the decoration max time instead of the 0.2 seconds
                     event_proxy.send_event(Event::DecorEvent);
                 }
-            }
+            },
         };
     }
     event!(Level::ERROR, "async_coordinator: Exiting. This shouldn't happen");
@@ -378,7 +386,7 @@ async fn fetch_prometheus_response(
             // Instead of an error, return this so we can retry later.
             // XXX: Maybe exponential retries in the future.
             Ok(())
-        }
+        },
         Ok(value) => {
             event!(
                 Level::DEBUG,
@@ -400,13 +408,16 @@ async fn fetch_prometheus_response(
                 .await;
             if let Err(err) = tx_res {
                 event!(
-                Level::ERROR,
-                    "fetch_prometheus_response:(Chart: {}, Series: {}) unable to send data back to coordinator; err={:?}",
-                    chart_index, series_index, err
+                    Level::ERROR,
+                    "fetch_prometheus_response:(Chart: {}, Series: {}) unable to send data back \
+                     to coordinator; err={:?}",
+                    chart_index,
+                    series_index,
+                    err
                 )
             }
             Ok(())
-        }
+        },
     }
 }
 
@@ -440,7 +451,15 @@ pub fn spawn_charts_intervals(
                 };
                 let charts_tx = charts_tx.clone();
                 tokio_handle.spawn(async move {
-                    spawn_datasource_interval_polls(&data_request, charts_tx).await.unwrap_or_else(|_| panic!("spawn_charts_intervals:(Chart: {}, Series: {}) Error spawning datasource internal polls", chart_index, series_index));
+                    spawn_datasource_interval_polls(&data_request, charts_tx).await.unwrap_or_else(
+                        |_| {
+                            panic!(
+                                "spawn_charts_intervals:(Chart: {}, Series: {}) Error spawning \
+                                 datasource internal polls",
+                                chart_index, series_index
+                            )
+                        },
+                    );
                 });
             }
             series_index += 1;
@@ -489,7 +508,7 @@ pub async fn spawn_datasource_interval_polls(
                     async_metric_item.series_index,
                     res
                 );
-            }
+            },
             Err(()) => return Err(()),
         }
     }
@@ -532,10 +551,10 @@ pub fn get_metric_opengl_data(
             ),
         }
     });
-    /*.expect(&format!(
-        "get_metric_opengl_data:(Chart: {}, Series: {}) Unable to spawn get_opengl_task",
-        chart_idx, series_idx
-    ));*/
+    // .expect(&format!(
+    // "get_metric_opengl_data:(Chart: {}, Series: {}) Unable to spawn get_opengl_task",
+    // chart_idx, series_idx
+    // ));
     tokio_handle.block_on(async {
         match opengl_rx.await {
             Ok(data) => {
@@ -548,7 +567,7 @@ pub fn get_metric_opengl_data(
                     data
                 );
                 data
-            }
+            },
             Err(err) => {
                 event!(
                     Level::ERROR,
@@ -559,20 +578,17 @@ pub fn get_metric_opengl_data(
                     err
                 );
                 (vec![], 0f32)
-            }
+            },
         }
     })
 }
 
-/// `tokio_default_setup` creates a default channels and handles, this should be used mostly for testing
-/// to avoid having to create all the tokio boilerplate, I would like to return a struct but
+/// `tokio_default_setup` creates a default channels and handles, this should be used mostly for
+/// testing to avoid having to create all the tokio boilerplate, I would like to return a struct but
 /// the ownership and cloning and moving of the separate parts does not seem possible then
-pub fn tokio_default_setup<U>(
-    event_proxy: U,
-) -> (tokio::runtime::Handle, mpsc::Sender<AsyncTask>, oneshot::Sender<()>)
-where
-    U: EventListener + Send + 'static,
-{
+pub fn tokio_default_setup<T>(
+    event_proxy: T,
+) -> (tokio::runtime::Handle, mpsc::Sender<AsyncTask>, oneshot::Sender<()>) {
     // Create the channel that is used to communicate with the
     // charts background task.
     let (charts_tx, charts_rx) = mpsc::channel(4_096usize);
@@ -596,17 +612,14 @@ where
 }
 
 /// `spawn_async_tasks` Starts a background thread to be used for tokio for async tasks
-pub fn spawn_async_tasks<C, U>(
+pub fn spawn_async_tasks<C, T>(
     config: &Config<C>,
     charts_tx: mpsc::Sender<AsyncTask>,
     charts_rx: mpsc::Receiver<AsyncTask>,
     handle_tx: std::sync::mpsc::Sender<tokio::runtime::Handle>,
     size_info: SizeInfo,
-    event_proxy: U,
-) -> (thread::JoinHandle<()>, oneshot::Sender<()>)
-where
-    U: EventListener + Send + 'static,
-{
+    event_proxy: T,
+) -> (thread::JoinHandle<()>, oneshot::Sender<()>) {
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let chart_config = config.charts.clone();
     let decor_config = config.decorations.clone();
@@ -646,10 +659,7 @@ where
 }
 
 /// `run` is an example use of the crate without drawing the data.
-pub fn run<U>(config: crate::config::MockConfig, event_proxy: U)
-where
-    U: EventListener + Send + 'static,
-{
+pub fn run<T>(config: crate::config::MockConfig, event_proxy: T) {
     let size_info = SizeInfo {
         width: 100.,
         height: 100.,

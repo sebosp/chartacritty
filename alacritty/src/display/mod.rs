@@ -4,9 +4,10 @@ use tokio::sync::mpsc as futures_mpsc;
 use tokio::sync::oneshot;
 
 use std::cmp::min;
+use std::convert::TryFrom;
 use std::f64;
 use std::fmt::{self, Formatter};
-#[cfg(not(any(target_os = "macos", windows)))]
+#[cfg(all(feature = "wayland", not(any(target_os = "macos", windows))))]
 use std::sync::atomic::Ordering;
 use std::time::Instant;
 
@@ -19,28 +20,35 @@ use glutin::window::CursorIcon;
 use log::{debug, error, info};
 use parking_lot::MutexGuard;
 use unicode_width::UnicodeWidthChar;
-#[cfg(not(any(target_os = "macos", windows)))]
+#[cfg(all(feature = "wayland", not(any(target_os = "macos", windows))))]
 use wayland_client::{Display as WaylandDisplay, EventQueue};
 
-#[cfg(target_os = "macos")]
-use crossfont::set_font_smoothing;
 use crossfont::{self, Rasterize, Rasterizer};
 
+use alacritty_terminal::ansi::NamedColor;
 use alacritty_terminal::event::{EventListener, OnResize};
+use alacritty_terminal::grid::Dimensions as _;
 use alacritty_terminal::index::{Column, Direction, Line, Point};
 use alacritty_terminal::selection::Selection;
-use alacritty_terminal::term::{RenderableCell, SizeInfo, Term, TermMode};
+use alacritty_terminal::term::cell::Flags;
+use alacritty_terminal::term::{SizeInfo, Term, TermMode, MIN_COLUMNS, MIN_SCREEN_LINES};
 
 use crate::config::font::Font;
+use crate::config::window::Dimensions;
+#[cfg(not(windows))]
 use crate::config::window::StartupMode;
 use crate::config::Config;
+use crate::display::bell::VisualBell;
+use crate::display::color::List;
+use crate::display::content::RenderableContent;
+use crate::display::cursor::IntoRects;
+use crate::display::hint::{HintMatch, HintState};
+use crate::display::meter::Meter;
+use crate::display::window::Window;
 use crate::event::{Mouse, SearchState};
 use crate::message_bar::{MessageBuffer, MessageType};
-use crate::meter::Meter;
 use crate::renderer::rects::{RenderLines, RenderRect};
 use crate::renderer::{self, GlyphCache, QuadRenderer};
-use crate::url::{Url, Urls};
-use crate::window::{self, Window};
 
 // Chartacritty:
 use alacritty_terminal::decorations::{
@@ -48,7 +56,19 @@ use alacritty_terminal::decorations::{
 };
 use alacritty_terminal::term::color::Rgb;
 
+mod bell;
+mod color;
+mod meter;
+#[cfg(all(feature = "wayland", not(any(target_os = "macos", windows))))]
+mod wayland_theme;
+
+/// Maximum number of linewraps followed outside of the viewport during search highlighting.
+pub const MAX_SEARCH_LINES: usize = 100;
+
+/// Label for the forward terminal search bar.
 const FORWARD_SEARCH_LABEL: &str = "Search: ";
+
+/// Label for the backward terminal search bar.
 const BACKWARD_SEARCH_LABEL: &str = "Backward Search: ";
 
 #[derive(Debug)]
@@ -117,8 +137,8 @@ pub struct DisplayUpdate {
     pub dirty: bool,
 
     dimensions: Option<PhysicalSize<u32>>,
-    font: Option<Font>,
     cursor_dirty: bool,
+    font: Option<Font>,
 }
 
 impl DisplayUpdate {
@@ -154,137 +174,143 @@ impl DisplayUpdate {
 pub struct Display {
     pub size_info: SizeInfo,
     pub window: Window,
-    pub urls: Urls,
 
-    /// Currently highlighted URL.
-    pub highlighted_url: Option<Url>,
+    /// Hint highlighted by the mouse.
+    pub highlighted_hint: Option<HintMatch>,
+
+    /// Hint highlighted by the vi mode cursor.
+    pub vi_highlighted_hint: Option<HintMatch>,
+
+    #[cfg(all(feature = "wayland", not(any(target_os = "macos", windows))))]
+    pub wayland_event_queue: Option<EventQueue>,
 
     #[cfg(not(any(target_os = "macos", windows)))]
-    pub wayland_event_queue: Option<EventQueue>,
+    pub is_x11: bool,
+
+    /// UI cursor visibility for blinking.
+    pub cursor_hidden: bool,
+
+    pub visual_bell: VisualBell,
+
+    /// Mapped RGB values for each terminal color.
+    pub colors: List,
+
+    /// State of the keyboard hints.
+    pub hint_state: HintState,
 
     renderer: QuadRenderer,
     glyph_cache: GlyphCache,
     meter: Meter,
-
-    #[cfg(not(any(target_os = "macos", windows)))]
-    is_x11: bool,
-
     decorations: DecorationsConfig,
 }
 
 impl Display {
     pub fn new<E>(config: &Config, event_loop: &EventLoop<E>) -> Result<Display, Error> {
-        // Guess DPR based on first monitor.
-        let estimated_dpr =
-            event_loop.available_monitors().next().map(|m| m.scale_factor()).unwrap_or(1.);
+        #[cfg(any(not(feature = "x11"), target_os = "macos", windows))]
+        let is_x11 = false;
+        #[cfg(all(feature = "x11", not(any(target_os = "macos", windows))))]
+        let is_x11 = event_loop.is_x11();
+
+        // Guess DPR based on first monitor. On Wayland the initial frame always renders at a DPR
+        // of 1.
+        let estimated_dpr = if cfg!(any(target_os = "macos", windows)) || is_x11 {
+            event_loop.available_monitors().next().map(|m| m.scale_factor()).unwrap_or(1.)
+        } else {
+            1.
+        };
 
         // Guess the target window dimensions.
         let metrics = GlyphCache::static_metrics(config.ui_config.font.clone(), estimated_dpr)?;
         let (cell_width, cell_height) = compute_cell_size(config, &metrics);
 
-        let dimensions = GlyphCache::calculate_dimensions(
-            &config.ui_config.window,
-            estimated_dpr,
-            cell_width,
-            cell_height,
-        );
+        // Guess the target window size if the user has specified the number of lines/columns.
+        let dimensions = config.ui_config.window.dimensions();
+        let estimated_size = dimensions.map(|dimensions| {
+            window_size(config, dimensions, cell_width, cell_height, estimated_dpr)
+        });
 
         debug!("Estimated DPR: {}", estimated_dpr);
-        debug!("Estimated Cell Size: {} x {}", cell_width, cell_height);
-        debug!("Estimated Dimensions: {:?}", dimensions);
+        debug!("Estimated window size: {:?}", estimated_size);
+        debug!("Estimated cell size: {} x {}", cell_width, cell_height);
 
-        #[cfg(not(any(target_os = "macos", windows)))]
+        #[cfg(all(feature = "wayland", not(any(target_os = "macos", windows))))]
         let mut wayland_event_queue = None;
 
         // Initialize Wayland event queue, to handle Wayland callbacks.
-        #[cfg(not(any(target_os = "macos", windows)))]
+        #[cfg(all(feature = "wayland", not(any(target_os = "macos", windows))))]
         if let Some(display) = event_loop.wayland_display() {
             let display = unsafe { WaylandDisplay::from_external_display(display as _) };
             wayland_event_queue = Some(display.create_event_queue());
         }
 
-        // Create the window where Alacritty will be displayed.
-        let size = dimensions.map(|(width, height)| PhysicalSize::new(width, height));
-
-        // Spawn window.
+        // Spawn the Alacritty window.
         let mut window = Window::new(
             event_loop,
             &config,
-            size,
-            #[cfg(not(any(target_os = "macos", windows)))]
+            estimated_size,
+            #[cfg(all(feature = "wayland", not(any(target_os = "macos", windows))))]
             wayland_event_queue.as_ref(),
         )?;
 
-        let dpr = window.scale_factor();
-        info!("Device pixel ratio: {}", dpr);
-
-        // get window properties for initializing the other subsystems.
-        let viewport_size = window.inner_size();
+        info!("Device pixel ratio: {}", window.dpr);
 
         // Create renderer.
         let mut renderer = QuadRenderer::new()?;
 
         let (glyph_cache, cell_width, cell_height) =
-            Self::new_glyph_cache(dpr, &mut renderer, config)?;
+            Self::new_glyph_cache(window.dpr, &mut renderer, config)?;
 
-        let padding = config.ui_config.window.padding;
-        let mut padding_x = f32::from(padding.x) * dpr as f32;
-        let mut padding_y = f32::from(padding.y) * dpr as f32;
-
-        if let Some((width, height)) =
-            GlyphCache::calculate_dimensions(&config.ui_config.window, dpr, cell_width, cell_height)
-        {
-            let PhysicalSize { width: w, height: h } = window.inner_size();
-            if w == width && h == height {
+        if let Some(dimensions) = dimensions {
+            if (estimated_dpr - window.dpr).abs() < f64::EPSILON {
                 info!("Estimated DPR correctly, skipping resize");
             } else {
-                window.set_inner_size(PhysicalSize::new(width, height));
+                // Resize the window again if the DPR was not estimated correctly.
+                let size = window_size(config, dimensions, cell_width, cell_height, window.dpr);
+                window.set_inner_size(size);
             }
-        } else if config.ui_config.window.dynamic_padding {
-            // Make sure additional padding is spread evenly.
-            padding_x = dynamic_padding(padding_x, viewport_size.width as f32, cell_width);
-            padding_y = dynamic_padding(padding_y, viewport_size.height as f32, cell_height);
         }
 
-        padding_x = padding_x.floor();
-        padding_y = padding_y.floor();
-
-        info!("Cell Size: {} x {}", cell_width, cell_height);
-        info!("Padding: {} x {}", padding_x, padding_y);
+        let padding = config.ui_config.window.padding(window.dpr);
+        let viewport_size = window.inner_size();
 
         // Create new size with at least one column and row.
-        let size_info = SizeInfo {
-            dpr,
-            width: (viewport_size.width as f32).max(cell_width + 2. * padding_x),
-            height: (viewport_size.height as f32).max(cell_height + 2. * padding_y),
+        let size_info = SizeInfo::new(
+            viewport_size.width as f32,
+            viewport_size.height as f32,
             cell_width,
             cell_height,
-            padding_x,
-            padding_y,
-        };
+            padding.0,
+            padding.1,
+            config.ui_config.window.dynamic_padding && dimensions.is_none(),
+        );
+
+        info!("Cell size: {} x {}", cell_width, cell_height);
+        info!("Padding: {} x {}", size_info.padding_x(), size_info.padding_y());
+        info!("Width: {}, Height: {}", size_info.width(), size_info.height());
 
         // Update OpenGL projection.
         renderer.resize(&size_info);
 
         // Clear screen.
-        let background_color = config.colors.primary.background;
-        renderer.with_api(&config.ui_config, config.cursor, &size_info, |api| {
+        let background_color = config.ui_config.colors.primary.background;
+        renderer.with_api(&config.ui_config, &size_info, |api| {
             api.clear(background_color);
         });
 
         // Set subpixel anti-aliasing.
         #[cfg(target_os = "macos")]
-        set_font_smoothing(config.ui_config.font.use_thin_strokes());
+        crossfont::set_font_smoothing(config.ui_config.font.use_thin_strokes);
 
-        #[cfg(not(any(target_os = "macos", windows)))]
-        let is_x11 = event_loop.is_x11();
+        // Disable shadows for transparent windows on macOS.
+        #[cfg(target_os = "macos")]
+        window.set_has_shadow(config.ui_config.background_opacity() >= 1.0);
 
         // On Wayland we can safely ignore this call, since the window isn't visible until you
         // actually draw something into it and commit those changes.
         #[cfg(not(any(target_os = "macos", windows)))]
         if is_x11 {
             window.swap_buffers();
-            renderer.with_api(&config.ui_config, config.cursor, &size_info, |api| {
+            renderer.with_api(&config.ui_config, &size_info, |api| {
                 api.finish();
             });
         }
@@ -300,14 +326,17 @@ impl Display {
         }
 
         #[allow(clippy::single_match)]
+        #[cfg(not(windows))]
         match config.ui_config.window.startup_mode {
-            StartupMode::Fullscreen => window.set_fullscreen(true),
             #[cfg(target_os = "macos")]
             StartupMode::SimpleFullscreen => window.set_simple_fullscreen(true),
-            #[cfg(not(any(target_os = "macos", windows)))]
-            StartupMode::Maximized => window.set_maximized(true),
+            #[cfg(not(target_os = "macos"))]
+            StartupMode::Maximized if is_x11 => window.set_maximized(true),
             _ => (),
         }
+
+        let hint_state = HintState::new(config.ui_config.hints.alphabet());
+
         let mut decorations =
             DecorationsConfig::to_sized_decor_vec(config.decorations.clone(), size_info);
         decorations.init_timers();
@@ -315,14 +344,18 @@ impl Display {
             window,
             renderer,
             glyph_cache,
+            hint_state,
             meter: Meter::new(),
             size_info,
-            urls: Urls::new(),
-            highlighted_url: None,
+            highlighted_hint: None,
+            vi_highlighted_hint: None,
             #[cfg(not(any(target_os = "macos", windows)))]
             is_x11,
-            #[cfg(not(any(target_os = "macos", windows)))]
+            #[cfg(all(feature = "wayland", not(any(target_os = "macos", windows))))]
             wayland_event_queue,
+            cursor_hidden: false,
+            visual_bell: VisualBell::from(&config.ui_config.bell),
+            colors: List::from(&config.ui_config.colors),
             decorations,
         })
     }
@@ -333,7 +366,7 @@ impl Display {
         config: &Config,
     ) -> Result<(GlyphCache, f32, f32), Error> {
         let font = config.ui_config.font.clone();
-        let rasterizer = Rasterizer::new(dpr as f32, config.ui_config.font.use_thin_strokes())?;
+        let rasterizer = Rasterizer::new(dpr as f32, config.ui_config.font.use_thin_strokes)?;
 
         // Initialize glyph cache.
         let glyph_cache = {
@@ -359,18 +392,18 @@ impl Display {
     }
 
     /// Update font size and cell dimensions.
-    fn update_glyph_cache(&mut self, config: &Config, font: &Font) {
-        let size_info = &mut self.size_info;
+    ///
+    /// This will return a tuple of the cell width and height.
+    fn update_glyph_cache(&mut self, config: &Config, font: &Font) -> (f32, f32) {
         let cache = &mut self.glyph_cache;
+        let dpr = self.window.dpr;
 
         self.renderer.with_loader(|mut api| {
-            let _ = cache.update_font_size(font, size_info.dpr, &mut api);
+            let _ = cache.update_font_size(font, dpr, &mut api);
         });
 
-        // Update cell size.
-        let (cell_width, cell_height) = compute_cell_size(config, &self.glyph_cache.font_metrics());
-        size_info.cell_width = cell_width;
-        size_info.cell_height = cell_height;
+        // Compute new cell sizes.
+        compute_cell_size(config, &self.glyph_cache.font_metrics())
     }
 
     /// Clear glyph cache.
@@ -395,65 +428,59 @@ impl Display {
     ) where
         T: EventListener,
     {
+        let (mut cell_width, mut cell_height) =
+            (self.size_info.cell_width(), self.size_info.cell_height());
+
         // Update font size and cell dimensions.
         if let Some(font) = update_pending.font() {
-            self.update_glyph_cache(config, font);
+            let cell_dimensions = self.update_glyph_cache(config, font);
+            cell_width = cell_dimensions.0;
+            cell_height = cell_dimensions.1;
+
+            info!("Cell size: {} x {}", cell_width, cell_height);
         } else if update_pending.cursor_dirty() {
             self.clear_glyph_cache();
         }
 
-        let cell_width = self.size_info.cell_width;
-        let cell_height = self.size_info.cell_height;
-
-        // Recalculate padding.
-        let padding = config.ui_config.window.padding;
-        let mut padding_x = f32::from(padding.x) * self.size_info.dpr as f32;
-        let mut padding_y = f32::from(padding.y) * self.size_info.dpr as f32;
-
-        // Update the window dimensions.
-        if let Some(size) = update_pending.dimensions() {
-            // Ensure we have at least one column and row.
-            self.size_info.width = (size.width as f32).max(cell_width + 2. * padding_x);
-            self.size_info.height = (size.height as f32).max(cell_height + 2. * padding_y);
-        }
-
-        // Distribute excess padding equally on all sides.
-        if config.ui_config.window.dynamic_padding {
-            padding_x = dynamic_padding(padding_x, self.size_info.width, cell_width);
-            padding_y = dynamic_padding(padding_y, self.size_info.height, cell_height);
-        }
-
-        self.size_info.padding_x = padding_x.floor() as f32;
-        self.size_info.padding_y = padding_y.floor() as f32;
-
-        let mut pty_size = self.size_info;
-
-        // Subtract message bar lines from pty size.
-        if let Some(message) = message_buffer.message() {
-            let lines = message.text(&self.size_info).len();
-            pty_size.height -= pty_size.cell_height * lines as f32;
-        }
-
+        let (mut width, mut height) = (self.size_info.width(), self.size_info.height());
+        if let Some(dimensions) = update_pending.dimensions() {
+            width = dimensions.width as f32;
+            height = dimensions.height as f32;
         // Subtract some space for the charts
         if let Some(chart_config) = &config.charts {
             if !chart_config.charts.is_empty() {
-                pty_size.height -= pty_size.cell_height * 1f32;
+                height -= cell_height * 1f32; // SEB Validate.
             }
         }
-
-        // Add an extra line for the current search regex.
-        if search_active {
-            pty_size.height -= pty_size.cell_height;
         }
 
+        let padding = config.ui_config.window.padding(self.window.dpr);
+
+        self.size_info = SizeInfo::new(
+            width,
+            height,
+            cell_width,
+            cell_height,
+            padding.0,
+            padding.1,
+            config.ui_config.window.dynamic_padding,
+        );
+
+        // Update number of column/lines in the viewport.
+        let message_bar_lines =
+            message_buffer.message().map(|m| m.text(&self.size_info).len()).unwrap_or(0);
+        let search_lines = if search_active { 1 } else { 0 };
+        self.size_info.reserve_lines(message_bar_lines + search_lines);
+
         // Resize PTY.
-        pty_resize_handle.on_resize(&pty_size);
+        pty_resize_handle.on_resize(&self.size_info);
 
         // Resize terminal.
-        terminal.resize(pty_size);
+        terminal.resize(self.size_info);
 
         // Resize renderer.
-        let physical = PhysicalSize::new(self.size_info.width as u32, self.size_info.height as u32);
+        let physical =
+            PhysicalSize::new(self.size_info.width() as u32, self.size_info.height() as u32);
         self.window.resize(physical);
         let (height, width) = (self.size_info.height, self.size_info.width);
         let (chart_resize_tx, chart_resize_rx) = oneshot::channel();
@@ -488,6 +515,9 @@ impl Display {
         self.renderer.resize(&self.size_info);
         // SEB: TODO: do not call when decorations are not enabled
         self.decorations.set_size_info(self.size_info);
+
+        info!("Padding: {} x {}", self.size_info.padding_x(), self.size_info.padding_y());
+        info!("Width: {}, Height: {}", self.size_info.width(), self.size_info.height());
     }
 
     /// Draw the screen.
@@ -495,60 +525,64 @@ impl Display {
     /// A reference to Term whose state is being drawn must be provided.
     ///
     /// This call may block if vsync is enabled.
-    pub fn draw<T>(
+    pub fn draw<T: EventListener>(
         &mut self,
         terminal: MutexGuard<'_, Term<T>>,
         message_buffer: &MessageBuffer,
         config: &Config,
-        mouse: &Mouse,
-        mods: ModifiersState,
         search_state: &SearchState,
     ) {
-        let grid_cells: Vec<RenderableCell> = terminal.renderable_cells(config).collect();
-        let visual_bell_intensity = terminal.visual_bell.intensity();
-        let background_color = terminal.background_color();
+        // Collect renderable content before the terminal is dropped.
+        let mut content = RenderableContent::new(config, self, &terminal, search_state);
+        let mut grid_cells = Vec::new();
+        while let Some(cell) = content.next() {
+            grid_cells.push(cell);
+        }
+        let background_color = content.color(NamedColor::Background as usize);
+        let display_offset = content.display_offset();
+        let cursor = content.cursor();
+
         let cursor_point = terminal.grid().cursor.point;
+        let total_lines = terminal.grid().total_lines();
         let metrics = self.glyph_cache.font_metrics();
-        let glyph_cache = &mut self.glyph_cache;
         let size_info = self.size_info;
         let charts_enabled = terminal.charts_enabled();
         let decorations_enabled = terminal.decorations_enabled;
 
-        let selection = !terminal.selection.as_ref().map(Selection::is_empty).unwrap_or(true);
-        let mouse_mode = terminal.mode().intersects(TermMode::MOUSE_MODE)
-            && !terminal.mode().contains(TermMode::VI);
-
-        let vi_mode_cursor = if terminal.mode().contains(TermMode::VI) {
-            Some(terminal.vi_mode_cursor)
-        } else {
-            None
-        };
-
+        let vi_mode = terminal.mode().contains(TermMode::VI);
+        let vi_mode_cursor = if vi_mode { Some(terminal.vi_mode_cursor) } else { None };
         let tokio_handle = terminal.charts_handle.tokio_handle.clone();
         let charts_tx = terminal.charts_handle.charts_tx.clone();
 
         // Drop terminal as early as possible to free lock.
         drop(terminal);
 
-        self.renderer.with_api(&config.ui_config, config.cursor, &size_info, |api| {
+        self.renderer.with_api(&config.ui_config, &size_info, |api| {
             api.clear(background_color);
         });
 
         let mut lines = RenderLines::new();
-        let mut urls = Urls::new();
 
         // Draw grid.
         {
             let _sampler = self.meter.sampler();
 
-            self.renderer.with_api(&config.ui_config, config.cursor, &size_info, |mut api| {
+            let glyph_cache = &mut self.glyph_cache;
+            let highlighted_hint = &self.highlighted_hint;
+            let vi_highlighted_hint = &self.vi_highlighted_hint;
+            self.renderer.with_api(&config.ui_config, &size_info, |mut api| {
                 // Iterate over all non-empty cells in the grid.
-                for cell in grid_cells {
-                    // Update URL underlines.
-                    urls.update(size_info.cols(), cell);
+                for mut cell in grid_cells {
+                    // Underline hints hovered by mouse or vi mode cursor.
+                    let point = viewport_to_point(display_offset, cell.point);
+                    if highlighted_hint.as_ref().map_or(false, |h| h.bounds.contains(&point))
+                        || vi_highlighted_hint.as_ref().map_or(false, |h| h.bounds.contains(&point))
+                    {
+                        cell.flags.insert(Flags::UNDERLINE);
+                    }
 
                     // Update underline/strikeout.
-                    lines.update(cell);
+                    lines.update(&cell);
 
                     // Draw the cell.
                     api.render_cell(cell, glyph_cache);
@@ -558,60 +592,52 @@ impl Display {
 
         let mut rects = lines.rects(&metrics, &size_info);
 
-        // Update visible URLs.
-        self.urls = urls;
-        if let Some(url) = self.urls.highlighted(config, mouse, mods, mouse_mode, selection) {
-            rects.append(&mut url.rects(&metrics, &size_info));
-
-            self.window.set_mouse_cursor(CursorIcon::Hand);
-
-            self.highlighted_url = Some(url);
-        } else if self.highlighted_url.is_some() {
-            self.highlighted_url = None;
-
-            if mouse_mode {
-                self.window.set_mouse_cursor(CursorIcon::Default);
-            } else {
-                self.window.set_mouse_cursor(CursorIcon::Text);
-            }
+        if let Some(vi_mode_cursor) = vi_mode_cursor {
+            // Indicate vi mode by showing the cursor's position in the top right corner.
+            let vi_point = vi_mode_cursor.point;
+            let line = (-vi_point.line.0 + size_info.bottommost_line().0) as usize;
+            self.draw_line_indicator(config, &size_info, total_lines, Some(vi_point), line);
+        } else if search_state.regex().is_some() {
+            // Show current display offset in vi-less search to indicate match position.
+            self.draw_line_indicator(config, &size_info, total_lines, None, display_offset);
         }
 
-        // Highlight URLs at the vi mode cursor position.
-        if let Some(vi_mode_cursor) = vi_mode_cursor {
-            if let Some(url) = self.urls.find_at(vi_mode_cursor.point) {
-                rects.append(&mut url.rects(&metrics, &size_info));
+        // Push the cursor rects for rendering.
+        if let Some(cursor) = cursor {
+            for rect in cursor.rects(&size_info, config.cursor.thickness()) {
+                rects.push(rect);
             }
         }
 
         // Push visual bell after url/underline/strikeout rects.
+        let visual_bell_intensity = self.visual_bell.intensity();
         if visual_bell_intensity != 0. {
             let visual_bell_rect = RenderRect::new(
                 0.,
                 0.,
-                size_info.width,
-                size_info.height,
-                config.bell().color,
+                size_info.width(),
+                size_info.height(),
+                config.ui_config.bell.color,
                 visual_bell_intensity as f32,
             );
             rects.push(visual_bell_rect);
         }
 
-        let mut message_bar_lines = 0;
         if let Some(message) = message_buffer.message() {
+            let search_offset = if search_state.regex().is_some() { 1 } else { 0 };
             let text = message.text(&size_info);
-            message_bar_lines = text.len();
 
             // Create a new rectangle for the background.
-            let start_line = size_info.lines().0 - message_bar_lines;
-            let y = size_info.cell_height.mul_add(start_line as f32, size_info.padding_y);
+            let start_line = size_info.screen_lines() + search_offset;
+            let y = size_info.cell_height().mul_add(start_line as f32, size_info.padding_y());
 
-            let color = match message.ty() {
-                MessageType::Error => config.colors.normal().red,
-                MessageType::Warning => config.colors.normal().yellow,
+            let bg = match message.ty() {
+                MessageType::Error => config.ui_config.colors.normal.red,
+                MessageType::Warning => config.ui_config.colors.normal.yellow,
             };
 
             let message_bar_rect =
-                RenderRect::new(0., y, size_info.width, size_info.height - y, color, 1.);
+                RenderRect::new(0., y, size_info.width(), size_info.height() - y, bg, 1.);
 
             // Push message_bar in the end, so it'll be above all other content.
             rects.push(message_bar_rect);
@@ -620,16 +646,12 @@ impl Display {
             self.renderer.draw_rects(&size_info, rects);
 
             // Relay messages to the user.
-            let fg = config.colors.primary.background;
-            for (i, message_text) in text.iter().rev().enumerate() {
-                self.renderer.with_api(&config.ui_config, config.cursor, &size_info, |mut api| {
-                    api.render_string(
-                        glyph_cache,
-                        Line(size_info.lines().saturating_sub(i + 1)),
-                        &message_text,
-                        fg,
-                        None,
-                    );
+            let glyph_cache = &mut self.glyph_cache;
+            let fg = config.ui_config.colors.primary.background;
+            for (i, message_text) in text.iter().enumerate() {
+                let point = Point::new(start_line + i, Column(0));
+                self.renderer.with_api(&config.ui_config, &size_info, |mut api| {
+                    api.render_string(glyph_cache, point, fg, bg, &message_text);
                 });
             }
         } else {
@@ -662,11 +684,12 @@ impl Display {
                 let search_text = Self::format_search(&size_info, regex, search_label);
 
                 // Render the search bar.
-                self.draw_search(config, &size_info, message_bar_lines, &search_text);
+                self.draw_search(config, &size_info, &search_text);
 
                 // Compute IME position.
-                Point::new(size_info.lines() - 1, Column(search_text.len() - 1))
-            }
+                let line = Line(size_info.screen_lines() as i32 + 1);
+                Point::new(line, Column(search_text.chars().count() - 1))
+            },
             None => cursor_point,
         };
 
@@ -675,17 +698,17 @@ impl Display {
 
         // Frame event should be requested before swaping buffers, since it requires surface
         // `commit`, which is done by swap buffers under the hood.
-        #[cfg(not(any(target_os = "macos", windows)))]
+        #[cfg(all(feature = "wayland", not(any(target_os = "macos", windows))))]
         self.request_frame(&self.window);
 
         self.window.swap_buffers();
 
-        #[cfg(not(any(target_os = "macos", windows)))]
+        #[cfg(all(feature = "x11", not(any(target_os = "macos", windows))))]
         if self.is_x11 {
             // On X11 `swap_buffers` does not block for vsync. However the next OpenGl command
             // will block to synchronize (this is `glClear` in Alacritty), which causes a
             // permanent one frame delay.
-            self.renderer.with_api(&config.ui_config, config.cursor, &size_info, |api| {
+            self.renderer.with_api(&config.ui_config, &size_info, |api| {
                 api.finish();
             });
         }
@@ -786,7 +809,7 @@ impl Display {
                                 renderer::DrawArrayMode::GlLineLoop,
                             );
                         }
-                    }
+    }
                 },
                 DecorationTypes::Triangles(tri_decor) => match tri_decor {
                     DecorationTriangles::Hexagon(hex_tris) => {
@@ -809,6 +832,62 @@ impl Display {
         }
     }
 
+
+    /// Update to a new configuration.
+    pub fn update_config(&mut self, config: &Config) {
+        self.visual_bell.update_config(&config.ui_config.bell);
+        self.colors = List::from(&config.ui_config.colors);
+    }
+
+    /// Update the mouse/vi mode cursor hint highlighting.
+    ///
+    /// This will return whether the highlighted hints changed.
+    pub fn update_highlighted_hints<T>(
+        &mut self,
+        term: &Term<T>,
+        config: &Config,
+        mouse: &Mouse,
+        modifiers: ModifiersState,
+    ) -> bool {
+        // Update vi mode cursor hint.
+        let vi_highlighted_hint = if term.mode().contains(TermMode::VI) {
+            let mods = ModifiersState::all();
+            let point = term.vi_mode_cursor.point;
+            hint::highlighted_at(&term, config, point, mods)
+        } else {
+            None
+        };
+        let mut dirty = vi_highlighted_hint != self.vi_highlighted_hint;
+        self.vi_highlighted_hint = vi_highlighted_hint;
+
+        // Abort if mouse highlighting conditions are not met.
+        if !mouse.inside_text_area || !term.selection.as_ref().map_or(true, Selection::is_empty) {
+            dirty |= self.highlighted_hint.is_some();
+            self.highlighted_hint = None;
+            return dirty;
+        }
+
+        // Find highlighted hint at mouse position.
+        let point = mouse.point(&self.size_info, term.grid().display_offset());
+        let highlighted_hint = hint::highlighted_at(&term, config, point, modifiers);
+
+        // Update cursor shape.
+        if highlighted_hint.is_some() {
+            self.window.set_mouse_cursor(CursorIcon::Hand);
+        } else if self.highlighted_hint.is_some() {
+            if term.mode().intersects(TermMode::MOUSE_MODE) && !term.mode().contains(TermMode::VI) {
+                self.window.set_mouse_cursor(CursorIcon::Default);
+            } else {
+                self.window.set_mouse_cursor(CursorIcon::Text);
+            }
+        }
+
+        dirty |= self.highlighted_hint != highlighted_hint;
+        self.highlighted_hint = highlighted_hint;
+
+        dirty
+    }
+
     /// Format search regex to account for the cursor and fullwidth characters.
     fn format_search(size_info: &SizeInfo, search_regex: &str, search_label: &str) -> String {
         // Add spacers for wide chars.
@@ -824,11 +903,12 @@ impl Display {
         formatted_regex.push('_');
 
         // Truncate beginning of the search regex if it exceeds the viewport width.
-        let num_cols = size_info.cols().0;
-        let label_len = search_label.len();
-        let regex_len = formatted_regex.len();
+        let num_cols = size_info.columns();
+        let label_len = search_label.chars().count();
+        let regex_len = formatted_regex.chars().count();
         let truncate_len = min((regex_len + label_len).saturating_sub(num_cols), regex_len);
-        let truncated_regex = &formatted_regex[truncate_len..];
+        let index = formatted_regex.char_indices().nth(truncate_len).map(|(i, _c)| i).unwrap_or(0);
+        let truncated_regex = &formatted_regex[index..];
 
         // Add search label to the beginning of the search regex.
         let mut bar_text = format!("{}{}", search_label, truncated_regex);
@@ -840,24 +920,19 @@ impl Display {
     }
 
     /// Draw current search regex.
-    fn draw_search(
-        &mut self,
-        config: &Config,
-        size_info: &SizeInfo,
-        message_bar_lines: usize,
-        text: &str,
-    ) {
+    fn draw_search(&mut self, config: &Config, size_info: &SizeInfo, text: &str) {
         let glyph_cache = &mut self.glyph_cache;
-        let num_cols = size_info.cols().0;
+        let num_cols = size_info.columns();
 
         // Assure text length is at least num_cols.
         let text = format!("{:<1$}", text, num_cols);
 
-        let fg = config.colors.search_bar_foreground();
-        let bg = config.colors.search_bar_background();
-        let line = size_info.lines() - message_bar_lines - 1;
-        self.renderer.with_api(&config.ui_config, config.cursor, &size_info, |mut api| {
-            api.render_string(glyph_cache, line, &text, fg, Some(bg));
+        let point = Point::new(size_info.screen_lines(), Column(0));
+        let fg = config.ui_config.colors.search_bar_foreground();
+        let bg = config.ui_config.colors.search_bar_background();
+
+        self.renderer.with_api(&config.ui_config, &size_info, |mut api| {
+            api.render_string(glyph_cache, point, fg, bg, &text);
         });
     }
 
@@ -866,20 +941,46 @@ impl Display {
         if !config.ui_config.debug.render_timer {
             return;
         }
+
         let glyph_cache = &mut self.glyph_cache;
 
         let timing = format!("{:.3} usec", self.meter.average());
-        let fg = config.colors.primary.background;
-        let bg = config.colors.normal().red;
+        let point = Point::new(size_info.screen_lines().saturating_sub(2), Column(0));
+        let fg = config.ui_config.colors.primary.background;
+        let bg = config.ui_config.colors.normal.red;
 
-        self.renderer.with_api(&config.ui_config, config.cursor, &size_info, |mut api| {
-            api.render_string(glyph_cache, size_info.lines() - 2, &timing[..], fg, Some(bg));
+        self.renderer.with_api(&config.ui_config, &size_info, |mut api| {
+            api.render_string(glyph_cache, point, fg, bg, &timing);
         });
+    }
+
+    /// Draw an indicator for the position of a line in history.
+    fn draw_line_indicator(
+        &mut self,
+        config: &Config,
+        size_info: &SizeInfo,
+        total_lines: usize,
+        vi_mode_point: Option<Point>,
+        line: usize,
+    ) {
+        let text = format!("[{}/{}]", line, total_lines - 1);
+        let column = Column(size_info.columns().saturating_sub(text.len()));
+        let colors = &config.ui_config.colors;
+        let fg = colors.line_indicator.foreground.unwrap_or(colors.primary.background);
+        let bg = colors.line_indicator.background.unwrap_or(colors.primary.foreground);
+
+        // Do not render anything if it would obscure the vi mode cursor.
+        if vi_mode_point.map_or(true, |point| point.line != 0 || point.column < column) {
+            let glyph_cache = &mut self.glyph_cache;
+            self.renderer.with_api(&config.ui_config, &size_info, |mut api| {
+                api.render_string(glyph_cache, Point::new(0, column), fg, bg, &text);
+            });
+        }
     }
 
     /// Requst a new frame for a window on Wayland.
     #[inline]
-    #[cfg(not(any(target_os = "macos", windows)))]
+    #[cfg(all(feature = "wayland", not(any(target_os = "macos", windows))))]
     fn request_frame(&self, window: &Window) {
         let surface = match window.wayland_surface() {
             Some(surface) => surface,
@@ -898,19 +999,46 @@ impl Display {
     }
 }
 
-/// Calculate padding to spread it evenly around the terminal content.
-#[inline]
-fn dynamic_padding(padding: f32, dimension: f32, cell_dimension: f32) -> f32 {
-    padding + ((dimension - 2. * padding) % cell_dimension) / 2.
+/// Convert a terminal point to a viewport relative point.
+pub fn point_to_viewport(display_offset: usize, point: Point) -> Option<Point<usize>> {
+    let viewport_line = point.line.0 + display_offset as i32;
+    usize::try_from(viewport_line).ok().map(|line| Point::new(line, point.column))
+}
+
+/// Convert a viewport relative point to a terminal point.
+pub fn viewport_to_point(display_offset: usize, point: Point<usize>) -> Point {
+    let line = Line(point.line as i32) - display_offset;
+    Point::new(line, point.column)
 }
 
 /// Calculate the cell dimensions based on font metrics.
+///
+/// This will return a tuple of the cell width and height.
 #[inline]
 fn compute_cell_size(config: &Config, metrics: &crossfont::Metrics) -> (f32, f32) {
     let offset_x = f64::from(config.ui_config.font.offset.x);
     let offset_y = f64::from(config.ui_config.font.offset.y);
     (
-        ((metrics.average_advance + offset_x) as f32).floor().max(1.),
-        ((metrics.line_height + offset_y) as f32).floor().max(1.),
+        (metrics.average_advance + offset_x).floor().max(1.) as f32,
+        (metrics.line_height + offset_y).floor().max(1.) as f32,
     )
+}
+
+/// Calculate the size of the window given padding, terminal dimensions and cell size.
+fn window_size(
+    config: &Config,
+    dimensions: Dimensions,
+    cell_width: f32,
+    cell_height: f32,
+    dpr: f64,
+) -> PhysicalSize<u32> {
+    let padding = config.ui_config.window.padding(dpr);
+
+    let grid_width = cell_width * dimensions.columns.0.max(MIN_COLUMNS) as f32;
+    let grid_height = cell_height * dimensions.lines.max(MIN_SCREEN_LINES) as f32;
+
+    let width = (padding.0).mul_add(2., grid_width).floor();
+    let height = (padding.1).mul_add(2., grid_height).floor();
+
+    PhysicalSize::new(width as u32, height as u32)
 }

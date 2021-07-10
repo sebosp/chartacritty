@@ -1,69 +1,42 @@
+use std::cmp::max;
 use std::collections::HashMap;
-use std::fmt::Display;
 use std::path::PathBuf;
 
-use log::error;
-use serde::{Deserialize, Deserializer};
-use serde_yaml::Value;
+use serde::Deserialize;
 
-mod bell;
-mod colors;
+use alacritty_config_derive::ConfigDeserialize;
+
 mod scrolling;
 
-use crate::ansi::CursorStyle;
+use crate::ansi::{CursorShape, CursorStyle};
 
 pub use crate::charts::ChartsConfig;
-pub use crate::config::bell::{BellAnimation, BellConfig};
-pub use crate::config::colors::Colors;
 pub use crate::config::scrolling::Scrolling;
 pub use crate::decorations::DecorationsConfig;
 
-pub const LOG_TARGET_CONFIG: &str = "alacritty_config";
-const MAX_SCROLLBACK_LINES: u32 = 100_000;
-const DEFAULT_CURSOR_THICKNESS: f32 = 0.15;
+pub const LOG_TARGET_CONFIG: &str = "alacritty_config_derive";
+const MIN_BLINK_INTERVAL: u64 = 10;
 
 pub type MockConfig = Config<HashMap<String, serde_yaml::Value>>;
 
 /// Top-level config type.
-#[derive(Debug, PartialEq, Default, Deserialize)]
+#[derive(ConfigDeserialize, Debug, PartialEq, Default)]
 pub struct Config<T> {
     /// TERM env variable.
-    #[serde(default, deserialize_with = "failure_default")]
     pub env: HashMap<String, String>,
 
-    /// Should draw bold text with brighter colors instead of bold font.
-    #[serde(default, deserialize_with = "failure_default")]
-    draw_bold_text_with_bright_colors: bool,
-
-    #[serde(default, deserialize_with = "failure_default")]
-    pub colors: Colors,
-
-    #[serde(default, deserialize_with = "failure_default")]
     pub selection: Selection,
 
     /// Path to a shell program to run on startup.
-    #[serde(default, deserialize_with = "failure_default")]
     pub shell: Option<Program>,
 
-    /// Bell configuration.
-    #[serde(default, deserialize_with = "failure_default")]
-    bell: BellConfig,
-
     /// How much scrolling history to keep.
-    #[serde(default, deserialize_with = "failure_default")]
     pub scrolling: Scrolling,
 
     /// Cursor configuration.
-    #[serde(default, deserialize_with = "failure_default")]
     pub cursor: Cursor,
 
-    /// Use WinPTY backend even if ConPTY is available.
-    #[cfg(windows)]
-    #[serde(default, deserialize_with = "failure_default")]
-    pub winpty_backend: bool,
-
     /// Shell startup directory.
-    #[serde(default, deserialize_with = "option_explicit_none")]
     pub working_directory: Option<PathBuf>,
 
     #[serde(default, deserialize_with = "option_explicit_none")]
@@ -73,121 +46,149 @@ pub struct Config<T> {
     pub decorations: Option<DecorationsConfig>,
 
     /// Additional configuration options not directly required by the terminal.
-    #[serde(flatten)]
+    #[config(flatten)]
     pub ui_config: T,
 
     /// Remain open after child process exits.
-    #[serde(skip)]
+    #[config(skip)]
     pub hold: bool,
-
-    // TODO: DEPRECATED
-    #[serde(default, deserialize_with = "failure_default")]
-    pub visual_bell: Option<BellConfig>,
-
-    // TODO: REMOVED
-    #[serde(default, deserialize_with = "failure_default")]
-    pub tabspaces: Option<usize>,
 }
 
-impl<T> Config<T> {
-    #[inline]
-    pub fn draw_bold_text_with_bright_colors(&self) -> bool {
-        self.draw_bold_text_with_bright_colors
-    }
-
-    #[inline]
-    pub fn bell(&self) -> &BellConfig {
-        self.visual_bell.as_ref().unwrap_or(&self.bell)
-    }
-}
-
-#[serde(default)]
-#[derive(Deserialize, Default, Clone, Debug, PartialEq, Eq)]
+#[derive(ConfigDeserialize, Clone, Debug, PartialEq, Eq)]
 pub struct Selection {
-    #[serde(deserialize_with = "failure_default")]
-    semantic_escape_chars: EscapeChars,
-    #[serde(deserialize_with = "failure_default")]
+    pub semantic_escape_chars: String,
     pub save_to_clipboard: bool,
 }
 
-impl Selection {
-    pub fn semantic_escape_chars(&self) -> &str {
-        &self.semantic_escape_chars.0
-    }
-}
-
-#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
-struct EscapeChars(String);
-
-impl Default for EscapeChars {
+impl Default for Selection {
     fn default() -> Self {
-        EscapeChars(String::from(",│`|:\"' ()[]{}<>\t"))
+        Self {
+            semantic_escape_chars: String::from(",│`|:\"' ()[]{}<>\t"),
+            save_to_clipboard: Default::default(),
+        }
     }
 }
 
-#[serde(default)]
-#[derive(Deserialize, Copy, Clone, Debug, PartialEq)]
+#[derive(ConfigDeserialize, Copy, Clone, Debug, PartialEq)]
 pub struct Cursor {
-    #[serde(deserialize_with = "failure_default")]
-    pub style: CursorStyle,
-    #[serde(deserialize_with = "option_explicit_none")]
-    pub vi_mode_style: Option<CursorStyle>,
-    #[serde(deserialize_with = "deserialize_cursor_thickness")]
+    pub style: ConfigCursorStyle,
+    pub vi_mode_style: Option<ConfigCursorStyle>,
+    pub unfocused_hollow: bool,
+
     thickness: Percentage,
-    #[serde(deserialize_with = "failure_default")]
-    unfocused_hollow: DefaultTrueBool,
-}
-
-impl Cursor {
-    #[inline]
-    pub fn unfocused_hollow(self) -> bool {
-        self.unfocused_hollow.0
-    }
-
-    #[inline]
-    pub fn thickness(self) -> f64 {
-        self.thickness.0 as f64
-    }
+    blink_interval: u64,
 }
 
 impl Default for Cursor {
     fn default() -> Self {
         Self {
+            thickness: Percentage(0.15),
+            unfocused_hollow: true,
+            blink_interval: 750,
             style: Default::default(),
             vi_mode_style: Default::default(),
-            thickness: Percentage::new(DEFAULT_CURSOR_THICKNESS),
-            unfocused_hollow: Default::default(),
         }
     }
 }
 
-fn deserialize_cursor_thickness<'a, D>(deserializer: D) -> Result<Percentage, D::Error>
-where
-    D: Deserializer<'a>,
-{
-    let value = Value::deserialize(deserializer)?;
-    match Percentage::deserialize(value) {
-        Ok(value) => Ok(value),
-        Err(err) => {
-            error!(
-                target: LOG_TARGET_CONFIG,
-                "Problem with config: {}, using default thickness value {}",
-                err,
-                DEFAULT_CURSOR_THICKNESS
-            );
+impl Cursor {
+    #[inline]
+    pub fn thickness(self) -> f32 {
+        self.thickness.as_f32()
+    }
 
-            Ok(Percentage::new(DEFAULT_CURSOR_THICKNESS))
-        }
+    #[inline]
+    pub fn style(self) -> CursorStyle {
+        self.style.into()
+    }
+
+    #[inline]
+    pub fn vi_mode_style(self) -> Option<CursorStyle> {
+        self.vi_mode_style.map(From::from)
+    }
+
+    #[inline]
+    pub fn blink_interval(self) -> u64 {
+        max(self.blink_interval, MIN_BLINK_INTERVAL)
     }
 }
 
+#[derive(Deserialize, Debug, Copy, Clone, PartialEq, Eq)]
 #[serde(untagged)]
+pub enum ConfigCursorStyle {
+    Shape(CursorShape),
+    WithBlinking {
+        #[serde(default)]
+        shape: CursorShape,
+        #[serde(default)]
+        blinking: CursorBlinking,
+    },
+}
+
+impl Default for ConfigCursorStyle {
+    fn default() -> Self {
+        Self::Shape(CursorShape::default())
+    }
+}
+
+impl ConfigCursorStyle {
+    /// Check if blinking is force enabled/disabled.
+    pub fn blinking_override(&self) -> Option<bool> {
+        match self {
+            Self::Shape(_) => None,
+            Self::WithBlinking { blinking, .. } => blinking.blinking_override(),
+        }
+    }
+}
+
+impl From<ConfigCursorStyle> for CursorStyle {
+    fn from(config_style: ConfigCursorStyle) -> Self {
+        match config_style {
+            ConfigCursorStyle::Shape(shape) => Self { shape, blinking: false },
+            ConfigCursorStyle::WithBlinking { shape, blinking } => {
+                Self { shape, blinking: blinking.into() }
+            },
+        }
+    }
+}
+
+#[derive(ConfigDeserialize, Debug, Copy, Clone, PartialEq, Eq)]
+pub enum CursorBlinking {
+    Never,
+    Off,
+    On,
+    Always,
+}
+
+impl Default for CursorBlinking {
+    fn default() -> Self {
+        CursorBlinking::Off
+    }
+}
+
+impl CursorBlinking {
+    fn blinking_override(&self) -> Option<bool> {
+        match self {
+            Self::Never => Some(false),
+            Self::Off | Self::On => None,
+            Self::Always => Some(true),
+        }
+    }
+}
+
+impl From<CursorBlinking> for bool {
+    fn from(blinking: CursorBlinking) -> bool {
+        blinking == CursorBlinking::On || blinking == CursorBlinking::Always
+    }
+}
+
 #[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(untagged)]
 pub enum Program {
     Just(String),
     WithArgs {
         program: String,
-        #[serde(default, deserialize_with = "failure_default")]
+        #[serde(default)]
         args: Vec<String>,
     },
 }
@@ -209,8 +210,14 @@ impl Program {
 }
 
 /// Wrapper around f32 that represents a percentage value between 0.0 and 1.0.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Deserialize, Clone, Copy, Debug, PartialEq)]
 pub struct Percentage(f32);
+
+impl Default for Percentage {
+    fn default() -> Self {
+        Percentage(1.0)
+    }
+}
 
 impl Percentage {
     pub fn new(value: f32) -> Self {
@@ -226,56 +233,4 @@ impl Percentage {
     pub fn as_f32(self) -> f32 {
         self.0
     }
-}
-
-impl Default for Percentage {
-    fn default() -> Self {
-        Percentage(1.0)
-    }
-}
-
-impl<'a> Deserialize<'a> for Percentage {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'a>,
-    {
-        Ok(Percentage::new(f32::deserialize(deserializer)?))
-    }
-}
-
-#[derive(Deserialize, Copy, Clone, Debug, PartialEq, Eq)]
-struct DefaultTrueBool(bool);
-
-impl Default for DefaultTrueBool {
-    fn default() -> Self {
-        DefaultTrueBool(true)
-    }
-}
-
-fn fallback_default<T, E>(err: E) -> T
-where
-    T: Default,
-    E: Display,
-{
-    error!(target: LOG_TARGET_CONFIG, "Problem with config: {}; using default value", err);
-    T::default()
-}
-
-pub fn failure_default<'a, D, T>(deserializer: D) -> Result<T, D::Error>
-where
-    D: Deserializer<'a>,
-    T: Deserialize<'a> + Default,
-{
-    Ok(T::deserialize(Value::deserialize(deserializer)?).unwrap_or_else(fallback_default))
-}
-
-pub fn option_explicit_none<'de, T, D>(deserializer: D) -> Result<Option<T>, D::Error>
-where
-    D: Deserializer<'de>,
-    T: Deserialize<'de> + Default,
-{
-    Ok(match Value::deserialize(deserializer)? {
-        Value::String(ref value) if value.to_lowercase() == "none" => None,
-        value => Some(T::deserialize(value).unwrap_or_else(fallback_default)),
-    })
 }

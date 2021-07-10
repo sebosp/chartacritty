@@ -1,14 +1,13 @@
-.TH ALACRITTY "1" "August 2018" "alacritty 0.6.0-dev" "User Commands"
+.TH ALACRITTY "1" "August 2018" "alacritty 0.8.0" "User Commands"
 .SH NAME
-alacritty \- a cross-platform, gpu-accelerated terminal emulator
+Alacritty \- A fast, cross-platform, OpenGL terminal emulator
 .SH "SYNOPSIS"
 alacritty [FLAGS] [OPTIONS]
 .SH DESCRIPTION
-Alacritty is a terminal emulator with a strong focus on simplicity and
-performance. With such a strong focus on performance, included features are
-carefully considered and you can always expect Alacritty to be blazingly fast.
-By making sane choices for defaults, Alacritty requires no additional setup.
-However, it does allow configuration of many aspects of the terminal.
+Alacritty is a modern terminal emulator that comes with sensible defaults, but
+allows for extensive configuration. By integrating with other applications,
+rather than reimplementing their functionality, it manages to provide a flexible
+set of features with high performance.
 .SH "FLAGS"
 .TP
 \fB\-h\fR, \fB\-\-help\fR
@@ -16,15 +15,6 @@ Prints help information
 .TP
 \fB\-\-hold\fR
 Remain open after child process exits
-.TP
-\fB\-\-live\-config\-reload\fR
-Enable automatic config reloading
-.TP
-\fB\-\-no\-live\-config\-reload\fR
-Disable automatic config reloading
-.TP
-\fB\-\-persistent\-logging\fR
-Keep the log file after quitting Alacritty
 .TP
 \fB\-\-print\-events\fR
 Print all events to stdout
@@ -61,17 +51,11 @@ Alacritty looks for the configuration file at the following paths:
 
 On Windows, the configuration file is located at %APPDATA%\\alacritty\\alacritty.yml.
 .TP
-\fB\-d\fR, \fB\-\-dimensions\fR <columns> <lines>
-Defines the window dimensions. Falls back to size specified by window manager if set to 0x0 [default: 0x0]
-.TP
 \fB\-\-embed\fR <parent>
 Defines the X11 window ID (as a decimal integer) to embed Alacritty within
 .TP
 \fB\-o\fR, \fB\-\-option\fR <option>...
-Override configuration file options [example: window.title=Alacritty]
-.TP
-\fB\-\-position\fR <x-pos> <y-pos>
-Defines the window position. Falls back to position specified by window manager if unset [default: unset]
+Override configuration file options [example: cursor.style=Beam]
 .TP
 \fB\-t\fR, \fB\-\-title\fR <title>
 Defines the window title [default: Alacritty]
@@ -82,8 +66,7 @@ Start the shell in the specified working directory
 See the alacritty github repository at https://github.com/alacritty/alacritty for the full documentation.
 .SH "BUGS"
 Found a bug? Please report it at https://github.com/alacritty/alacritty/issues.
-.SH "AUTHORS"
-Maintainers:
+.SH "MAINTAINERS"
 .sp
 .RS 4
 .ie n \{\
