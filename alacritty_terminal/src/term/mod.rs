@@ -92,45 +92,31 @@ pub struct TermChartsHandle {
 }
 
 /// Terminal size info.
-#[derive(
-    Serialize,
-    Deserialize,
-    Debug,
-    Copy,
-    Clone,
-    PartialEq,
-    Serialize,
-    Deserialize,
-    Default,
-    Debug,
-    Copy,
-    Clone,
-    PartialEq,
-)]
+#[derive(Serialize, Deserialize, Default, Debug, Copy, Clone, PartialEq)]
 pub struct SizeInfo {
     /// Terminal window width.
-    width: f32,
+    pub width: f32,
 
     /// Terminal window height.
-    height: f32,
+    pub height: f32,
 
     /// Width of individual cell.
-    cell_width: f32,
+    pub cell_width: f32,
 
     /// Height of individual cell.
-    cell_height: f32,
+    pub cell_height: f32,
 
     /// Horizontal window padding.
-    padding_x: f32,
+    pub padding_x: f32,
 
     /// Horizontal window padding.
-    padding_y: f32,
+    pub padding_y: f32,
 
     /// Number of lines in the viewport.
-    screen_lines: usize,
+    pub screen_lines: usize,
 
     /// Number of columns in the viewport.
-    columns: usize,
+    pub columns: usize,
 }
 
 impl SizeInfo {
@@ -218,23 +204,6 @@ impl SizeInfo {
     fn dynamic_padding(padding: f32, dimension: f32, cell_dimension: f32) -> f32 {
         padding + ((dimension - 2. * padding) % cell_dimension) / 2.
     }
-}
-
-impl Dimensions for SizeInfo {
-    #[inline]
-    fn columns(&self) -> usize {
-        self.columns
-    }
-
-    #[inline]
-    fn screen_lines(&self) -> usize {
-        self.screen_lines
-    }
-
-    #[inline]
-    fn total_lines(&self) -> usize {
-        self.screen_lines()
-    }
 
     /// `scale_x` Scales the value from the current display boundary to
     /// a cartesian plane from [-1.0, 1.0], where -1.0 is 0px (left-most) and
@@ -252,6 +221,23 @@ impl Dimensions for SizeInfo {
         let center_y = self.height / 2.;
         let y = self.height - 2. * self.padding_y - input_value;
         -(y - center_y) / center_y
+    }
+}
+
+impl Dimensions for SizeInfo {
+    #[inline]
+    fn columns(&self) -> usize {
+        self.columns
+    }
+
+    #[inline]
+    fn screen_lines(&self) -> usize {
+        self.screen_lines
+    }
+
+    #[inline]
+    fn total_lines(&self) -> usize {
+        self.screen_lines()
     }
 }
 

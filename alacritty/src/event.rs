@@ -1234,8 +1234,8 @@ impl<N: Notify + OnResize> Processor<N> {
                     TerminalEvent::CursorBlinkingChange(_) => {
                         processor.ctx.update_cursor_blinking();
                     },
-                    TerminalEvent::DecorEvent => processor.ctx.terminal.dirty = true,
-                    TerminalEvent::ChartEvent => processor.ctx.terminal.dirty = true,
+                    TerminalEvent::DecorEvent => processor.ctx.display_update_pending.dirty = true,
+                    TerminalEvent::ChartEvent => processor.ctx.display_update_pending.dirty = true,
                 },
             },
             GlutinEvent::RedrawRequested(_) => *processor.ctx.dirty = true,

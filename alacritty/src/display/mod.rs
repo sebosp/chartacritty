@@ -55,6 +55,10 @@ use alacritty_terminal::decorations::{
     DecorationLines, DecorationPoints, DecorationTriangles, DecorationTypes, DecorationsConfig,
 };
 use alacritty_terminal::term::color::Rgb;
+pub mod content;
+pub mod cursor;
+pub mod hint;
+pub mod window;
 
 mod bell;
 mod color;
@@ -470,7 +474,8 @@ impl Display {
         let message_bar_lines =
             message_buffer.message().map(|m| m.text(&self.size_info).len()).unwrap_or(0);
         let search_lines = if search_active { 1 } else { 0 };
-        self.size_info.reserve_lines(message_bar_lines + search_lines);
+        let charts_lines = if terminal.charts_enabled() { 1 } else { 0};
+        self.size_info.reserve_lines(message_bar_lines + search_lines + charts_lines);
 
         // Resize PTY.
         pty_resize_handle.on_resize(&self.size_info);
@@ -484,13 +489,14 @@ impl Display {
         self.window.resize(physical);
         let (height, width) = (self.size_info.height, self.size_info.width);
         let (chart_resize_tx, chart_resize_rx) = oneshot::channel();
+        let (padding_x, padding_y) = (self.size_info.padding_x(), self.size_info.padding_y());
         tokio_handle.spawn(async move {
             let send_display_size =
                 charts_tx.send(alacritty_terminal::async_utils::AsyncTask::ChangeDisplaySize(
                     height,
                     width,
-                    padding_y,
                     padding_x,
+                    padding_y,
                     chart_resize_tx,
                 ));
             match send_display_size.await {
@@ -498,7 +504,7 @@ impl Display {
                 Ok(_) => debug!(
                     "Sent ChangeDisplaySize Task height: {}, width: {}, padding_y: {}, padding_x: \
                      {}",
-                    height, width, padding_y, padding_x
+                    height, width, padding_x, padding_y
                 ),
             }
         });
@@ -665,13 +671,14 @@ impl Display {
             debug!("Decorations are not enabled");
         }
 
-        self.draw_render_timer(config, &size_info);
         // Draw the charts
         if charts_enabled {
             self.draw_charts(&config, &size_info, charts_tx, tokio_handle);
         } else {
             debug!("Charts are not enabled");
         }
+
+        self.draw_render_timer(config, &size_info);
 
         // Handle search and IME positioning.
         let ime_position = match search_state.regex() {

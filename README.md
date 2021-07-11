@@ -18,3 +18,7 @@
 This is a modified version of Alacritty that includes drawing time series charts.
 
 I use this to monitor kubernetes clusters, for example alerts and number of workers.
+
+
+## TODO:
+Move ala

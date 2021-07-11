@@ -267,12 +267,14 @@ pub fn change_display_size(
 /// `async_coordinator` receives messages from the tasks about data loaded from
 /// the network, it owns the charts array and is the single point by which data can
 /// be loaded or requested. XXX: Config updates are not possible yet.
-pub async fn async_coordinator<T>(
+pub async fn async_coordinator<U>(
     mut rx: mpsc::Receiver<AsyncTask>,
     mut chart_config: crate::charts::ChartsConfig,
     size_info: SizeInfo,
-    event_proxy: T,
-) {
+    event_proxy: U,
+) where
+    U: EventListener + Send + 'static,
+{
     event!(Level::DEBUG, "async_coordinator: Starting, terminal size info: {:?}", size_info,);
     // This Instant is synchronized with the decorations thread, mainly used so that decorations
     // are ran under specific circumstances
@@ -586,9 +588,12 @@ pub fn get_metric_opengl_data(
 /// `tokio_default_setup` creates a default channels and handles, this should be used mostly for
 /// testing to avoid having to create all the tokio boilerplate, I would like to return a struct but
 /// the ownership and cloning and moving of the separate parts does not seem possible then
-pub fn tokio_default_setup<T>(
-    event_proxy: T,
-) -> (tokio::runtime::Handle, mpsc::Sender<AsyncTask>, oneshot::Sender<()>) {
+pub fn tokio_default_setup<U>(
+    event_proxy: U,
+) -> (tokio::runtime::Handle, mpsc::Sender<AsyncTask>, oneshot::Sender<()>)
+where
+    U: EventListener + Send + 'static,
+{
     // Create the channel that is used to communicate with the
     // charts background task.
     let (charts_tx, charts_rx) = mpsc::channel(4_096usize);
@@ -612,17 +617,20 @@ pub fn tokio_default_setup<T>(
 }
 
 /// `spawn_async_tasks` Starts a background thread to be used for tokio for async tasks
-pub fn spawn_async_tasks<C, T>(
+pub fn spawn_async_tasks<C, U>(
     config: &Config<C>,
     charts_tx: mpsc::Sender<AsyncTask>,
     charts_rx: mpsc::Receiver<AsyncTask>,
     handle_tx: std::sync::mpsc::Sender<tokio::runtime::Handle>,
     size_info: SizeInfo,
-    event_proxy: T,
-) -> (thread::JoinHandle<()>, oneshot::Sender<()>) {
+    event_proxy: U,
+) -> (thread::JoinHandle<()>, oneshot::Sender<()>)
+where
+    U: EventListener + Send + 'static,
+{
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let chart_config = config.charts.clone();
-    let decor_config = config.decorations.clone();
+    // let decor_config = config.decorations.clone();
     let tokio_thread = ::std::thread::Builder::new()
         .name("async I/O".to_owned())
         .spawn(move || {
@@ -659,7 +667,10 @@ pub fn spawn_async_tasks<C, T>(
 }
 
 /// `run` is an example use of the crate without drawing the data.
-pub fn run<T>(config: crate::config::MockConfig, event_proxy: T) {
+pub fn run<U>(config: crate::config::MockConfig, event_proxy: U)
+where
+    U: EventListener + Send + 'static,
+{
     let size_info = SizeInfo {
         width: 100.,
         height: 100.,

@@ -673,19 +673,6 @@ impl QuadRenderer {
             // Background color.
             add_attr!(4, gl::UNSIGNED_BYTE, u8);
 
-            // Rectangle setup.
-            gl::GenVertexArrays(1, &mut rect_vao);
-            gl::GenBuffers(1, &mut rect_vbo);
-            gl::GenBuffers(1, &mut rect_ebo);
-            gl::BindVertexArray(rect_vao);
-            let indices: [i32; 6] = [0, 1, 3, 1, 2, 3];
-            gl::BindBuffer(gl::ELEMENT_ARRAY_BUFFER, rect_ebo);
-            gl::BufferData(
-                gl::ELEMENT_ARRAY_BUFFER,
-                (size_of::<i32>() * indices.len()) as _,
-                indices.as_ptr() as *const _,
-                gl::STATIC_DRAW,
-            );
             /* TODO: figure out how to use indices for DrawElements
             // ---------------------
             // Filled Hexagon Setup
@@ -744,21 +731,16 @@ impl QuadRenderer {
         Ok(renderer)
     }
 
-    /// Draw all rectangles simultaneously to prevent excessive program swaps.
-    pub fn draw_rects(&mut self, size_info: &SizeInfo, rects: Vec<RenderRect>) {
-        if rects.is_empty() {
-            return;
-        }
-
+    pub fn prepare_rect_rendering_state(size_info: &SizeInfo) {
         // Prepare rect rendering state.
         unsafe {
             // Remove padding from viewport.
             gl::Viewport(0, 0, size_info.width() as i32, size_info.height() as i32);
             gl::BlendFuncSeparate(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA, gl::SRC_ALPHA, gl::ONE);
         }
+    }
 
-        self.rect_renderer.draw(size_info, rects);
-
+    pub fn activate_regular_state(size_info: &SizeInfo) {
         // Activate regular state again.
         unsafe {
             // Reset blending strategy.
@@ -773,6 +755,19 @@ impl QuadRenderer {
         }
     }
 
+    /// Draw all rectangles simultaneously to prevent excessive program swaps.
+    pub fn draw_rects(&mut self, size_info: &SizeInfo, rects: Vec<RenderRect>) {
+        if rects.is_empty() {
+            return;
+        }
+
+        Self::prepare_rect_rendering_state(size_info);
+
+        self.rect_renderer.draw(size_info, rects);
+
+        Self::activate_regular_state(size_info);
+    }
+
     /// `draw_hex_bg` draws an array of triangles with properties (x,y,r,g,b,a)
     pub fn draw_hex_bg(&mut self, props: &SizeInfo, opengl_data: &[f32]) {
         // This function expects a vector that contains 6 data points per vertex:
@@ -785,19 +780,15 @@ impl QuadRenderer {
         // 0.7f32, 0.3f32, // x, y
         // 0.0f32, 0.0f32, 1.0f32, 1.0f32, // RGBA
         // ];
+        Self::prepare_rect_rendering_state(props);
+
         unsafe {
+            // Setup data and buffers
+            gl::BindVertexArray(self.rect_renderer.vao);
+            gl::BindBuffer(gl::ARRAY_BUFFER, self.rect_renderer.vbo);
+
             // Swap program
             gl::UseProgram(self.hex_bg_program.id);
-
-            // Remove padding from viewport
-            gl::Viewport(0, 0, props.width as i32, props.height as i32);
-
-            // Change blending strategy
-            gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
-
-            // Setup data and buffers
-            gl::BindVertexArray(self.rect_vao);
-            gl::BindBuffer(gl::ARRAY_BUFFER, self.rect_vbo);
 
             // Position
             gl::EnableVertexAttribArray(0);
@@ -836,27 +827,22 @@ impl QuadRenderer {
         self.hex_bg_program.set_epoch_millis(0.0f32);
 
         unsafe {
-            // Deactivate rectangle program again
             // Draw the incoming array, opengl_data contains:
             // [2(x,y) + 4(r,g,b,a) ] -> 6
             gl::DrawArrays(gl::TRIANGLES, 0, (opengl_data.len() / 6usize) as i32);
+        }
 
-            // Reset blending strategy
-            gl::BlendFunc(gl::SRC1_COLOR, gl::ONE_MINUS_SRC1_COLOR);
+        // Deactivate rectangle program again
+        unsafe {
+            // Disable program
+            gl::UseProgram(0);
 
             // Reset data and buffers
             gl::BindBuffer(gl::ARRAY_BUFFER, 0);
             gl::BindVertexArray(0);
-
-            let padding_x = props.padding_x as i32;
-            let padding_y = props.padding_y as i32;
-            let width = props.width as i32;
-            let height = props.height as i32;
-            gl::Viewport(padding_x, padding_y, width - 2 * padding_x, height - 2 * padding_y);
-
-            // Disable program
-            gl::UseProgram(0);
         }
+
+        Self::activate_regular_state(props);
     }
 
     /// `draw_array` draws a vec made of 2D values in a specific mode
@@ -893,20 +879,17 @@ impl QuadRenderer {
              * DrawArrayMode::GlQuads => gl::QUADS,
              * DrawArrayMode::GlPolygon => gl::POLYGON_MODE, */
         };
+
+        Self::prepare_rect_rendering_state(props);
+
         // TODO: Use the Charts Shader Program (For now a copy of rect)
         unsafe {
+            // Setup data and buffers
+            gl::BindVertexArray(self.rect_renderer.vao);
+            gl::BindBuffer(gl::ARRAY_BUFFER, self.rect_renderer.vbo);
+
             // Swap program
             gl::UseProgram(self.charts_program.id);
-
-            // Remove padding from viewport
-            gl::Viewport(0, 0, props.width as i32, props.height as i32);
-
-            // Change blending strategy
-            gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
-
-            // Setup data and buffers
-            gl::BindVertexArray(self.rect_vao);
-            gl::BindBuffer(gl::ARRAY_BUFFER, self.rect_vbo);
 
             // Position
             gl::VertexAttribPointer(
@@ -931,27 +914,22 @@ impl QuadRenderer {
         // Color
         self.charts_program.set_color(color, alpha);
 
-        // Deactivate rectangle program again
         unsafe {
             // Draw the incoming array, opengl_vecs contains 2 points per vertex:
             gl::DrawArrays(gl_mode, 0, (opengl_vecs.len() / 2usize) as i32);
+        }
 
-            // Reset blending strategy
-            gl::BlendFunc(gl::SRC1_COLOR, gl::ONE_MINUS_SRC1_COLOR);
+        // Deactivate rectangle program again
+        unsafe {
+            // Disable program
+            gl::UseProgram(0);
 
             // Reset data and buffers
             gl::BindBuffer(gl::ARRAY_BUFFER, 0);
             gl::BindVertexArray(0);
-
-            let padding_x = props.padding_x as i32;
-            let padding_y = props.padding_y as i32;
-            let width = props.width as i32;
-            let height = props.height as i32;
-            gl::Viewport(padding_x, padding_y, width - 2 * padding_x, height - 2 * padding_y);
-
-            // Disable program
-            gl::UseProgram(0);
         }
+
+        Self::activate_regular_state(props);
     }
 
     pub fn with_api<F, T>(&mut self, config: &UiConfig, props: &SizeInfo, func: F) -> T

@@ -39,10 +39,8 @@ pub struct Config<T> {
     /// Shell startup directory.
     pub working_directory: Option<PathBuf>,
 
-    #[serde(default, deserialize_with = "option_explicit_none")]
     pub charts: Option<ChartsConfig>,
 
-    #[serde(default, deserialize_with = "option_explicit_none")]
     pub decorations: Option<DecorationsConfig>,
 
     /// Additional configuration options not directly required by the terminal.

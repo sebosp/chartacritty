@@ -34,7 +34,7 @@ tracing = { version = "0.1", features = ["log", "log-always"] }
 tracing-log = { version = "0.1", features = ["env_logger"]}
 percent-encoding = "1.0.1"
 failure = "0.1.6"
-#rand = "0.7.3"
+rand = "0.7.3"
 base64 = "0.13.0"
 regex-automata = "0.1.9"
 dirs = "3.0.1"

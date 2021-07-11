@@ -42,6 +42,7 @@ impl DecorationsConfig {
             decor.set_size_info(size_info);
         }
     }
+
     /// `to_sized_decor_vec` transforms an optional DecorationsConfig into an
     /// DecorationsConfig with resized vector items
     pub fn to_sized_decor_vec(config_decorations: Option<Self>, size_info: SizeInfo) -> Self {
@@ -49,11 +50,11 @@ impl DecorationsConfig {
             Some(mut decors) => {
                 decors.set_size_info(size_info);
                 decors
-            }
+            },
             None => {
                 info!("No decorations to size");
                 DecorationsConfig::default()
-            }
+            },
         }
     }
 
@@ -102,34 +103,36 @@ impl DecorationTypes {
         match self {
             DecorationTypes::Triangles(ref mut hexagon_triangles) => {
                 hexagon_triangles.set_size_info(size_info);
-            }
+            },
             DecorationTypes::Points(ref mut hexagon_points) => {
                 hexagon_points.set_size_info(size_info);
-            }
+            },
             DecorationTypes::Lines(ref mut hexagon_lines) => {
                 hexagon_lines.set_size_info(size_info);
-            }
+            },
             DecorationTypes::None => {
                 unreachable!("Attempting to update decorations on None variant");
-            }
+            },
         }
     }
+
     /// `tick` is called every time there is a draw request for the terminal
     pub fn tick(&mut self, time: f32) {
         match self {
             DecorationTypes::Points(ref mut hexagon_points) => {
                 hexagon_points.tick(time);
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
+
     /// `init_timers` will initialize times/epochs in the animation to some chosen defaults
     pub fn init_timers(&mut self, time: Instant) {
         match self {
             DecorationTypes::Points(ref mut hexagon_points) => {
                 hexagon_points.init_timers(time);
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
 }
@@ -147,7 +150,7 @@ impl DecorationLines {
             DecorationLines::Hexagon(ref mut hex_lines) => {
                 hex_lines.size_info = size_info;
                 hex_lines.update_opengl_vecs();
-            }
+            },
         }
     }
 }
@@ -165,7 +168,7 @@ impl DecorationPoints {
         match self {
             DecorationPoints::Hexagon(ref mut hex_points) => {
                 hex_points.init_timers(time);
-            }
+            },
         }
     }
 
@@ -175,14 +178,15 @@ impl DecorationPoints {
                 hex_points.size_info = size_info;
                 hex_points.update_opengl_vecs();
                 hex_points.choose_random_vertices();
-            }
+            },
         }
     }
+
     pub fn tick(&mut self, time: f32) {
         match self {
             DecorationPoints::Hexagon(ref mut hex_points) => {
                 hex_points.tick(time);
-            }
+            },
         }
     }
 }
@@ -201,7 +205,7 @@ impl DecorationTriangles {
             DecorationTriangles::Hexagon(ref mut hex_triangles) => {
                 hex_triangles.size_info = size_info;
                 hex_triangles.update_opengl_vecs();
-            }
+            },
         }
     }
 }
@@ -213,7 +217,7 @@ pub fn create_hexagon_line(
     radius: f32,
 ) -> DecorationTypes {
     let hexagon_line_background = HexagonLineBackground::new(color, alpha, size_info, radius);
-    //hexagon_line_background.update_opengl_vecs();
+    // hexagon_line_background.update_opengl_vecs();
     DecorationTypes::Lines(DecorationLines::Hexagon(hexagon_line_background))
 }
 
@@ -394,9 +398,11 @@ impl HexagonTriangleBackground {
             vecs: vec![],
         }
     }
+
     pub fn update_opengl_vecs(&mut self) {
         let mut res = vec![];
-        // To avoid colliding with the HexagonLines, the inner triangles ocupy a radius a bit smaller
+        // To avoid colliding with the HexagonLines, the inner triangles ocupy a radius a bit
+        // smaller
         let inner_hexagon_radius_percent = 0.92f32; // XXX: Maybe this can be a field?
         let coords = background_fill_hexagon_positions(self.size_info, self.radius);
         // TODO: The alpha should be calculated inside the shaders
@@ -494,6 +500,7 @@ impl HexagonLineBackground {
             vecs: vec![],
         }
     }
+
     pub fn update_opengl_vecs(&mut self) {
         let mut hexagons = vec![];
         let coords = background_fill_hexagon_positions(self.size_info, self.radius);
@@ -566,14 +573,20 @@ impl HexagonPointBackground {
     /// `choose_random_vertices` should be called once a new animation should take place,
     /// it selects new vertices to animate from the hexagons
     pub fn choose_random_vertices(&mut self) {
+        // SEB TODO: There seems to be bug where it hanngs in this function after 1 or two
+        // minutes...
         // Of the six vertices of x,y values, we only care about one of them, the top left.
         let total_hexagons = self.vecs.len() / 6usize / 2usize;
         // Let's animate 1/5 of the top-left hexagons
         let random_vertices_to_choose = (total_hexagons / 5usize) as usize;
-        info!("HexagonPointBackground::choose_random_vertices INIT. Total hexagons: {}, random_vertices_to_choose: {}", total_hexagons, random_vertices_to_choose);
+        info!(
+            "HexagonPointBackground::choose_random_vertices INIT. Total hexagons: {}, \
+             random_vertices_to_choose: {}",
+            total_hexagons, random_vertices_to_choose
+        );
         // Testing, TODO: remove
-        // self.chosen_vertices = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
-        // return;
+        // self.chosen_vertices = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
+        // 18]; return;
         let mut rng = rand::thread_rng();
         let mut current_vertex = 0;
         while current_vertex <= random_vertices_to_choose {
@@ -615,8 +628,15 @@ impl HexagonPointBackground {
         // The time is received as seconds.millis, let's transform all to ms
         let time_ms = time * 1000f32;
         info!(
-            "tick time: {}, as f32: {}, start_animation_ms: {}, animation_duration_ms: {}, animation_offset: {}, update_interval_s: {}, next_update_epoch: {}",
-            time, time as f32, self.start_animation_ms, self.animation_duration_ms, self.animation_offset, self.update_interval_s, self.next_update_epoch
+            "tick time: {}, as f32: {}, start_animation_ms: {}, animation_duration_ms: {}, \
+             animation_offset: {}, update_interval_s: {}, next_update_epoch: {}",
+            time,
+            time as f32,
+            self.start_animation_ms,
+            self.animation_duration_ms,
+            self.animation_offset,
+            self.update_interval_s,
+            self.next_update_epoch
         );
         if time_ms > self.start_animation_ms
             && time_ms < self.start_animation_ms + self.animation_duration_ms
@@ -673,7 +693,7 @@ fn background_fill_hexagon_positions(size: SizeInfo, radius: f32) -> Vec<Value2D
     let mut current_x_position = 0f32;
     let mut half_offset = true; // When true, we will add half radius to Y to make sure the hexagons do not overlap
     let mut res = vec![];
-    while current_x_position <= (size.width + radius * 2f32) {
+    while current_x_position <= (size.width() + radius * 2f32) {
         let current_y_position = 0f32;
         let mut temp_y = current_y_position;
         if half_offset {
@@ -682,7 +702,7 @@ fn background_fill_hexagon_positions(size: SizeInfo, radius: f32) -> Vec<Value2D
             // x   x   x   x
             temp_y -= y_offset;
         }
-        while temp_y <= (size.height + radius * 2f32) {
+        while temp_y <= (size.height() + radius * 2f32) {
             res.push(Value2D { x: current_x_position, y: temp_y });
             temp_y += y_offset * 2f32;
         }
