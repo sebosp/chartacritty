@@ -474,8 +474,8 @@ impl Display {
         let message_bar_lines =
             message_buffer.message().map(|m| m.text(&self.size_info).len()).unwrap_or(0);
         let search_lines = if search_active { 1 } else { 0 };
-        let charts_lines = if terminal.charts_enabled() { 1 } else { 0};
-        self.size_info.reserve_lines(message_bar_lines + search_lines + charts_lines);
+        //let charts_lines = if terminal.charts_enabled() { 1 } else { 0};
+        self.size_info.reserve_lines(message_bar_lines + search_lines /*+ charts_lines*/);
 
         // Resize PTY.
         pty_resize_handle.on_resize(&self.size_info);
