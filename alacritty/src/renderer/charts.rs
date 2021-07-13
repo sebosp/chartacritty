@@ -1,19 +1,11 @@
-use std::collections::HashMap;
 use std::mem;
 
-use crossfont::Metrics;
-
-use alacritty_terminal::grid::Dimensions;
-use alacritty_terminal::index::{Column, Point};
-use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::color::Rgb;
 use alacritty_terminal::term::SizeInfo;
 
-use crate::display::content::RenderableCell;
 use crate::gl;
 use crate::gl::types::*;
 use crate::renderer;
-use crate::renderer::rects::Vertex;
 
 static CHRT_SHADER_F: &str = include_str!("../../res/rect.f.glsl");
 static CHRT_SHADER_V: &str = include_str!("../../res/rect.v.glsl");
@@ -78,6 +70,41 @@ impl ChartRenderer {
             gl::BindBuffer(gl::ARRAY_BUFFER, 0);
         }
         Ok(Self { vao, vbo, program, vertices: Vec::new() })
+    }
+
+    pub fn draw(&mut self, opengl_vecs: &[f32], color: Rgb, alpha: f32, gl_mode: u32) {
+        // TODO: Use the Charts Shader Program (For now a copy of rect)
+        unsafe {
+            // Setup data and buffers
+            gl::BindVertexArray(self.vao);
+            gl::BindBuffer(gl::ARRAY_BUFFER, self.vbo);
+
+            // Swap program
+            gl::UseProgram(self.program.id);
+
+            // Load vertex data into array buffer
+            gl::BufferData(
+                gl::ARRAY_BUFFER,
+                (mem::size_of::<f32>() * opengl_vecs.len()) as _,
+                opengl_vecs.as_ptr() as *const _,
+                gl::STATIC_DRAW,
+            );
+        }
+
+        // Color
+        self.program.set_color(color, alpha);
+
+        unsafe {
+            // Draw the incoming array, opengl_vecs contains 2 points per vertex:
+            gl::DrawArrays(gl_mode, 0, (opengl_vecs.len() / 2usize) as i32);
+
+            // Disable program
+            gl::UseProgram(0);
+
+            // Reset buffer bindings to nothing.
+            gl::BindBuffer(gl::ARRAY_BUFFER, 0);
+            gl::BindVertexArray(0);
+        }
     }
 }
 

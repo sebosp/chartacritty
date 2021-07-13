@@ -1,19 +1,10 @@
-use std::collections::HashMap;
 use std::mem;
 
-use crossfont::Metrics;
-
-use alacritty_terminal::grid::Dimensions;
-use alacritty_terminal::index::{Column, Point};
-use alacritty_terminal::term::cell::Flags;
-use alacritty_terminal::term::color::Rgb;
 use alacritty_terminal::term::SizeInfo;
 
-use crate::display::content::RenderableCell;
 use crate::gl;
 use crate::gl::types::*;
 use crate::renderer;
-use crate::renderer::rects::Vertex;
 
 static HXBG_SHADER_F: &str = include_str!("../../res/hex_bg.f.glsl");
 static HXBG_SHADER_V: &str = include_str!("../../res/hex_bg.v.glsl");
@@ -26,7 +17,7 @@ pub struct HexBgRenderer {
 
     program: HexagonShaderProgram,
 
-    vertices: Vec<Vertex>,
+    vertices: Vec<f32>,
 }
 
 impl HexBgRenderer {
@@ -80,7 +71,68 @@ impl HexBgRenderer {
         }
         Ok(Self { vao, vbo, program, vertices: Vec::new() })
     }
-}
+
+    pub fn draw(&mut self, opengl_data: &[f32]) {
+        unsafe {
+            // Bind VAO to enable vertex attribute slots.
+            gl::BindVertexArray(self.vao);
+
+            // Bind VBO only once for buffer data upload only.
+            gl::BindBuffer(gl::ARRAY_BUFFER, self.vbo);
+
+            gl::UseProgram(self.program.id);
+        }
+
+        // TODO: put this somewhere before DrawArrays
+        // self.hex_bg_program.set_epoch_millis(0.0f32);
+
+        unsafe {
+/* This may not be needed anymore as it's set on the ::new()
+ * // Position
+            gl::EnableVertexAttribArray(0);
+            gl::VertexAttribPointer(
+                0, // location=0 is the vertex position
+                2, // position has 2 values: X, Y
+                gl::FLOAT,
+                gl::FALSE,
+                // [2(x,y) + 4(r,g,b,a) ] -> 6
+                (size_of::<f32>() * 6) as _,
+                ptr::null(),
+            );
+
+            // Colors
+            gl::EnableVertexAttribArray(1);
+            gl::VertexAttribPointer(
+                1, // location=1 is the color
+                4, // Color has 4 items, R, G, B, A
+                gl::FLOAT,
+                gl::FALSE,
+                // [2(x,y) + 4(r,g,b,a) ] -> 6
+                (size_of::<f32>() * 6) as _,
+                // The colors are offset by 2 (x,y) points
+                (size_of::<f32>() * 2) as _,
+            );*/
+
+            // Load vertex data into array buffer
+            gl::BufferData(
+                gl::ARRAY_BUFFER,
+                (mem::size_of::<f32>() * opengl_data.len()) as _,
+                opengl_data.as_ptr() as *const _,
+                gl::STATIC_DRAW,
+            );
+
+            // Draw the incoming array, opengl_data contains:
+            // [2(x,y) + 4(r,g,b,a) ] -> 6
+            gl::DrawArrays(gl::TRIANGLES, 0, (opengl_data.len() / 6usize) as i32);
+
+            // Disable program
+            gl::UseProgram(0);
+
+            // Reset buffer bindings to nothing.
+            gl::BindBuffer(gl::ARRAY_BUFFER, 0);
+            gl::BindVertexArray(0);
+        }
+    }
 }
 
 /// Hexagon Background Shader Program

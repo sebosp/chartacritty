@@ -204,7 +204,7 @@ static RECT_SHADER_V: &str = include_str!("../../res/rect.v.glsl");
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-struct Vertex {
+pub struct Vertex {
     // Normalized screen coordinates.
     x: f32,
     y: f32,

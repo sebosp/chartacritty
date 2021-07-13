@@ -24,18 +24,17 @@ use crate::config::ui_config::{Delta, UiConfig};
 use crate::display::content::RenderableCell;
 use crate::gl;
 use crate::gl::types::*;
+use crate::renderer::charts::ChartRenderer;
+use crate::renderer::hex_bg::HexBgRenderer;
 use crate::renderer::rects::{RectRenderer, RenderRect};
-// SEB TODO: Move ChartRenderer, HexRenderer and BonsaiRenderer there
 
+pub mod charts;
+pub mod hex_bg;
 pub mod rects;
 
 // Shader source.
 static TEXT_SHADER_F: &str = include_str!("../../res/text.f.glsl");
 static TEXT_SHADER_V: &str = include_str!("../../res/text.v.glsl");
-static CHRT_SHADER_F: &str = include_str!("../../res/rect.f.glsl");
-static CHRT_SHADER_V: &str = include_str!("../../res/rect.v.glsl");
-static HXBG_SHADER_F: &str = include_str!("../../res/hex_bg.f.glsl");
-static HXBG_SHADER_V: &str = include_str!("../../res/hex_bg.v.glsl");
 
 /// `LoadGlyph` allows for copying a rasterized glyph into graphics memory.
 pub trait LoadGlyph {
@@ -95,28 +94,6 @@ pub struct TextShaderProgram {
     ///
     /// Rendering is split into two passes; 1 for backgrounds, and one for text.
     u_background: GLint,
-}
-
-/// Charts Shader Program
-///
-/// Uniforms are prefixed with "u"
-#[derive(Debug)]
-pub struct ChartsShaderProgram {
-    // Program id,
-    id: GLuint,
-    /// Line color
-    u_color: GLint,
-}
-
-/// Hexagon Background Shader Program
-///
-/// Uniforms are prefixed with "u"
-#[derive(Debug)]
-pub struct HexagonShaderProgram {
-    // Program id,
-    id: GLuint,
-    /// The time uniform to be used to change opacity of different regions
-    u_epoch_millis: GLint,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -465,8 +442,8 @@ pub struct QuadRenderer {
     active_tex: GLuint,
     batch: Batch,
     rect_renderer: RectRenderer,
-    charts_program: ChartsShaderProgram,
-    hex_bg_program: HexagonShaderProgram,
+    chart_renderer: ChartRenderer,
+    hex_bg_renderer: HexBgRenderer,
 }
 
 #[derive(Debug)]
@@ -585,8 +562,6 @@ const ATLAS_SIZE: i32 = 1024;
 impl QuadRenderer {
     pub fn new() -> Result<QuadRenderer, Error> {
         let program = TextShaderProgram::new()?;
-        let charts_program = ChartsShaderProgram::new()?;
-        let hex_bg_program = HexagonShaderProgram::new()?;
 
         let mut vao: GLuint = 0;
         let mut ebo: GLuint = 0;
@@ -721,8 +696,8 @@ impl QuadRenderer {
             current_atlas: 0,
             active_tex: 0,
             batch: Batch::new(),
-            charts_program,
-            hex_bg_program,
+            chart_renderer: ChartRenderer::new()?,
+            hex_bg_renderer: HexBgRenderer::new()?,
         };
 
         let atlas = Atlas::new(ATLAS_SIZE);
@@ -769,7 +744,7 @@ impl QuadRenderer {
     }
 
     /// `draw_hex_bg` draws an array of triangles with properties (x,y,r,g,b,a)
-    pub fn draw_hex_bg(&mut self, props: &SizeInfo, opengl_data: &[f32]) {
+    pub fn draw_hex_bg(&mut self, size_info: &SizeInfo, opengl_data: &[f32]) {
         // This function expects a vector that contains 6 data points per vertex:
         // 2 are x,y position and the other 4 are the r,g,b,a
         // let opengl_data = vec![
@@ -780,75 +755,17 @@ impl QuadRenderer {
         // 0.7f32, 0.3f32, // x, y
         // 0.0f32, 0.0f32, 1.0f32, 1.0f32, // RGBA
         // ];
-        Self::prepare_rect_rendering_state(props);
+        Self::prepare_rect_rendering_state(size_info);
 
-        unsafe {
-            // Setup data and buffers
-            gl::BindVertexArray(self.rect_renderer.vao);
-            gl::BindBuffer(gl::ARRAY_BUFFER, self.rect_renderer.vbo);
+        self.hex_bg_renderer.draw(opengl_data);
 
-            // Swap program
-            gl::UseProgram(self.hex_bg_program.id);
-
-            // Position
-            gl::EnableVertexAttribArray(0);
-            gl::VertexAttribPointer(
-                0, // location=0 is the vertex position
-                2, // position has 2 values: X, Y
-                gl::FLOAT,
-                gl::FALSE,
-                // [2(x,y) + 4(r,g,b,a) ] -> 6
-                (size_of::<f32>() * 6) as _,
-                ptr::null(),
-            );
-
-            // Colors
-            gl::EnableVertexAttribArray(1);
-            gl::VertexAttribPointer(
-                1, // location=1 is the color
-                4, // Color has 4 items, R, G, B, A
-                gl::FLOAT,
-                gl::FALSE,
-                // [2(x,y) + 4(r,g,b,a) ] -> 6
-                (size_of::<f32>() * 6) as _,
-                // The colors are offset by 2 (x,y) points
-                (size_of::<f32>() * 2) as _,
-            );
-
-            // Load vertex data into array buffer
-            gl::BufferData(
-                gl::ARRAY_BUFFER,
-                (size_of::<f32>() * opengl_data.len()) as _,
-                opengl_data.as_ptr() as *const _,
-                gl::STATIC_DRAW,
-            );
-        }
-
-        self.hex_bg_program.set_epoch_millis(0.0f32);
-
-        unsafe {
-            // Draw the incoming array, opengl_data contains:
-            // [2(x,y) + 4(r,g,b,a) ] -> 6
-            gl::DrawArrays(gl::TRIANGLES, 0, (opengl_data.len() / 6usize) as i32);
-        }
-
-        // Deactivate rectangle program again
-        unsafe {
-            // Disable program
-            gl::UseProgram(0);
-
-            // Reset data and buffers
-            gl::BindBuffer(gl::ARRAY_BUFFER, 0);
-            gl::BindVertexArray(0);
-        }
-
-        Self::activate_regular_state(props);
+        Self::activate_regular_state(size_info);
     }
 
     /// `draw_array` draws a vec made of 2D values in a specific mode
     pub fn draw_array(
         &mut self,
-        props: &SizeInfo,
+        size_info: &SizeInfo,
         opengl_vecs: &[f32],
         color: Rgb,
         alpha: f32,
@@ -880,56 +797,11 @@ impl QuadRenderer {
              * DrawArrayMode::GlPolygon => gl::POLYGON_MODE, */
         };
 
-        Self::prepare_rect_rendering_state(props);
+        Self::prepare_rect_rendering_state(size_info);
 
-        // TODO: Use the Charts Shader Program (For now a copy of rect)
-        unsafe {
-            // Setup data and buffers
-            gl::BindVertexArray(self.rect_renderer.vao);
-            gl::BindBuffer(gl::ARRAY_BUFFER, self.rect_renderer.vbo);
+        self.chart_renderer.draw(opengl_vecs, color, alpha, gl_mode);
 
-            // Swap program
-            gl::UseProgram(self.charts_program.id);
-
-            // Position
-            gl::VertexAttribPointer(
-                0,
-                2,
-                gl::FLOAT,
-                gl::FALSE,
-                (size_of::<f32>() * 2) as _,
-                ptr::null(),
-            );
-            gl::EnableVertexAttribArray(0);
-
-            // Load vertex data into array buffer
-            gl::BufferData(
-                gl::ARRAY_BUFFER,
-                (size_of::<f32>() * opengl_vecs.len()) as _,
-                opengl_vecs.as_ptr() as *const _,
-                gl::STATIC_DRAW,
-            );
-        }
-
-        // Color
-        self.charts_program.set_color(color, alpha);
-
-        unsafe {
-            // Draw the incoming array, opengl_vecs contains 2 points per vertex:
-            gl::DrawArrays(gl_mode, 0, (opengl_vecs.len() / 2usize) as i32);
-        }
-
-        // Deactivate rectangle program again
-        unsafe {
-            // Disable program
-            gl::UseProgram(0);
-
-            // Reset data and buffers
-            gl::BindBuffer(gl::ARRAY_BUFFER, 0);
-            gl::BindVertexArray(0);
-        }
-
-        Self::activate_regular_state(props);
+        Self::activate_regular_state(size_info);
     }
 
     pub fn with_api<F, T>(&mut self, config: &UiConfig, props: &SizeInfo, func: F) -> T
@@ -1314,86 +1186,6 @@ impl TextShaderProgram {
 }
 
 impl Drop for TextShaderProgram {
-    fn drop(&mut self) {
-        unsafe {
-            gl::DeleteProgram(self.id);
-        }
-    }
-}
-
-impl ChartsShaderProgram {
-    pub fn new() -> Result<Self, ShaderCreationError> {
-        let vertex_shader = create_shader(gl::VERTEX_SHADER, CHRT_SHADER_V)?;
-        let fragment_shader = create_shader(gl::FRAGMENT_SHADER, CHRT_SHADER_F)?;
-        let program = create_program(vertex_shader, fragment_shader)?;
-
-        unsafe {
-            gl::DeleteShader(fragment_shader);
-            gl::DeleteShader(vertex_shader);
-            gl::UseProgram(program);
-        }
-
-        // get uniform locations
-        let u_color = unsafe { gl::GetUniformLocation(program, b"color\0".as_ptr() as *const _) };
-
-        let shader = ChartsShaderProgram { id: program, u_color };
-
-        unsafe { gl::UseProgram(0) }
-
-        Ok(shader)
-    }
-
-    fn set_color(&self, color: Rgb, alpha: f32) {
-        unsafe {
-            gl::Uniform4f(
-                self.u_color,
-                f32::from(color.r) / 255.,
-                f32::from(color.g) / 255.,
-                f32::from(color.b) / 255.,
-                alpha,
-            );
-        }
-    }
-}
-
-impl Drop for ChartsShaderProgram {
-    fn drop(&mut self) {
-        unsafe {
-            gl::DeleteProgram(self.id);
-        }
-    }
-}
-impl HexagonShaderProgram {
-    pub fn new() -> Result<Self, ShaderCreationError> {
-        let vertex_shader = create_shader(gl::VERTEX_SHADER, HXBG_SHADER_V)?;
-        let fragment_shader = create_shader(gl::FRAGMENT_SHADER, HXBG_SHADER_F)?;
-        let program = create_program(vertex_shader, fragment_shader)?;
-
-        unsafe {
-            gl::DeleteShader(fragment_shader);
-            gl::DeleteShader(vertex_shader);
-            gl::UseProgram(program);
-        }
-
-        // get uniform locations
-        let u_epoch_millis =
-            unsafe { gl::GetUniformLocation(program, b"epoch_millis\0".as_ptr() as *const _) };
-
-        let shader = HexagonShaderProgram { id: program, u_epoch_millis };
-
-        unsafe { gl::UseProgram(0) }
-
-        Ok(shader)
-    }
-
-    fn set_epoch_millis(&self, epoch_millis: f32) {
-        unsafe {
-            gl::Uniform1f(self.u_epoch_millis, epoch_millis);
-        }
-    }
-}
-
-impl Drop for HexagonShaderProgram {
     fn drop(&mut self) {
         unsafe {
             gl::DeleteProgram(self.id);
