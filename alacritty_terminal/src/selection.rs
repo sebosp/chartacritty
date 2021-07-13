@@ -396,7 +396,7 @@ mod tests {
     fn term(height: usize, width: usize) -> Term<()> {
         let size = SizeInfo::new(width as f32, height as f32, 1.0, 1.0, 0.0, 0.0, false);
         let (tokio_handle, charts_tx, _tokio_shutdown) =
-            crate::async_utils::tokio_default_setup(Mock);
+            crate::async_utils::tokio_default_setup(());
         Term::new(&MockConfig::default(), size, (), tokio_handle, charts_tx)
     }
 
