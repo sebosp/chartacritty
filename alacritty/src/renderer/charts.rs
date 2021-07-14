@@ -1,7 +1,6 @@
 use std::mem;
 
 use alacritty_terminal::term::color::Rgb;
-use alacritty_terminal::term::SizeInfo;
 
 use crate::gl;
 use crate::gl::types::*;

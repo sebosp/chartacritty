@@ -1,7 +1,5 @@
 use std::mem;
 
-use alacritty_terminal::term::SizeInfo;
-
 use crate::gl;
 use crate::gl::types::*;
 use crate::renderer;
@@ -169,11 +167,11 @@ impl HexagonShaderProgram {
         Ok(shader)
     }
 
-    fn set_epoch_millis(&self, epoch_millis: f32) {
-        unsafe {
-            gl::Uniform1f(self.u_epoch_millis, epoch_millis);
-        }
-    }
+    //    fn set_epoch_millis(&self, epoch_millis: f32) {
+    // unsafe {
+    // gl::Uniform1f(self.u_epoch_millis, epoch_millis);
+    // }
+    // }
 }
 
 impl Drop for HexagonShaderProgram {
