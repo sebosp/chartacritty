@@ -18,8 +18,6 @@
 // -- Create a TimeSeries inside the Term itself so that increments can be done synchronously but
 //    send/fetch the updates to the background every half a second or so?
 
-#![warn(rust_2018_idioms)]
-
 pub mod config;
 pub mod decorations;
 pub mod prometheus;
@@ -84,14 +82,15 @@ impl MissingValuesPolicy {
                         err
                     );
                     Err(String::from("Invalid f64 value"))
-                }
+                },
             };
         }
         event!(
-                        Level::ERROR,
-                        "MissingValuesPolicy::fixed({}) Could not find opening and closing parenthesis. Expected Fixed(<num>) (i.e Fixed(10))",
-                        input
-                    );
+            Level::ERROR,
+            "MissingValuesPolicy::fixed({}) Could not find opening and closing parenthesis. \
+             Expected Fixed(<num>) (i.e Fixed(10))",
+            input
+        );
         Err(String::from("Unable to find parenthesis enclosed f64 value"))
     }
 }
@@ -398,7 +397,8 @@ impl ChartsConfig {
                 } else {
                     event!(
                         Level::ERROR,
-                        "setup_chart_spacing: default dimensions and position were not given for charts and dimensions and positions are missing for chart: {}",
+                        "setup_chart_spacing: default dimensions and position were not given for \
+                         charts and dimensions and positions are missing for chart: {}",
                         chart.name
                     );
                     self.position
@@ -409,6 +409,7 @@ impl ChartsConfig {
             }
         }
     }
+
     /// Ensures that all the dashboards contain the same latest epoch.
     pub fn sync_latest_epoch(&mut self, size_info: ChartSizeInfo) {
         let max: u64 = self.charts.iter().map(|x| x.last_updated).max().unwrap_or_else(|| 0u64);
@@ -503,7 +504,8 @@ impl TimeSeriesChart {
         let opengl_vecs_capacity = self.sources[series_idx].series().active_items;
         event!(
             Level::DEBUG,
-            "self: {:?}, self.opengl_vecs.capacity(): {}, self.sources.capacity(): {}, series_idx: {}",
+            "self: {:?}, self.opengl_vecs.capacity(): {}, self.sources.capacity(): {}, \
+             series_idx: {}",
             self,
             self.opengl_vecs.capacity(),
             self.sources.capacity(),
@@ -681,7 +683,8 @@ impl TimeSeriesChart {
         if self.opengl_vecs[series_idx].len() <= 4 {
             return self.opengl_vecs[series_idx].clone();
         }
-        // By default, accomodate memory for as many active items as there are in the series circular buffer.
+        // By default, accomodate memory for as many active items as there are in the series
+        // circular buffer.
         let mut res = Vec::with_capacity(self.sources[series_idx].series().active_items * 2);
         // Grab the first reference point
         let mut cur_x = self.opengl_vecs[series_idx][0];
@@ -785,7 +788,7 @@ impl TimeSeries {
             _ => {
                 // TODO: Implement FromStr somehow
                 MissingValuesPolicy::fixed(policy_type.clone()).unwrap_or_default()
-            }
+            },
         };
         self
     }
@@ -941,7 +944,7 @@ impl TimeSeries {
         }
         if !self.sanity_check() {
             event!(Level::ERROR, "upsert: Sanity check failed: {:?}", self);
-            //return 0usize;
+            // return 0usize;
         }
         let last_idx = self.get_last_idx();
         if (self.metrics[last_idx].0 as i64 - input.0 as i64) >= self.metrics_capacity as i64 {
@@ -1022,8 +1025,11 @@ impl TimeSeries {
                     self.metrics[target_idx].1 =
                         self.resolve_metric_collision(self.metrics[target_idx].1, input.1);
                 } else {
-                    event!(Level::ERROR,
-                        "upsert: lost synchrony len: {}, first_idx: {}, last_idx: {}, target_idx: {}, inactive_time: {}, input: {}, target_idx data: {}, prev_value: {:?}, upsert_type: {:?}, prev_snapshot: {:?}, metrics: {:?}",
+                    event!(
+                        Level::ERROR,
+                        "upsert: lost synchrony len: {}, first_idx: {}, last_idx: {}, target_idx: \
+                         {}, inactive_time: {}, input: {}, target_idx data: {}, prev_value: {:?}, \
+                         upsert_type: {:?}, prev_snapshot: {:?}, metrics: {:?}",
                         self.metrics.len(),
                         self.first_idx,
                         last_idx,
@@ -1184,22 +1190,28 @@ mod tests {
         test.circular_push((13, Some(3f64)));
         assert_eq!(test.first_idx, 0);
         assert_eq!(test.active_items, 4);
-        assert_eq!(
-            test.metrics,
-            vec![(10, Some(0f64)), (11, Some(1f64)), (12, None), (13, Some(3f64))]
-        );
+        assert_eq!(test.metrics, vec![
+            (10, Some(0f64)),
+            (11, Some(1f64)),
+            (12, None),
+            (13, Some(3f64))
+        ]);
         test.circular_push((14, Some(4f64)));
-        assert_eq!(
-            test.metrics,
-            vec![(14, Some(4f64)), (11, Some(1f64)), (12, None), (13, Some(3f64))]
-        );
+        assert_eq!(test.metrics, vec![
+            (14, Some(4f64)),
+            (11, Some(1f64)),
+            (12, None),
+            (13, Some(3f64))
+        ]);
         assert_eq!(test.first_idx, 1);
         assert_eq!(test.active_items, 4);
         test.circular_push((15, Some(5f64)));
-        assert_eq!(
-            test.metrics,
-            vec![(14, Some(4f64)), (15, Some(5f64)), (12, None), (13, Some(3f64))]
-        );
+        assert_eq!(test.metrics, vec![
+            (14, Some(4f64)),
+            (15, Some(5f64)),
+            (12, None),
+            (13, Some(3f64))
+        ]);
     }
 
     #[test]
@@ -1210,10 +1222,12 @@ mod tests {
         test.upsert((10, Some(0f64)));
         test.upsert((11, Some(1f64)));
         test.upsert((12, None));
-        assert_eq!(
-            test.metrics,
-            vec![(10, Some(0f64)), (11, Some(1f64)), (12, None), (13, Some(3f64))]
-        );
+        assert_eq!(test.metrics, vec![
+            (10, Some(0f64)),
+            (11, Some(1f64)),
+            (12, None),
+            (13, Some(3f64))
+        ]);
         assert_eq!(test.first_idx, 0);
         test.upsert((15, Some(5f64)));
         assert_eq!(test.metrics, vec![(14, None), (15, Some(5f64)), (12, None), (13, Some(3f64))]);
@@ -1237,61 +1251,77 @@ mod tests {
         test.upsert(input);
         test.upsert((14, Some(4f64)));
         test.upsert((12, Some(20f64)));
-        assert_eq!(
-            test.metrics,
-            vec![(14, Some(4f64)), (15, Some(5f64)), (12, Some(20f64)), (13, Some(3f64))]
-        );
+        assert_eq!(test.metrics, vec![
+            (14, Some(4f64)),
+            (15, Some(5f64)),
+            (12, Some(20f64)),
+            (13, Some(3f64))
+        ]);
         assert_eq!(test.first_idx, 2);
         assert_eq!(test.active_items, 4);
         test.upsert((20, None));
-        assert_eq!(
-            test.metrics,
-            vec![(20, None), (15, Some(5f64)), (12, Some(20f64)), (13, Some(3f64))]
-        );
+        assert_eq!(test.metrics, vec![
+            (20, None),
+            (15, Some(5f64)),
+            (12, Some(20f64)),
+            (13, Some(3f64))
+        ]);
         test.upsert((20, Some(200f64)));
-        assert_eq!(
-            test.metrics,
-            vec![(20, Some(200f64)), (15, Some(5f64)), (12, Some(20f64)), (13, Some(3f64))]
-        );
+        assert_eq!(test.metrics, vec![
+            (20, Some(200f64)),
+            (15, Some(5f64)),
+            (12, Some(20f64)),
+            (13, Some(3f64))
+        ]);
         test.upsert((19, Some(190f64)));
-        assert_eq!(
-            test.metrics,
-            vec![(20, Some(200f64)), (15, Some(5f64)), (12, Some(20f64)), (19, Some(190f64))]
-        );
+        assert_eq!(test.metrics, vec![
+            (20, Some(200f64)),
+            (15, Some(5f64)),
+            (12, Some(20f64)),
+            (19, Some(190f64))
+        ]);
         assert_eq!(test.first_idx, 3);
         assert_eq!(test.get_last_idx(), 0);
         assert_eq!(test.active_items, 2);
         assert_eq!(test.as_vec(), vec![(19, Some(190f64)), (20, Some(200f64))]);
         test.upsert((21, Some(210f64)));
-        assert_eq!(
-            test.metrics,
-            vec![(20, Some(200f64)), (21, Some(210f64)), (12, Some(20f64)), (19, Some(190f64))]
-        );
+        assert_eq!(test.metrics, vec![
+            (20, Some(200f64)),
+            (21, Some(210f64)),
+            (12, Some(20f64)),
+            (19, Some(190f64))
+        ]);
         assert_eq!(test.first_idx, 3);
         assert_eq!(test.get_last_idx(), 1);
         assert_eq!(test.active_items, 3);
         test.upsert((22, Some(220f64)));
-        assert_eq!(
-            test.metrics,
-            vec![(20, Some(200f64)), (21, Some(210f64)), (22, Some(220f64)), (19, Some(190f64))]
-        );
+        assert_eq!(test.metrics, vec![
+            (20, Some(200f64)),
+            (21, Some(210f64)),
+            (22, Some(220f64)),
+            (19, Some(190f64))
+        ]);
         assert_eq!(test.first_idx, 3);
         assert_eq!(test.get_last_idx(), 2);
         assert_eq!(test.active_items, 4);
         test.upsert((24, Some(240f64)));
-        assert_eq!(
-            test.metrics,
-            vec![(24, Some(240f64)), (21, Some(210f64)), (22, Some(220f64)), (23, None),]
-        );
+        assert_eq!(test.metrics, vec![
+            (24, Some(240f64)),
+            (21, Some(210f64)),
+            (22, Some(220f64)),
+            (23, None),
+        ]);
         assert_eq!(test.first_idx, 1);
         assert_eq!(test.get_last_idx(), 0);
         test.upsert((84, Some(840f64)));
         test.upsert((81, Some(810f64)));
         test.upsert((82, Some(820f64)));
-        assert_eq!(
-            test.metrics,
-            vec![(84, Some(840f64)), (81, Some(810f64)), (82, Some(820f64)), (83, None),]
-        );
+        assert_eq!(test.metrics, vec![
+            (84, Some(840f64)),
+            (81, Some(810f64)),
+            (82, Some(820f64)),
+            (83, None),
+        ]);
         assert_eq!(test.first_idx, 1);
         assert_eq!(test.active_items, 4);
         // Let's try with broader vectors
@@ -1308,75 +1338,63 @@ mod tests {
         test.upsert((10, Some(10f64)));
         assert_eq!(test.first_idx, 0);
         assert_eq!(test.get_last_idx(), 9);
-        assert_eq!(
-            test.metrics,
-            vec![
-                (1, Some(1f64)),
-                (2, Some(2f64)),
-                (3, Some(3f64)),
-                (4, Some(4f64)),
-                (5, Some(5f64)),
-                (6, Some(6f64)),
-                (7, Some(7f64)),
-                (8, Some(8f64)),
-                (9, Some(9f64)),
-                (10, Some(10f64)),
-            ]
-        );
+        assert_eq!(test.metrics, vec![
+            (1, Some(1f64)),
+            (2, Some(2f64)),
+            (3, Some(3f64)),
+            (4, Some(4f64)),
+            (5, Some(5f64)),
+            (6, Some(6f64)),
+            (7, Some(7f64)),
+            (8, Some(8f64)),
+            (9, Some(9f64)),
+            (10, Some(10f64)),
+        ]);
         test.upsert((11, Some(11f64)));
         assert_eq!(test.first_idx, 1);
         assert_eq!(test.get_last_idx(), 0);
-        assert_eq!(
-            test.metrics,
-            vec![
-                (11, Some(11f64)),
-                (2, Some(2f64)),
-                (3, Some(3f64)),
-                (4, Some(4f64)),
-                (5, Some(5f64)),
-                (6, Some(6f64)),
-                (7, Some(7f64)),
-                (8, Some(8f64)),
-                (9, Some(9f64)),
-                (10, Some(10f64)),
-            ]
-        );
+        assert_eq!(test.metrics, vec![
+            (11, Some(11f64)),
+            (2, Some(2f64)),
+            (3, Some(3f64)),
+            (4, Some(4f64)),
+            (5, Some(5f64)),
+            (6, Some(6f64)),
+            (7, Some(7f64)),
+            (8, Some(8f64)),
+            (9, Some(9f64)),
+            (10, Some(10f64)),
+        ]);
         test.upsert((84, Some(840f64)));
         test.upsert((80, Some(800f64)));
-        assert_eq!(
-            test.metrics,
-            vec![
-                (84, Some(840f64)),
-                (2, Some(2f64)),
-                (3, Some(3f64)),
-                (4, Some(4f64)),
-                (5, Some(5f64)),
-                (6, Some(6f64)),
-                (80, Some(800f64)),
-                (81, None),
-                (82, None),
-                (83, None),
-            ]
-        );
+        assert_eq!(test.metrics, vec![
+            (84, Some(840f64)),
+            (2, Some(2f64)),
+            (3, Some(3f64)),
+            (4, Some(4f64)),
+            (5, Some(5f64)),
+            (6, Some(6f64)),
+            (80, Some(800f64)),
+            (81, None),
+            (82, None),
+            (83, None),
+        ]);
         test.upsert((79, Some(790f64)));
         test.upsert((81, Some(810f64)));
         test.upsert((85, Some(850f64)));
         test.upsert((81, Some(811f64)));
-        assert_eq!(
-            test.metrics,
-            vec![
-                (84, Some(840f64)),
-                (85, Some(850f64)),
-                (3, Some(3f64)),
-                (4, Some(4f64)),
-                (5, Some(5f64)),
-                (79, Some(790f64)),
-                (80, Some(800f64)),
-                (81, Some(1621f64)), // 81 has been added twice
-                (82, None),
-                (83, None),
-            ]
-        );
+        assert_eq!(test.metrics, vec![
+            (84, Some(840f64)),
+            (85, Some(850f64)),
+            (3, Some(3f64)),
+            (4, Some(4f64)),
+            (5, Some(5f64)),
+            (79, Some(790f64)),
+            (80, Some(800f64)),
+            (81, Some(1621f64)), // 81 has been added twice
+            (82, None),
+            (83, None),
+        ]);
     }
 
     #[test]
@@ -1392,28 +1410,22 @@ mod tests {
         assert_eq!(test.get_last_idx(), 3);
         test.upsert((4, Some(4f64)));
         assert_eq!(test.get_last_idx(), 4);
-        assert_eq!(
-            test.metrics,
-            vec![
-                (0, Some(0f64)),
-                (1, Some(1f64)),
-                (2, Some(2f64)),
-                (3, Some(3f64)),
-                (4, Some(4f64))
-            ]
-        );
+        assert_eq!(test.metrics, vec![
+            (0, Some(0f64)),
+            (1, Some(1f64)),
+            (2, Some(2f64)),
+            (3, Some(3f64)),
+            (4, Some(4f64))
+        ]);
         test.upsert((5, Some(5f64)));
         assert_eq!(test.get_last_idx(), 0);
-        assert_eq!(
-            test.metrics,
-            vec![
-                (5, Some(5f64)),
-                (1, Some(1f64)),
-                (2, Some(2f64)),
-                (3, Some(3f64)),
-                (4, Some(4f64))
-            ]
-        );
+        assert_eq!(test.metrics, vec![
+            (5, Some(5f64)),
+            (1, Some(1f64)),
+            (2, Some(2f64)),
+            (3, Some(3f64)),
+            (4, Some(4f64))
+        ]);
         test.upsert((6, Some(6f64)));
         assert_eq!(test.get_last_idx(), 1);
         test.upsert((7, Some(7f64)));
@@ -1423,16 +1435,13 @@ mod tests {
         let old_input = (2, Some(20f64));
         assert_eq!(last_input.0 as i64 - old_input.0 as i64, 5i64);
         test.upsert((2, Some(20f64)));
-        assert_eq!(
-            test.metrics,
-            vec![
-                (5, Some(5f64)),
-                (6, Some(6f64)),
-                (7, Some(7f64)),
-                (3, Some(3f64)),
-                (4, Some(4f64))
-            ]
-        );
+        assert_eq!(test.metrics, vec![
+            (5, Some(5f64)),
+            (6, Some(6f64)),
+            (7, Some(7f64)),
+            (3, Some(3f64)),
+            (4, Some(4f64))
+        ]);
         // This shouldn't even be inserted because it's too old
         assert_eq!(test.active_items, 5);
         let input = (4, Some(40f64));
@@ -1507,10 +1516,12 @@ mod tests {
         assert_eq!(test.active_items, 1);
         assert_eq!(test.as_vec(), vec![(18, Some(8f64))]);
         test.upsert((20, Some(0f64)));
-        assert_eq!(
-            test.metrics,
-            vec![(18, Some(8f64)), (19, None), (20, Some(0f64)), (13, Some(3f64))]
-        );
+        assert_eq!(test.metrics, vec![
+            (18, Some(8f64)),
+            (19, None),
+            (20, Some(0f64)),
+            (13, Some(3f64))
+        ]);
         assert_eq!(test.first_idx, 0);
         assert_eq!(test.active_items, 3);
         assert_eq!(test.as_vec(), vec![(18, Some(8f64)), (19, None), (20, Some(0f64))]);
@@ -1527,10 +1538,12 @@ mod tests {
         test.upsert((50, Some(3f64)));
         test.upsert((51, Some(3f64)));
         test.upsert((52, Some(3f64)));
-        assert_eq!(
-            test.metrics,
-            vec![(50, Some(8f64)), (51, Some(3f64)), (52, Some(3f64)), (53, Some(3f64))]
-        );
+        assert_eq!(test.metrics, vec![
+            (50, Some(8f64)),
+            (51, Some(3f64)),
+            (52, Some(3f64)),
+            (53, Some(3f64))
+        ]);
     }
 
     #[test]
@@ -1646,21 +1659,18 @@ mod tests {
         assert_eq!(test0.first_idx, 0usize);
         assert_eq!(test0.metrics[0], (13, Some(13.)));
         assert_eq!(test0.metrics[1], (14, None));
-        assert_eq!(
-            test0.as_vec(),
-            vec![
-                (13, Some(13.)),
-                (14, None),
-                (15, None),
-                (16, None),
-                (17, None),
-                (18, None),
-                (19, None),
-                (20, None),
-                (21, Some(21.)),
-                (22, Some(22.)),
-            ]
-        );
+        assert_eq!(test0.as_vec(), vec![
+            (13, Some(13.)),
+            (14, None),
+            (15, None),
+            (16, None),
+            (17, None),
+            (18, None),
+            (19, None),
+            (20, None),
+            (21, Some(21.)),
+            (22, Some(22.)),
+        ]);
     }
 
     #[test]
@@ -1690,10 +1700,12 @@ mod tests {
         test2.upsert((12, Some(2f64)));
         test2.upsert((13, Some(3f64)));
         test2.first_idx = 1;
-        assert_eq!(
-            test2.metrics,
-            vec![(10, Some(0f64)), (11, Some(1f64)), (12, Some(2f64)), (13, Some(3f64))]
-        );
+        assert_eq!(test2.metrics, vec![
+            (10, Some(0f64)),
+            (11, Some(1f64)),
+            (12, Some(2f64)),
+            (13, Some(3f64))
+        ]);
         let mut iter_test2 = test2.iter();
         assert_eq!(iter_test2.pos, 1);
         assert_eq!(iter_test2.next(), Some(&(11, Some(1f64))));
@@ -1833,23 +1845,20 @@ mod tests {
         init_log();
         let (size_test, mut chart_test) = simple_chart_setup_with_none();
         chart_test.update_series_opengl_vecs(0, size_test);
-        assert_eq!(
-            chart_test.opengl_vecs[0],
-            vec![
-                -1.0,   // 1st X value, leftmost.
-                -1.0,   // Y value is 0, so -1.0 is the bottom-most
-                -0.99,  // X plus 0.01
-                -0.975, // Y value is 1, so 25% of the line, so 0.025
-                -0.98,  // leftmost plus  0.01 * 2
-                -0.95,  // Y value is 2, so 50% from bottom to top
-                -0.97,  // leftmost plus 0.01 * 3
-                -1.0,   // Top-most value, so the chart height
-                -0.96,  // leftmost plus 0.01 * 4, rightmost
-                -1.0,   // A None value is set
-                -0.95,  // leftmost plus 0.01 * 5, rightmost
-                -0.9    // Top-most value, so the chart height
-            ]
-        );
+        assert_eq!(chart_test.opengl_vecs[0], vec![
+            -1.0,   // 1st X value, leftmost.
+            -1.0,   // Y value is 0, so -1.0 is the bottom-most
+            -0.99,  // X plus 0.01
+            -0.975, // Y value is 1, so 25% of the line, so 0.025
+            -0.98,  // leftmost plus  0.01 * 2
+            -0.95,  // Y value is 2, so 50% from bottom to top
+            -0.97,  // leftmost plus 0.01 * 3
+            -1.0,   // Top-most value, so the chart height
+            -0.96,  // leftmost plus 0.01 * 4, rightmost
+            -1.0,   // A None value is set
+            -0.95,  // leftmost plus 0.01 * 5, rightmost
+            -0.9    // Top-most value, so the chart height
+        ]);
         let mut prom_test = TimeSeriesChart::default();
         // Let's add a reference point
         // XXX: How does this behave without a reference point?
@@ -2002,44 +2011,38 @@ mod tests {
         assert_eq!(chart_test.decorations[0].opengl_vertices().len(), 12);
         // At this point we know 1 unit in the current drawn metrics is equals to
         // 0.025
-        assert_eq!(
-            deco_vecs,
-            vec![
-                -1.0,     // Left-most
-                -0.97375, // 0.25 + 5% height multiplier, so 30% of the line
-                -1.0,     // Left-most
-                -0.97625, // Y value - 5% height multiplier, so 20% of the line
-                -1.0,     // Left-most
-                -0.975,   // Y value, so 25% of the line
-                -0.9,     // Right-most
-                -0.975,   // Y value is 1, so 25% of the line
-                -0.9,     // Right-most
-                -0.97625, // Y value is 1, so 25% of the line
-                -0.9,     // Right-most
-                -0.97375, // Y value is 1, so 25% of the line
-            ]
-        );
+        assert_eq!(deco_vecs, vec![
+            -1.0,     // Left-most
+            -0.97375, // 0.25 + 5% height multiplier, so 30% of the line
+            -1.0,     // Left-most
+            -0.97625, // Y value - 5% height multiplier, so 20% of the line
+            -1.0,     // Left-most
+            -0.975,   // Y value, so 25% of the line
+            -0.9,     // Right-most
+            -0.975,   // Y value is 1, so 25% of the line
+            -0.9,     // Right-most
+            -0.97625, // Y value is 1, so 25% of the line
+            -0.9,     // Right-most
+            -0.97375, // Y value is 1, so 25% of the line
+        ]);
         // Since we have added a Reference point, it needs some space to be
         // drawn, its default width is 1px, turns out to be 0.9 between ticks
         // Also there is an offset of 10 px so divided by 2 (for each side) becomes:
         // 0.05
-        assert_eq!(
-            chart_test.opengl_vecs[0],
-            vec![
-                -0.99,       // 1st X value, leftmost.
-                -1.0,        // Y value is 0, so -1.0 is the bottom-most
-                -0.982,      // X plus 0.01
-                -0.975,      // Y value is 1, so 25% of the line, so 0.025
-                -0.97400004, // leftmost plus  0.01 * 2
-                -0.95,       // Y value is 2, so 50% from bottom to top
-                -0.96599996, // leftmost plus 0.01 * 0.3
-                -1.0,        // A none value means MissingValuesPolicy::Zero
-                -0.958,      // leftmost plus 0.01 * 4
-                -1.0,        // A none value means MissingValuesPolicy::Zero
-                -0.95,       // leftmost plus 0.01 * 5, rightmost
-                -0.9         // A bit below the max
-            ]
-        );
+        assert_eq!(chart_test.opengl_vecs[0], vec![
+            -0.99,       // 1st X value, leftmost.
+            -1.0,        // Y value is 0, so -1.0 is the bottom-most
+            -0.982,      // X plus 0.01
+            -0.975,      // Y value is 1, so 25% of the line, so 0.025
+            -0.97400004, // leftmost plus  0.01 * 2
+            -0.95,       // Y value is 2, so 50% from bottom to top
+            -0.96599996, // leftmost plus 0.01 * 0.3
+            -1.0,        // A none value means MissingValuesPolicy::Zero
+            -0.958,      // leftmost plus 0.01 * 4
+            -1.0,        // A none value means MissingValuesPolicy::Zero
+            -0.95,       // leftmost plus 0.01 * 5, rightmost
+            -0.9         // A bit below the max
+        ]);
     }
 
     #[test]
@@ -2181,36 +2184,33 @@ mod tests {
         assert_eq!(target_idx, 8);
         corrupt.upsert(input);
         assert_eq!(corrupt.sanity_check(), true);
-        assert_eq!(
-            corrupt.metrics,
-            vec![
-                (65916, None),
-                (65917, None),
-                (65918, None),
-                (65919, None),
-                (65920, None),
-                (20425, Some(9.0)),
-                (20426, Some(9.0)),
-                (20427, Some(9.0)),
-                (65899, Some(8.0)),
-                (65900, None),
-                (65901, None),
-                (65902, None),
-                (65903, None),
-                (65904, None),
-                (65905, None),
-                (65906, None),
-                (65907, None),
-                (65908, None),
-                (65909, None),
-                (65910, None),
-                (65911, None),
-                (65912, None),
-                (65913, None),
-                (65914, None),
-                (65915, None),
-            ]
-        );
+        assert_eq!(corrupt.metrics, vec![
+            (65916, None),
+            (65917, None),
+            (65918, None),
+            (65919, None),
+            (65920, None),
+            (20425, Some(9.0)),
+            (20426, Some(9.0)),
+            (20427, Some(9.0)),
+            (65899, Some(8.0)),
+            (65900, None),
+            (65901, None),
+            (65902, None),
+            (65903, None),
+            (65904, None),
+            (65905, None),
+            (65906, None),
+            (65907, None),
+            (65908, None),
+            (65909, None),
+            (65910, None),
+            (65911, None),
+            (65912, None),
+            (65913, None),
+            (65914, None),
+            (65915, None),
+        ]);
         let mut date_20201106 = TimeSeries {
             metrics: vec![
                 (1604568598, Some(3.0)),
