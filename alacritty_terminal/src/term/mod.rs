@@ -3,7 +3,7 @@
 use std::cmp::{max, min};
 use std::ops::{Index, IndexMut, Range};
 use std::sync::Arc;
-use std::time::{Duration, Instant, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 
 use std::{mem, ptr, str};
 
