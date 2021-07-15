@@ -585,35 +585,33 @@ pub fn get_metric_opengl_data(
     })
 }
 
-/// `tokio_default_setup` creates a default channels and handles, this should be used mostly for
+/// `tokio_default_setup` creates a default channels and handles, this should be used only for
 /// testing to avoid having to create all the tokio boilerplate, I would like to return a struct but
 /// the ownership and cloning and moving of the separate parts does not seem possible then
-pub fn tokio_default_setup<U>(
-    event_proxy: U,
-) -> (tokio::runtime::Handle, mpsc::Sender<AsyncTask>, oneshot::Sender<()>)
-where
-    U: EventListener + Send + 'static,
-{
+pub fn tokio_default_setup(
+) -> (tokio::runtime::Handle, mpsc::Sender<AsyncTask>, oneshot::Sender<()>) {
     // Create the channel that is used to communicate with the
     // charts background task.
-    let (charts_tx, charts_rx) = mpsc::channel(4_096usize);
+    let (charts_tx, _charts_rx) = mpsc::channel(4_096usize);
     // Create a channel to receive a handle from Tokio
-    //
     let (handle_tx, handle_rx) = std::sync::mpsc::channel();
-    // Start the Async I/O runtime, this needs to run in a background thread because in OSX,
-    // only the main thread can write to the graphics card.
-    let (_tokio_thread, tokio_shutdown) = spawn_async_tasks(
-        &crate::config::MockConfig::default(),
-        charts_tx.clone(),
-        charts_rx,
-        handle_tx,
-        SizeInfo::default(),
-        event_proxy,
-    );
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let _tokio_thread = ::std::thread::Builder::new()
+        .name("async I/O".to_owned())
+        .spawn(move || {
+            let mut tokio_runtime =
+                tokio::runtime::Runtime::new().expect("Failed to start new tokio Runtime");
+            info!("Tokio runtime created.");
+            handle_tx
+                .send(tokio_runtime.handle().clone())
+                .expect("Unable to give runtime handle to the main thread");
+            tokio_runtime.block_on(async { shutdown_rx.await.unwrap() });
+        })
+        .expect("Unable to start async I/O thread");
     let tokio_handle =
         handle_rx.recv().expect("Unable to get the tokio handle in a background thread");
 
-    (tokio_handle, charts_tx, tokio_shutdown)
+    (tokio_handle, charts_tx, shutdown_tx)
 }
 
 /// `spawn_async_tasks` Starts a background thread to be used for tokio for async tasks

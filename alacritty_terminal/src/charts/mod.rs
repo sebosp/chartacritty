@@ -1461,11 +1461,11 @@ mod tests {
         test.upsert((11, None));
         test.upsert((12, None));
         test.upsert((13, None));
-        assert_eq!(test.get_last_filled(), 0f64);
+        assert!((test.get_last_filled() - 0f64).abs() < f64::EPSILON);
         let mut test = TimeSeries::default().with_capacity(4);
         test.upsert((11, None));
         test.upsert((12, Some(2f64)));
-        assert_eq!(test.get_last_filled(), 2f64);
+        assert!((test.get_last_filled() - 2f64).abs() < f64::EPSILON);
     }
 
     #[test]
@@ -1582,13 +1582,13 @@ mod tests {
         test_last.calculate_stats();
         test_first.calculate_stats();
         test_avg.calculate_stats();
-        assert_eq!(test_zero.get_missing_values_fill(), 0f64);
-        assert_eq!(test_one.get_missing_values_fill(), 1f64);
-        assert_eq!(test_min.get_missing_values_fill(), 1f64);
-        assert_eq!(test_max.get_missing_values_fill(), 9f64);
-        assert_eq!(test_last.get_missing_values_fill(), 1f64);
-        assert_eq!(test_first.get_missing_values_fill(), 9f64);
-        assert_eq!(test_avg.get_missing_values_fill(), 5f64);
+        assert!((test_zero.get_missing_values_fill() - 0f64).abs() < f64::EPSILON);
+        assert!((test_one.get_missing_values_fill() - 1f64).abs() < f64::EPSILON);
+        assert!((test_min.get_missing_values_fill() - 1f64).abs() < f64::EPSILON);
+        assert!((test_max.get_missing_values_fill() - 9f64).abs() < f64::EPSILON);
+        assert!((test_last.get_missing_values_fill() - 1f64).abs() < f64::EPSILON);
+        assert!((test_first.get_missing_values_fill() - 9f64).abs() < f64::EPSILON);
+        assert!((test_avg.get_missing_values_fill() - 5f64).abs() < f64::EPSILON);
         // TODO: add Fixed value test
     }
 
@@ -1748,20 +1748,20 @@ mod tests {
         // display size: 100 px, input the value: 0, padding_x: 0
         // The value should return should be left-most: -1.0
         let min = test.scale_x(0f32);
-        assert_eq!(min, -1.0f32);
+        assert!((min - -1.0f32).abs() < f32::EPSILON);
         // display size: 100 px, input the value: 100, padding_x: 0
         // The value should return should be right-most: 1.0
         let max = test.scale_x(100f32);
-        assert_eq!(max, 1.0f32);
+        assert!((max - 1.0f32).abs() < f32::EPSILON);
         // display size: 100 px, input the value: 50, padding_x: 0
         // The value should return should be the center: 0.0
         let mid = test.scale_x(50f32);
-        assert_eq!(mid, 0.0f32);
+        assert!((mid - 0.0f32).abs() < f32::EPSILON);
         test.term_size.padding_x = 50.;
         // display size: 100 px, input the value: 50, padding_x: 50px
         // The value returned should be the right-most: 1.0
         let mid = test.scale_x(50f32);
-        assert_eq!(mid, 1.0f32);
+        assert!((mid - 1.0f32).abs() < f32::EPSILON);
     }
 
     #[test]
@@ -1785,15 +1785,15 @@ mod tests {
         // display size: 100 px, input the value: 0, padding_y: 0
         // The value should return should be lowest: -1.0
         let min = size_test.scale_y(100f64, 0f64);
-        assert_eq!(min, -1.0f32);
+        assert!((min - -1.0f32).abs() < f32::EPSILON);
         // display size: 100 px, input the value: 100, padding_y: 0
         // The value should return should be upper-most: 1.0
         let max = size_test.scale_y(100f64, 100f64);
-        assert_eq!(max, 1.0f32);
+        assert!((max - 1.0f32).abs() < f32::EPSILON);
         // display size: 100 px, input the value: 50, padding_y: 0
         // The value should return should be the center: 0.0
         let mid = size_test.scale_y(100f64, 50f64);
-        assert_eq!(mid, 0.0f32);
+        assert!((mid - 0.0f32).abs() < f32::EPSILON);
         size_test.term_size.padding_y = 25.;
         // display size: 100 px, input the value: 50, padding_y: 25
         // The value returned should be upper-most: 1.0
@@ -1801,7 +1801,7 @@ mod tests {
         // which means some values would have been chopped (anything above
         // 50f32)
         let mid = size_test.scale_y(100f64, 50f64);
-        assert_eq!(mid, 1.0f32);
+        assert!((mid - 1.0f32).abs() < f32::EPSILON);
     }
 
     fn simple_chart_setup_with_none() -> (ChartSizeInfo, TimeSeriesChart) {
@@ -1916,7 +1916,7 @@ mod tests {
 
         //
         // - The reference point takes 1px width, so draw space for metrics is 10px.
-        assert_eq!(prom_test.decorations[0].width(), 2.);
+        assert!((prom_test.decorations[0].width() - 2.).abs() < f32::EPSILON);
         let tick_space = 0.10f32 / 24f32;
         // The draw space horizontally is 0.10. from 0.99 to 0.90
         // Start of the line:

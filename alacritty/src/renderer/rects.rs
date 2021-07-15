@@ -204,7 +204,7 @@ static RECT_SHADER_V: &str = include_str!("../../res/rect.v.glsl");
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub struct Vertex {
+struct Vertex {
     // Normalized screen coordinates.
     x: f32,
     y: f32,
@@ -219,8 +219,8 @@ pub struct Vertex {
 #[derive(Debug)]
 pub struct RectRenderer {
     // GL buffer objects.
-    pub vao: GLuint,
-    pub vbo: GLuint,
+    vao: GLuint,
+    vbo: GLuint,
 
     program: RectShaderProgram,
 

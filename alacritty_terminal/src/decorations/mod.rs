@@ -43,9 +43,9 @@ impl DecorationsConfig {
         }
     }
 
-    /// `to_sized_decor_vec` transforms an optional DecorationsConfig into an
+    /// `from_optional_decor_config` transforms an optional DecorationsConfig into an
     /// DecorationsConfig with resized vector items
-    pub fn to_sized_decor_vec(config_decorations: Option<Self>, size_info: SizeInfo) -> Self {
+    pub fn optional_decor_to_sized(config_decorations: Option<Self>, size_info: SizeInfo) -> Self {
         match config_decorations {
             Some(mut decors) => {
                 decors.set_size_info(size_info);
@@ -118,21 +118,15 @@ impl DecorationTypes {
 
     /// `tick` is called every time there is a draw request for the terminal
     pub fn tick(&mut self, time: f32) {
-        match self {
-            DecorationTypes::Points(ref mut hexagon_points) => {
-                hexagon_points.tick(time);
-            },
-            _ => {},
+        if let DecorationTypes::Points(ref mut hexagon_points) = self {
+            hexagon_points.tick(time);
         }
     }
 
     /// `init_timers` will initialize times/epochs in the animation to some chosen defaults
     pub fn init_timers(&mut self, time: Instant) {
-        match self {
-            DecorationTypes::Points(ref mut hexagon_points) => {
-                hexagon_points.init_timers(time);
-            },
-            _ => {},
+        if let DecorationTypes::Points(ref mut hexagon_points) = self {
+            hexagon_points.init_timers(time);
         }
     }
 }
@@ -590,7 +584,7 @@ impl HexagonPointBackground {
         let mut rng = rand::thread_rng();
         let mut current_vertex = 0;
         while current_vertex <= random_vertices_to_choose {
-            let new_vertex = usize::from(rng.gen_range(0, total_hexagons));
+            let new_vertex = rng.gen_range(0, total_hexagons);
             if self.chosen_vertices.contains(&new_vertex) {
                 continue;
             }

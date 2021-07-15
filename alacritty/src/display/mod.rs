@@ -342,7 +342,7 @@ impl Display {
         let hint_state = HintState::new(config.ui_config.hints.alphabet());
 
         let mut decorations =
-            DecorationsConfig::to_sized_decor_vec(config.decorations.clone(), size_info);
+            DecorationsConfig::optional_decor_to_sized(config.decorations.clone(), size_info);
         decorations.init_timers();
         Ok(Self {
             window,

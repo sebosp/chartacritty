@@ -1952,11 +1952,6 @@ pub mod test {
     use crate::config::Config;
     use crate::index::Column;
 
-    struct Mock;
-    impl EventListener for Mock {
-        fn send_event(&self, _event: Event) {}
-    }
-
     /// Construct a terminal from its content as string.
     ///
     /// A `\n` will break line and `\r\n` will break line without wrapping.
@@ -1985,8 +1980,7 @@ pub mod test {
             .unwrap_or(0);
 
         // Create terminal with the appropriate dimensions.
-        let (tokio_handle, charts_tx, _tokio_shutdown) =
-            crate::async_utils::tokio_default_setup(Mock);
+        let (tokio_handle, charts_tx, _tokio_shutdown) = crate::async_utils::tokio_default_setup();
         let size = SizeInfo::new(num_cols as f32, lines.len() as f32, 1., 1., 0., 0., false);
         let mut term = Term::new(&Config::<()>::default(), size, (), tokio_handle, charts_tx);
 
@@ -2022,9 +2016,7 @@ mod tests {
 
     use std::mem;
 
-    use crate::ansi;
-    use crate::ansi::Handler;
-    use crate::ansi::{CharsetIndex, StandardCharset};
+    use crate::ansi::{self, CharsetIndex, Handler, StandardCharset};
     use crate::config::MockConfig;
     use crate::grid::{Grid, Scroll};
     use crate::index::{Column, Point, Side};

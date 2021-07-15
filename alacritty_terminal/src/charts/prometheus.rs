@@ -521,7 +521,7 @@ mod tests {
         );
         let res0_json = parse_json(&String::from("http://test"), &test0_json);
         assert_eq!(res0_json.is_some(), true);
-        let res0_load = test0.load_prometheus_response(res0_json.clone().unwrap());
+        let res0_load = test0.load_prometheus_response(res0_json.unwrap());
         // 11 items should have been loaded in the node_exporter
         assert_eq!(res0_load, Ok(11usize));
         debug!("it_loads_prometheus_matrix NOTVEC: {:?}", test0.series.metrics);
@@ -567,7 +567,7 @@ mod tests {
         assert_eq!(res1_load, Ok(7usize));
 
         // Let's test reloading the data:
-        let res1_load = test0.load_prometheus_response(res1_json.clone().unwrap());
+        let res1_load = test0.load_prometheus_response(res1_json.unwrap());
         // Now 0 records should have been loaded:
         assert_eq!(res1_load, Ok(0usize));
         debug!("it_loads_prometheus_matrix NOTVEC: {:?}", test0.series.metrics);
@@ -612,7 +612,7 @@ mod tests {
             String::from("http://localhost:9090/api/v1/query?query=up"),
             15,
             String::from("vector"),
-            metric_labels.clone(),
+            metric_labels,
         );
         assert_eq!(test0_res.is_ok(), true);
         let mut test0 = test0_res.unwrap();
@@ -754,7 +754,7 @@ mod tests {
         );
         let res0_json = parse_json(&String::from("http://test"), &test0_json);
         assert_eq!(res0_json.is_some(), true);
-        let res0_load = test0.load_prometheus_response(res0_json.clone().unwrap());
+        let res0_load = test0.load_prometheus_response(res0_json.unwrap());
         // 2 items should have been loaded, one for Prometheus Server and the
         // other for Prometheus Node Exporter
         assert_eq!(res0_load, Ok(2usize));
@@ -803,7 +803,7 @@ mod tests {
         metric_labels.insert(String::from("job"), String::from("prometheus"));
         metric_labels.insert(String::from("instance"), String::from("localhost:9090"));
         test0.required_labels = metric_labels.clone();
-        let res1_load = test0.load_prometheus_response(res1_json.clone().unwrap());
+        let res1_load = test0.load_prometheus_response(res1_json.unwrap());
         // Only the prometheus: localhost:9090 should have been loaded with epoch 1557571139
         assert_eq!(res1_load, Ok(1usize));
         assert_eq!(test0.series.as_vec(), vec![
@@ -849,8 +849,8 @@ mod tests {
         assert_eq!(res2_json.is_some(), true);
         // Make the labels not match
         metric_labels.insert(String::from("__name__"), String::from("down"));
-        test0.required_labels = metric_labels.clone();
-        let res2_load = test0.load_prometheus_response(res2_json.clone().unwrap());
+        test0.required_labels = metric_labels;
+        let res2_load = test0.load_prometheus_response(res2_json.unwrap());
         assert_eq!(res2_load, Ok(0usize));
         assert_eq!(test0.series.as_vec(), vec![
             (1557571137u64, Some(1.)),
@@ -983,7 +983,7 @@ mod tests {
             ),
             url: "/".parse::<hyper::Uri>().unwrap(),
             data_type: String::from(""),
-            required_labels: test_labels.clone(),
+            required_labels: test_labels,
             pull_interval: 15,
             color: Rgb { r: 207, g: 102, b: 121 },
             alpha: 1.0,
@@ -1373,7 +1373,7 @@ mod tests {
             ),
             url: "/".parse::<hyper::Uri>().unwrap(),
             data_type: String::from(""),
-            required_labels: test_labels.clone(),
+            required_labels: test_labels,
             pull_interval: 15,
             color: Rgb { r: 207, g: 102, b: 121 },
             alpha: 1.0,
