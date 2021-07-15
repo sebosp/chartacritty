@@ -2025,8 +2025,7 @@ mod tests {
 
     #[test]
     fn semantic_selection_works() {
-        let (tokio_handle, charts_tx, _tokio_shutdown) =
-            crate::async_utils::tokio_default_setup(());
+        let (tokio_handle, charts_tx, _tokio_shutdown) = crate::async_utils::tokio_default_setup();
         let size = SizeInfo::new(5., 3., 1.0, 1.0, 0.0, 0.0, false);
         let mut term = Term::new(&MockConfig::default(), size, (), tokio_handle, charts_tx);
         let mut grid: Grid<Cell> = Grid::new(3, 5, 0);
@@ -2075,8 +2074,7 @@ mod tests {
 
     #[test]
     fn line_selection_works() {
-        let (tokio_handle, charts_tx, _tokio_shutdown) =
-            crate::async_utils::tokio_default_setup(());
+        let (tokio_handle, charts_tx, _tokio_shutdown) = crate::async_utils::tokio_default_setup();
         let size = SizeInfo::new(5., 1., 1.0, 1.0, 0.0, 0.0, false);
         let mut term = Term::new(&MockConfig::default(), size, (), tokio_handle, charts_tx);
         let mut grid: Grid<Cell> = Grid::new(1, 5, 0);
@@ -2098,8 +2096,7 @@ mod tests {
 
     #[test]
     fn selecting_empty_line() {
-        let (tokio_handle, charts_tx, _tokio_shutdown) =
-            crate::async_utils::tokio_default_setup(());
+        let (tokio_handle, charts_tx, _tokio_shutdown) = crate::async_utils::tokio_default_setup();
         let size = SizeInfo::new(3.0, 3.0, 1.0, 1.0, 0.0, 0.0, false);
         let mut term = Term::new(&MockConfig::default(), size, (), tokio_handle, charts_tx);
         let mut grid: Grid<Cell> = Grid::new(3, 3, 0);
@@ -2138,8 +2135,7 @@ mod tests {
 
     #[test]
     fn input_line_drawing_character() {
-        let (tokio_handle, charts_tx, _tokio_shutdown) =
-            crate::async_utils::tokio_default_setup(());
+        let (tokio_handle, charts_tx, _tokio_shutdown) = crate::async_utils::tokio_default_setup();
         let size = SizeInfo::new(21.0, 51.0, 3.0, 3.0, 0.0, 0.0, false);
         let mut term = Term::new(&MockConfig::default(), size, (), tokio_handle, charts_tx);
         let cursor = Point::new(Line(0), Column(0));
@@ -2151,8 +2147,7 @@ mod tests {
 
     #[test]
     fn clear_saved_lines() {
-        let (tokio_handle, charts_tx, _tokio_shutdown) =
-            crate::async_utils::tokio_default_setup(());
+        let (tokio_handle, charts_tx, _tokio_shutdown) = crate::async_utils::tokio_default_setup();
         let size = SizeInfo::new(21.0, 51.0, 3.0, 3.0, 0.0, 0.0, false);
         let mut term = Term::new(&MockConfig::default(), size, (), tokio_handle, charts_tx);
 
@@ -2175,8 +2170,7 @@ mod tests {
 
     #[test]
     fn grow_lines_updates_active_cursor_pos() {
-        let (tokio_handle, charts_tx, _tokio_shutdown) =
-            crate::async_utils::tokio_default_setup(());
+        let (tokio_handle, charts_tx, _tokio_shutdown) = crate::async_utils::tokio_default_setup();
         let mut size = SizeInfo::new(100.0, 10.0, 1.0, 1.0, 0.0, 0.0, false);
         let mut term = Term::new(&MockConfig::default(), size, (), tokio_handle, charts_tx);
 
@@ -2197,8 +2191,7 @@ mod tests {
 
     #[test]
     fn grow_lines_updates_inactive_cursor_pos() {
-        let (tokio_handle, charts_tx, _tokio_shutdown) =
-            crate::async_utils::tokio_default_setup(());
+        let (tokio_handle, charts_tx, _tokio_shutdown) = crate::async_utils::tokio_default_setup();
         let mut size = SizeInfo::new(100.0, 10.0, 1.0, 1.0, 0.0, 0.0, false);
         let mut term = Term::new(&MockConfig::default(), size, (), tokio_handle, charts_tx);
 
@@ -2225,8 +2218,7 @@ mod tests {
 
     #[test]
     fn shrink_lines_updates_active_cursor_pos() {
-        let (tokio_handle, charts_tx, _tokio_shutdown) =
-            crate::async_utils::tokio_default_setup(());
+        let (tokio_handle, charts_tx, _tokio_shutdown) = crate::async_utils::tokio_default_setup();
         let mut size = SizeInfo::new(100.0, 10.0, 1.0, 1.0, 0.0, 0.0, false);
         let mut term = Term::new(&MockConfig::default(), size, (), tokio_handle, charts_tx);
 
@@ -2247,8 +2239,7 @@ mod tests {
 
     #[test]
     fn shrink_lines_updates_inactive_cursor_pos() {
-        let (tokio_handle, charts_tx, _tokio_shutdown) =
-            crate::async_utils::tokio_default_setup(());
+        let (tokio_handle, charts_tx, _tokio_shutdown) = crate::async_utils::tokio_default_setup();
         let mut size = SizeInfo::new(100.0, 10.0, 1.0, 1.0, 0.0, 0.0, false);
         let mut term = Term::new(&MockConfig::default(), size, (), tokio_handle, charts_tx);
 
@@ -2275,8 +2266,7 @@ mod tests {
 
     #[test]
     fn window_title() {
-        let (tokio_handle, charts_tx, _tokio_shutdown) =
-            crate::async_utils::tokio_default_setup(());
+        let (tokio_handle, charts_tx, _tokio_shutdown) = crate::async_utils::tokio_default_setup();
         let size = SizeInfo::new(21.0, 51.0, 3.0, 3.0, 0.0, 0.0, false);
         let mut term = Term::new(&MockConfig::default(), size, (), tokio_handle, charts_tx);
 
