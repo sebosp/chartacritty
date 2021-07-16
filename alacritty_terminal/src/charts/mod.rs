@@ -343,7 +343,7 @@ pub struct Value2D {
 }
 
 /// `ChartSizeInfo` Contains the current chart size information plus the terminal size info
-#[derive(Default, Debug, Serialize, Deserialize, PartialEq, Clone, Copy)]
+#[derive(Debug, Serialize, Default, Deserialize, PartialEq, Clone, Copy)]
 pub struct ChartSizeInfo {
     pub term_size: SizeInfo,
     pub chart_width: f32,
@@ -700,7 +700,7 @@ impl TimeSeriesChart {
             if idx % 2 == 1 {
                 // This is a Y value
                 // Let's allow this much difference and consider them equal
-                if (cur_y - *vertex).abs() > 0.001 {
+                if (cur_y - *vertex).abs() > f32::EPSILON {
                     // This means the metric has changed, so let's push old X,Y (old value)
                     // unless it happens to have been the last instered item
                     if !last_item_added {
@@ -1914,28 +1914,28 @@ mod tests {
         let deduped_opengl_vecs = prom_test.get_deduped_opengl_vecs(0);
         assert_eq!(deduped_opengl_vecs.len(), 16);
 
-        //
+        // 
         // - The reference point takes 1px width, so draw space for metrics is 10px.
         assert!((prom_test.decorations[0].width() - 2.).abs() < f32::EPSILON);
         let tick_space = 0.10f32 / 24f32;
         // The draw space horizontally is 0.10. from 0.99 to 0.90
         // Start of the line:
-        assert!((deduped_opengl_vecs[0] - (-0.99f32 + 0f32 * tick_space)).abs() < 0.001f32); // Point 1, 1st item
-                                                                                             // Horizontal line Point 1 to Point 2
-        assert!((deduped_opengl_vecs[2] - (-0.99f32 + 6f32 * tick_space)).abs() < 0.001f32); // Point 2, 6th item
-                                                                                             // Vertical line Point 2 to Point 3
-        assert!((deduped_opengl_vecs[4] - (-0.99f32 + 6f32 * tick_space)).abs() < 0.001f32); // Point 3, 6th item
-                                                                                             // Horizontal line Point 3 to Point 4
-        assert!((deduped_opengl_vecs[6] - (-0.99f32 + 12f32 * tick_space)).abs() < 0.001f32); // Point 4, 12th item
-                                                                                              // Vertical line Point 4 to Point 5
-        assert!((deduped_opengl_vecs[8] - (-0.99f32 + 12f32 * tick_space)).abs() < 0.001f32); // Point 4, 12th item
-                                                                                              // Horizontal line Point 5 to Point 6
-        assert!((deduped_opengl_vecs[10] - (-0.99f32 + 18f32 * tick_space)).abs() < 0.001f32); // Point 4, 12th item
-                                                                                               // Vertical line Point 6 to Point 7
-        assert!((deduped_opengl_vecs[12] - (-0.99f32 + 18f32 * tick_space)).abs() < 0.001f32); // 4 X value, rightmost.
-                                                                                               // Horizontal line Point 7 to Point 8
-        assert!((deduped_opengl_vecs[14] - (-0.99f32 + 23f32 * tick_space)).abs() < 0.001f32); // 4 X value, rightmost.
-                                                                                               // XXX: Shouldn't the above test be 24f32 ?
+        assert!((deduped_opengl_vecs[0] - (-0.99f32 + 0f32 * tick_space)).abs() < f32::EPSILON); // Point 1, 1st item
+                                                                                                 // Horizontal line Point 1 to Point 2
+        assert!((deduped_opengl_vecs[2] - (-0.99f32 + 6f32 * tick_space)).abs() < f32::EPSILON); // Point 2, 6th item
+                                                                                                 // Vertical line Point 2 to Point 3
+        assert!((deduped_opengl_vecs[4] - (-0.99f32 + 6f32 * tick_space)).abs() < f32::EPSILON); // Point 3, 6th item
+                                                                                                 // Horizontal line Point 3 to Point 4
+        assert!((deduped_opengl_vecs[6] - (-0.99f32 + 12f32 * tick_space)).abs() < f32::EPSILON); // Point 4, 12th item
+                                                                                                  // Vertical line Point 4 to Point 5
+        assert!((deduped_opengl_vecs[8] - (-0.99f32 + 12f32 * tick_space)).abs() < f32::EPSILON); // Point 4, 12th item
+                                                                                                  // Horizontal line Point 5 to Point 6
+        assert!((deduped_opengl_vecs[10] - (-0.99f32 + 18f32 * tick_space)).abs() < f32::EPSILON); // Point 4, 12th item
+                                                                                                   // Vertical line Point 6 to Point 7
+        assert!((deduped_opengl_vecs[12] - (-0.99f32 + 18f32 * tick_space)).abs() < f32::EPSILON); // 4 X value, rightmost.
+                                                                                                   // Horizontal line Point 7 to Point 8
+        assert!((deduped_opengl_vecs[14] - (-0.99f32 + 23f32 * tick_space)).abs() < f32::EPSILON); // 4 X value, rightmost.
+                                                                                                   // XXX: Shouldn't the above test be 24f32 ?
 
         // Y values
         let max_y_metric = 4.75f32;
@@ -1946,56 +1946,56 @@ mod tests {
                 - bottom_y
                 - (point_1_metric as f32 * chart_top_y) / max_y_metric)
                 .abs()
-                < 0.001f32
+                < f32::EPSILON
         ); // top Y value, 4.75
         assert!(
             (deduped_opengl_vecs[3]
                 - bottom_y
                 - (point_1_metric as f32 * chart_top_y) / max_y_metric)
                 .abs()
-                < 0.001f32
+                < f32::EPSILON
         ); // top Y value, 4.75
         assert!(
             (deduped_opengl_vecs[5]
                 - bottom_y
                 - (point_2_metric as f32 * chart_top_y) / max_y_metric)
                 .abs()
-                < 0.001f32
+                < f32::EPSILON
         ); // top Y value, 4.75
         assert!(
             (deduped_opengl_vecs[7]
                 - bottom_y
                 - (point_2_metric as f32 * chart_top_y) / max_y_metric)
                 .abs()
-                < 0.001f32
+                < f32::EPSILON
         ); // top Y value, 4.75
         assert!(
             (deduped_opengl_vecs[9]
                 - bottom_y
                 - (point_3_metric as f32 * chart_top_y) / max_y_metric)
                 .abs()
-                < 0.001f32
+                < f32::EPSILON
         ); // top Y value, 4.75
         assert!(
             (deduped_opengl_vecs[11]
                 - bottom_y
                 - (point_3_metric as f32 * chart_top_y) / max_y_metric)
                 .abs()
-                < 0.001f32
+                < f32::EPSILON
         ); // top Y value, 4.75
         assert!(
             (deduped_opengl_vecs[13]
                 - bottom_y
                 - (point_4_metric as f32 * chart_top_y) / max_y_metric)
                 .abs()
-                < 0.001f32
+                < f32::EPSILON
         ); // top Y value, 4.75
         assert!(
             (deduped_opengl_vecs[15]
                 - bottom_y
                 - (point_4_metric as f32 * chart_top_y) / max_y_metric)
                 .abs()
-                < 0.001f32
+                < f32::EPSILON
         ); // top Y value, 4.75
     }
 

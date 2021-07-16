@@ -453,7 +453,7 @@ impl Display {
         // Subtract some space for the charts
         if let Some(chart_config) = &config.charts {
             if !chart_config.charts.is_empty() {
-                height -= cell_height * 1f32; // SEB Validate.
+                /*height -= cell_height * 1f32; */// SEB Validate.
             }
         }
         }
