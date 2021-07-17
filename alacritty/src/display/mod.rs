@@ -475,8 +475,8 @@ impl Display {
         let message_bar_lines =
             message_buffer.message().map(|m| m.text(&self.size_info).len()).unwrap_or(0);
         let search_lines = if search_active { 1 } else { 0 };
-        //let charts_lines = if terminal.charts_enabled() { 1 } else { 0};
-        self.size_info.reserve_lines(message_bar_lines + search_lines /*+ charts_lines*/);
+        let charts_lines = if terminal.charts_enabled() { 1 } else { 0 };
+        self.size_info.reserve_lines(message_bar_lines + search_lines + charts_lines);
 
         // Resize PTY.
         pty_resize_handle.on_resize(&self.size_info);
@@ -722,6 +722,7 @@ impl Display {
         }
     }
 
+
     /// Iterates over the configured  charts and draws them
     pub fn draw_charts(
         &mut self,
@@ -735,7 +736,6 @@ impl Display {
                 debug!("draw: Drawing chart: {}", chart_config.charts[chart_idx].name);
                 for decoration_idx in 0..chart_config.charts[chart_idx].decorations.len() {
                     // TODO: Change this to return a ChartOpenglData that contains:
-                    // (ves: Vec<f32>, alpha: f32)
                     let opengl_data = alacritty_terminal::async_utils::get_metric_opengl_data(
                         charts_tx.clone(),
                         chart_idx,

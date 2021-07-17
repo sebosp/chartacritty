@@ -1,7 +1,5 @@
 use std::mem;
 
-use alacritty_terminal::term::color::Rgb;
-
 use crate::gl;
 use crate::gl::types::*;
 use crate::renderer;
@@ -71,11 +69,12 @@ impl ChartRenderer {
         Ok(Self { vao, vbo, program, vertices: Vec::new() })
     }
 
-    pub fn draw(&mut self, opengl_vecs: &[f32], color: Rgb, alpha: f32, gl_mode: u32) {
-        // TODO: Use the Charts Shader Program (For now a copy of rect)
+    pub fn draw(&mut self, opengl_data: &[f32], gl_mode: u32) {
         unsafe {
-            // Setup data and buffers
+            // Bind VAO to enable vertex attribute slots.
             gl::BindVertexArray(self.vao);
+
+            // Bind VBO only once for buffer data upload only.
             gl::BindBuffer(gl::ARRAY_BUFFER, self.vbo);
 
             // Swap program
@@ -84,18 +83,14 @@ impl ChartRenderer {
             // Load vertex data into array buffer
             gl::BufferData(
                 gl::ARRAY_BUFFER,
-                (mem::size_of::<f32>() * opengl_vecs.len()) as _,
-                opengl_vecs.as_ptr() as *const _,
+                (mem::size_of::<f32>() * opengl_data.len()) as _,
+                opengl_data.as_ptr() as *const _,
                 gl::STATIC_DRAW,
             );
-        }
 
-        // Color
-        self.program.set_color(color, alpha);
-
-        unsafe {
-            // Draw the incoming array, opengl_vecs contains 2 points per vertex:
-            gl::DrawArrays(gl_mode, 0, (opengl_vecs.len() / 2usize) as i32);
+            // Draw the incoming array, opengl_data contains:
+            // [2(x,y) + 4(r,g,b,a) ] -> 6
+            gl::DrawArrays(gl_mode, 0, (opengl_data.len() / 6usize) as i32);
 
             // Disable program
             gl::UseProgram(0);
@@ -114,8 +109,6 @@ impl ChartRenderer {
 pub struct ChartsShaderProgram {
     // Program id,
     id: GLuint,
-    /// Line color
-    u_color: GLint,
 }
 
 impl ChartsShaderProgram {
@@ -130,26 +123,11 @@ impl ChartsShaderProgram {
             gl::UseProgram(program);
         }
 
-        // get uniform locations
-        let u_color = unsafe { gl::GetUniformLocation(program, b"color\0".as_ptr() as *const _) };
-
-        let shader = ChartsShaderProgram { id: program, u_color };
+        let shader = ChartsShaderProgram { id: program };
 
         unsafe { gl::UseProgram(0) }
 
         Ok(shader)
-    }
-
-    fn set_color(&self, color: Rgb, alpha: f32) {
-        unsafe {
-            gl::Uniform4f(
-                self.u_color,
-                f32::from(color.r) / 255.,
-                f32::from(color.g) / 255.,
-                f32::from(color.b) / 255.,
-                alpha,
-            );
-        }
     }
 }
 

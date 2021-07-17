@@ -78,6 +78,7 @@ impl HexBgRenderer {
             // Bind VBO only once for buffer data upload only.
             gl::BindBuffer(gl::ARRAY_BUFFER, self.vbo);
 
+            // Swap program
             gl::UseProgram(self.program.id);
         }
 
@@ -85,32 +86,6 @@ impl HexBgRenderer {
         // self.hex_bg_program.set_epoch_millis(0.0f32);
 
         unsafe {
-/* This may not be needed anymore as it's set on the ::new()
- * // Position
-            gl::EnableVertexAttribArray(0);
-            gl::VertexAttribPointer(
-                0, // location=0 is the vertex position
-                2, // position has 2 values: X, Y
-                gl::FLOAT,
-                gl::FALSE,
-                // [2(x,y) + 4(r,g,b,a) ] -> 6
-                (size_of::<f32>() * 6) as _,
-                ptr::null(),
-            );
-
-            // Colors
-            gl::EnableVertexAttribArray(1);
-            gl::VertexAttribPointer(
-                1, // location=1 is the color
-                4, // Color has 4 items, R, G, B, A
-                gl::FLOAT,
-                gl::FALSE,
-                // [2(x,y) + 4(r,g,b,a) ] -> 6
-                (size_of::<f32>() * 6) as _,
-                // The colors are offset by 2 (x,y) points
-                (size_of::<f32>() * 2) as _,
-            );*/
-
             // Load vertex data into array buffer
             gl::BufferData(
                 gl::ARRAY_BUFFER,

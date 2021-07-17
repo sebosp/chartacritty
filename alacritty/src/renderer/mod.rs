@@ -781,6 +781,16 @@ impl QuadRenderer {
                 }
             },
         };
+        let mut opengl_data_with_color: Vec<f32> =
+            Vec::with_capacity(usize::from(opengl_vecs.len() / 2) * 6);
+        for vec in opengl_vecs.chunks(2) {
+            opengl_data_with_color.push(vec[0]);
+            opengl_data_with_color.push(vec[1]);
+            opengl_data_with_color.push(f32::from(color.r) / 255.);
+            opengl_data_with_color.push(f32::from(color.g) / 255.);
+            opengl_data_with_color.push(f32::from(color.b) / 255.);
+            opengl_data_with_color.push(alpha);
+        }
         // Translate our enum to opengl enum, maybe this can be ommitted?
         // Maybe we can extend the enum with custom classes that end up being like this.
         // So then it should become a trait
@@ -799,7 +809,7 @@ impl QuadRenderer {
 
         Self::prepare_rect_rendering_state(size_info);
 
-        self.chart_renderer.draw(opengl_vecs, color, alpha, gl_mode);
+        self.chart_renderer.draw(&opengl_data_with_color, gl_mode);
 
         Self::activate_regular_state(size_info);
     }
