@@ -419,6 +419,7 @@ impl Display {
     }
 
     /// Process update events.
+    #[allow(clippy::too_many_arguments)]
     pub fn handle_update<T>(
         &mut self,
         terminal: &mut Term<T>,
