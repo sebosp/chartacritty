@@ -219,7 +219,7 @@ impl SizeInfo {
     /// the `display_height` parameter (bottom), i.e. 768px.
     pub fn scale_y(&self, input_value: f32) -> f32 {
         let center_y = self.height / 2.;
-        let y = self.height - 2. * self.padding_y - input_value;
+        let y = self.height - input_value;
         -(y - center_y) / center_y
     }
 }

@@ -451,12 +451,6 @@ impl Display {
         if let Some(dimensions) = update_pending.dimensions() {
             width = dimensions.width as f32;
             height = dimensions.height as f32;
-        // Subtract some space for the charts
-        if let Some(chart_config) = &config.charts {
-            if !chart_config.charts.is_empty() {
-                /*height -= cell_height * 1f32; */// SEB Validate.
-            }
-        }
         }
 
         let padding = config.ui_config.window.padding(self.window.dpr);

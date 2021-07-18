@@ -470,7 +470,7 @@ pub struct TimeSeriesChart {
 }
 
 impl TimeSeriesChart {
-    /// `update_series_opengl_vecs` Represents the activity levels values in a
+    /// `update_series_opengl_vecs` Represents the metric TimeSeries in a
     /// drawable vector for opengl, for a specific index in the series array
     pub fn update_series_opengl_vecs(&mut self, series_idx: usize, display_size: ChartSizeInfo) {
         let span = span!(
@@ -523,18 +523,6 @@ impl TimeSeriesChart {
             display_size,
             self.position,
         );
-        // For every timeseries in the current chart, we should calculate what are the max, min,
-        // etc values so that we can draw them all together sensibly
-        for source in &mut self.sources {
-            if source.series().stats.is_dirty {
-                event!(
-                    Level::DEBUG,
-                    "update_series_opengl_vecs: '{}' stats are dirty, needs recalculating",
-                    source.name()
-                );
-                source.series_mut().calculate_stats();
-            }
-        }
         // Join all the stats max/min/etc, this time not for individual metrics but from them
         // together
         self.calculate_stats();
@@ -561,6 +549,7 @@ impl TimeSeriesChart {
             self.sources[series_idx].series().metrics_capacity,
             self.sources[series_idx].series()
         );
+        // The tick spacing determines the distance between one drawable metric and the next
         let tick_spacing = (display_size.chart_width - decorations_space)
             / self.sources[series_idx].series().metrics_capacity as f32;
         event!(Level::DEBUG, "update_series_opengl_vecs: Using tick_spacing {}", tick_spacing);
@@ -623,45 +612,52 @@ impl TimeSeriesChart {
         let span = span!(Level::TRACE, "calculate_stats", name = self.name.clone().as_str());
         let _enter = span.enter();
         event!(Level::TRACE, "TimeSeriesChart::calculate_stats start");
-        let mut max_activity_value = std::f64::MIN;
-        let mut min_activity_value = std::f64::MAX;
-        let mut sum_activity_values = 0f64;
+        let mut max_metric_value = std::f64::MIN;
+        let mut min_metric_value = std::f64::MAX;
+        let mut sum_metric_values = 0f64;
         let mut total_count = 0usize;
         let mut max_epoch = 0u64;
+        // For every timeseries in the current chart, we should calculate what are the max, min,
+        // etc values so that we can draw them all together sensibly
         for source in &mut self.sources {
             if source.series_mut().stats.is_dirty {
+                event!(
+                    Level::DEBUG,
+                    "calculate_stats: '{}' stats are dirty, needs recalculating",
+                    source.name()
+                );
                 source.series_mut().calculate_stats();
             }
         }
         for source in &self.sources {
-            if source.series().stats.max > max_activity_value {
-                max_activity_value = source.series().stats.max;
+            if source.series().stats.max > max_metric_value {
+                max_metric_value = source.series().stats.max;
             }
             if source.series().stats.last_epoch > max_epoch {
                 max_epoch = source.series().stats.last_epoch;
             }
-            if source.series().stats.min < min_activity_value {
-                min_activity_value = source.series().stats.min;
+            if source.series().stats.min < min_metric_value {
+                min_metric_value = source.series().stats.min;
             }
-            sum_activity_values += source.series().stats.sum;
+            sum_metric_values += source.series().stats.sum;
             total_count += source.series().stats.count;
         }
         // Account for the decoration requested height
         for decoration in &self.decorations {
             let top_value = decoration.top_value();
             let bottom_value = decoration.bottom_value();
-            if top_value > max_activity_value {
-                max_activity_value = top_value
+            if top_value > max_metric_value {
+                max_metric_value = top_value
             }
-            if bottom_value < min_activity_value {
-                min_activity_value = bottom_value;
+            if bottom_value < min_metric_value {
+                min_metric_value = bottom_value;
             }
         }
         self.stats.count = total_count;
-        self.stats.max = max_activity_value;
-        self.stats.min = min_activity_value;
-        self.stats.sum = sum_activity_values;
-        self.stats.avg = sum_activity_values / total_count as f64;
+        self.stats.max = max_metric_value;
+        self.stats.min = min_metric_value;
+        self.stats.sum = sum_metric_values;
+        self.stats.avg = sum_metric_values / total_count as f64;
         self.stats.is_dirty = false;
         self.stats.last_epoch = max_epoch;
         event!(
@@ -798,9 +794,9 @@ impl TimeSeries {
         // Recalculating seems to be necessary because we are constantly
         // moving items out of the Vec<> so our cache can easily get out of
         // sync
-        let mut max_activity_value = std::f64::MIN;
-        let mut min_activity_value = std::f64::MAX;
-        let mut sum_activity_values = 0f64;
+        let mut max_metric_value = std::f64::MIN;
+        let mut min_metric_value = std::f64::MAX;
+        let mut sum_metric_values = 0f64;
         let mut filled_metrics = 0usize;
         // XXX What is it the vec is empty? what should `first` and `last` be?
         let mut first = 0.;
@@ -816,16 +812,18 @@ impl TimeSeries {
                     is_first_filled = true;
                     first = metric;
                 }
-                if metric > max_activity_value {
-                    max_activity_value = metric;
+                if metric > max_metric_value {
+                    max_metric_value = metric;
                 }
-                if metric < min_activity_value {
-                    min_activity_value = metric;
+                if metric < min_metric_value {
+                    min_metric_value = metric;
                 }
-                sum_activity_values += metric;
+                sum_metric_values += metric;
                 filled_metrics += 1;
                 last = metric;
             } else {
+                // The vector could be empty, so the `.first` value could be invalid, fill it with
+                // the MissingValuesPolicy
                 if !is_first_filled {
                     is_first_filled = true;
                     first = self.get_missing_values_fill();
@@ -833,10 +831,10 @@ impl TimeSeries {
                 last = self.get_missing_values_fill();
             }
         }
-        self.stats.max = max_activity_value;
-        self.stats.min = min_activity_value;
-        self.stats.sum = sum_activity_values;
-        self.stats.avg = sum_activity_values / (filled_metrics as f64);
+        self.stats.max = max_metric_value;
+        self.stats.min = min_metric_value;
+        self.stats.sum = sum_metric_values;
+        self.stats.avg = sum_metric_values / (filled_metrics as f64);
         self.stats.count = filled_metrics;
         self.stats.first = first;
         self.stats.last = last;
@@ -982,8 +980,8 @@ impl TimeSeries {
                 let padding_items = (current_min_epoch - input.0) as usize;
                 // XXX: This is wrong, we should add as many padding_items as possible without
                 // breaking the metrics_capacity.
+                self.sync_prev_snapshot();
                 if self.metrics.len() + 1 < self.metrics_capacity {
-                    self.sync_prev_snapshot();
                     // The vector is not full, let's shift the items to the right
                     // The array items have not been allocated at this point:
                     self.metrics.insert(0, input);
@@ -995,7 +993,6 @@ impl TimeSeries {
                     self.prev_value = input;
                     padding_items
                 } else {
-                    self.sync_prev_snapshot();
                     // The vector is full, write the new epoch at first_idx and then fill the rest
                     // up to current_min value with None
                     let previous_min_epoch = self.metrics[self.first_idx].0;
@@ -1021,7 +1018,6 @@ impl TimeSeries {
                 // The input epoch has already been inserted in our array
                 let target_idx = self.get_tail_backwards_offset_idx(inactive_time);
                 if self.metrics[target_idx].0 == input.0 {
-                    self.sync_prev_snapshot();
                     self.metrics[target_idx].1 =
                         self.resolve_metric_collision(self.metrics[target_idx].1, input.1);
                 } else {
@@ -1042,7 +1038,6 @@ impl TimeSeries {
                         self.prev_snapshot,
                         self.metrics
                     );
-                    self.sync_prev_snapshot();
                     // Let's reset the whole vector if we lost synchrony
                     self.first_idx = 0;
                     self.metrics[0] = input;
@@ -1053,15 +1048,14 @@ impl TimeSeries {
                 0
             }
         } else if inactive_time == 0 {
-            self.sync_prev_snapshot();
             // We have a metric for the last indexed epoch
             self.metrics[last_idx].1 =
                 self.resolve_metric_collision(self.metrics[last_idx].1, input.1);
             self.upsert_type = UpsertType::OverwriteLastEpoch;
             self.prev_value = input;
+            self.stats.is_dirty = true;
             0
         } else {
-            self.sync_prev_snapshot();
             // The input epoch is in the future
             let max_epoch = self.metrics[last_idx].0;
             // Fill missing entries with None
@@ -1105,19 +1099,19 @@ impl TimeSeries {
     }
 
     /// `as_vec` Returns the circular buffer in flat vec format
-    // ....[c]
-    // ..[b].[d]
-    // [a].....[e]
-    // ..[h].[f]
-    // ....[g]
-    // first_idx = "^"
-    // last_idx  = "v"
-    // [a][b][c][d][e][f][g][h]
-    //  0  1  2  3  4  5  6  7
-    //  ^v                        # empty
-    //  ^  v                      # 0
-    //  ^                       v # vec full
-    //  v                    ^    # 7
+    /// ....[c]
+    /// ..[b].[d]
+    /// [a].....[e]
+    /// ..[h].[f]
+    /// ....[g]
+    /// first_idx = "^"
+    /// last_idx  = "v"
+    /// [a][b][c][d][e][f][g][h]
+    ///  0  1  2  3  4  5  6  7
+    ///  ^v                        # empty
+    ///  ^  v                      # 0
+    ///  ^                       v # vec full
+    ///  v                    ^    # 7
     pub fn as_vec(&self) -> Vec<(u64, Option<f64>)> {
         if self.metrics.is_empty() {
             return vec![];
@@ -1134,12 +1128,12 @@ impl TimeSeries {
         self.upsert((now, Some(input)));
     }
 
-    // `iter` Returns an Iterator from the current start.
+    /// `iter` Returns an Iterator from the current start for our circular buffer
     fn iter(&self) -> IterTimeSeries<'_> {
         IterTimeSeries { inner: self, pos: self.first_idx, current_item: 0 }
     }
 
-    // `sanity_check` verifies the state of the circular buffer is valid
+    /// `sanity_check` verifies the state of the circular buffer is valid
     pub fn sanity_check(&self) -> bool {
         if self.metrics.is_empty() || self.metrics.len() == 1 {
             return true;
@@ -1914,7 +1908,7 @@ mod tests {
         let deduped_opengl_vecs = prom_test.get_deduped_opengl_vecs(0);
         assert_eq!(deduped_opengl_vecs.len(), 16);
 
-        // 
+        //
         // - The reference point takes 1px width, so draw space for metrics is 10px.
         assert!((prom_test.decorations[0].width() - 2.).abs() < f32::EPSILON);
         let tick_space = 0.10f32 / 24f32;
