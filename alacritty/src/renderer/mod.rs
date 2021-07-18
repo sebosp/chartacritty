@@ -781,11 +781,10 @@ impl QuadRenderer {
                 }
             },
         };
-        let mut opengl_data_with_color: Vec<f32> =
-            Vec::with_capacity(usize::from(opengl_vecs.len() / 2) * 6);
-        for vec in opengl_vecs.chunks(2) {
-            opengl_data_with_color.push(vec[0]);
-            opengl_data_with_color.push(vec[1]);
+        let mut opengl_data_with_color: Vec<f32> = Vec::with_capacity((opengl_vecs.len() / 2) * 6);
+        for position in opengl_vecs.chunks(2) {
+            opengl_data_with_color.push(position[0]);
+            opengl_data_with_color.push(position[1]);
             opengl_data_with_color.push(f32::from(color.r) / 255.);
             opengl_data_with_color.push(f32::from(color.g) / 255.);
             opengl_data_with_color.push(f32::from(color.b) / 255.);
