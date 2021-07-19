@@ -5,13 +5,130 @@ The sections should follow the order `Packaging`, `Added`, `Changed`, `Fixed` an
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## 0.6.0-dev
+## 0.8.0
+
+### Packaging
+
+- Minimum Rust version has been bumped to 1.45.0
+
+### Added
+
+- IME composition preview not appearing on Windows
+- Synchronized terminal updates using `DCS = 1 s ST`/`DCS = 2 s ST`
+- Regex terminal hints ([see features.md](./docs/features.md#hints))
+- macOS keybinding (cmd+alt+H) hiding all windows other than Alacritty
+- Support for `magnet` URLs
+
+### Changed
+
+- The vi mode cursor is now created in the top-left if the terminal cursor is invisible
+- Focused search match will use cell instead of match colors for CellForeground/CellBackground
+- URL highlighting has moved from `mouse.url` to the `hints` config section
+
+### Fixed
+
+- Alacritty failing to start on X11 with invalid DPI reported by XRandr
+- Text selected after search without any match
+- Incorrect vi cursor position after leaving search
+- Clicking on URLs on Windows incorrectly opens File Explorer
+- Incorrect underline cursor thickness on wide cell
+- Viewport moving around when resizing while scrolled into history
+- Block cursor not expanding across fullwidth characters when on the right side of it
+- Overwriting fullwidth characters only clearing one of the involved cells
+
+### Removed
+
+- Config field `visual_bell`, you should use `bell` instead
+
+## 0.7.2
+
+### Packaging
+
+- Updated shell completions
+
+### Fixed
+
+- Crash due to assertion failure on 32-bit architectures
+- Segmentation fault on shutdown with Wayland
+- Incorrect estimated DPR with Wayland
+- Consecutive clipboard stores dropped on Wayland until the application is refocused
+
+## 0.7.1
+
+### Fixed
+
+- Jumping between matches in backward vi search
+
+## 0.7.0
+
+### Added
+
+- Support for `~/` at the beginning of configuration file imports
+- New `cursor.style.blinking` option to set the default blinking state
+- New `cursor.blink_interval` option to configure the blinking frequency
+- Support for cursor blinking escapes (`CSI ? 12 h`, `CSI ? 12 l` and `CSI Ps SP q`)
+- IME support on Windows
+- Urgency support on Windows
+- Customizable keybindings for search
+- History for search mode, bound to ^P/^N/Up/Down by default
+- Default binding to cancel search on Ctrl+C
+- History position indicator for search and vi mode
+
+### Changed
+
+- Nonexistent config imports are ignored instead of raising an error
+- Value for disabling logging with `config.log_level` is `Off` instead of `None`
+- Missing glyph symbols are no longer drawn for zerowidth characters
+
+### Fixed
+
+- Wide characters sometimes being cut off
+- Preserve vi mode across terminal `reset`
+- Escapes `CSI Ps b` and `CSI Ps Z` with large parameters locking up Alacritty
+- Dimming colors which use the indexed `CSI 38 : 5 : Ps m` notation
+- Slow rendering performance with a lot of cells with underline/strikeout attributes
+- Performance of scrolling regions with offset from the bottom
+- Extra mouse buttons are no longer ignored on Wayland
+- Numpad arrow keys are now properly recognized on Wayland
+- Compilation when targetting aarch64-apple-darwin
+- Window not being completely opaque on Windows
+- Window being always on top during alt-tab on Windows
+- Cursor position not reported to apps when mouse is moved with button held outside of window
+- No live config update when starting Alacritty with a broken configuration file
+- PTY not drained to the end with the `--hold` flag enabled
+- High CPU usage on BSD with live config reload enabled
+- Alacritty not discarding invalid escape sequences starting with ESC
+- Crash due to clipboard not being properly released on Wayland
+- Shadow artifacts when resizing transparent windows on macOS
+- Missing glyph symbols not being rendered for missing glyphs on macOS and Windows
+- Underline cursor being obscured by underline
+- Cursor not being rendered with a lot of unicode glyphs visible
+- IME input swallowed after triggering a key binding
+- Crash on Wayland due to non-standard fontconfig configuration
+- Search without vi mode not jumping properly between all matches
+
+### Removed
+
+- The following CLI arguments have been removed in favor of the `--option` flag:
+    * `--persistent-logging`
+    * `--live-config-reload`
+    * `--no-live-config-reload`
+    * `--dimensions`
+    * `--position`
+- `live-shader-reload` feature
+- Config option `dynamic_title`, you should use `window.dynamic_title` instead
+- Config option `scrolling.faux_multiplier`, which was replaced by escape `CSI ? 1007 h/l`
+- WinPTY support on Windows
+
+## 0.6.0
 
 ### Packaging
 
 - Minimum Rust version has been bumped to 1.43.0
 - The snapcraft.yaml file has been removed
 - Updated `setab`/`setaf` capabilities in `alacritty-direct` to use colons
+- WinPTY is now enabled only when targeting MSVC
+- Deprecated the WinPTY backend feature, disabling it by default
 
 ### Added
 
@@ -22,14 +139,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Configuration file option for sourcing other files (`import`)
 - CLI parameter `--option`/`-o` to override any configuration field
 - Escape sequences to report text area size in pixels (`CSI 14 t`) and in characters (`CSI 18 t`)
+- Support for single line terminals dimensions
+- Right clicking on Wayland's client side decorations will show application menu
+- Escape sequences to enable and disable window urgency hints (`CSI ? 1042 h`, `CSI ? 1042 l`)
 
 ### Changed
 
 - Cursors are now inverted when their fixed color is similar to the cell's background
-- Use working directory of active process instead of shell for SpawnNewInstance action
+- Use the working directory of the terminal foreground process, instead of the shell's working
+    directory, for `SpawnNewInstance` action
 - Fallback to normal underline for unsupported underline types in `CSI 4 : ? m` escapes
 - The user's background color is now used as the foreground for the render timer
 - Use yellow/red from the config for error and warning messages instead of fixed colors
+- Existing CLI parameters are now passed to instances spawned using `SpawnNewInstance`
+- Wayland's Client side decorations now use the search bar colors
+- Reduce memory usage by up to at least 30% with a full scrollback buffer
+- The number of zerowidth characters per cell is no longer limited to 5
+- `SpawnNewInstance` is now using the working directory of the terminal foreground process on macOS
 
 ### Fixed
 
@@ -38,6 +164,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Keys swallowed during search when pressing them right before releasing backspace
 - Crash when a wrapped line is rotated into the last line
 - Selection wrapping to the top when selecting below the error/warning bar
+- Pasting into clients only supporting `UTF8_STRING` mime type on Wayland
+- Crash when copying/pasting with neither pointer nor keyboard focus on Wayland
+- Crash due to fd leak on Wayland
+- IME window position with fullwidth characters in the search bar
+- Selection expanding over 2 characters when scrolled in history with fullwidth characters in use
+- Selection scrolling not starting when mouse is over the message bar
+- Incorrect text width calculation in message bar when the message contains multibyte characters
+- Remapped caps lock to escape not triggering escape bindings on Wayland
+- Crash when setting overly long title on Wayland
+- Switching in and out of various window states, like Fullscreen, not persisting window size on Wayland
+- Crash when providing 0 for `XCURSOR_SIZE` on Wayland
+- Gap between window and server side decorations on KWIN Wayland
+- Wayland's client side decorations not working after tty switch
+- `Fullscreen` startup mode not working on Wayland
+- Window not being rescaled when changing DPR of the current monitor on Wayland
+- Crash in some cases when pointer isn't presented upon startup on Wayland
+- IME not working on Wayland
+- Crash on startup on GNOME since its 3.37.90 version on Wayland
+- Touchpad scrolling scrolled less than it should on macOS/Wayland on scaled outputs
+- Incorrect modifiers at startup on X11
+- `Add` and `Subtract` keys are now named `NumpadAdd` and `NumpadSubtract` respectively
+- Feature checking when cross compiling between different operating systems
+- Crash when writing to the clipboard fails on Wayland
+- Crash with large negative `font.offset.x/y`
+- Visual bell getting stuck on the first frame
+- Zerowidth characters in the last column of the line
 
 ## 0.5.0
 
@@ -47,6 +199,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Prebuilt Linux binaries have been removed
 - Added manpage, terminfo, and completions to macOS application bundle
 - On Linux/BSD the build will fail without Fontconfig installed, instead of building it from source
+- Minimum FreeType version has been bumped to 2.8 on Linux/BSD
 
 ### Added
 
@@ -63,6 +216,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Unicode 13 support
 - Option to run command on bell which can be set in `bell.command`
 - Fallback to program specified in `$SHELL` variable on Linux/BSD if it is present
+- Ability to make selections while search is active
 
 ### Changed
 
@@ -83,6 +237,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - URLs are no longer highlighted without a clearly delimited scheme
 - Renamed config option `visual_bell` to `bell`
 - Moved config option `dynamic_title` to `window.dynamic_title`
+- When searching without vi mode, matches are only selected once search is cancelled
 
 ### Fixed
 
@@ -104,6 +259,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Ingoring of default FreeType properties
 - Alacritty crashing at startup when the configured font does not exist
 - Font size rounding error
+- Opening URLs while search is active
 
 ### Removed
 

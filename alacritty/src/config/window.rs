@@ -1,100 +1,111 @@
+use std::fmt::{self, Formatter};
 use std::os::raw::c_ulong;
 
+use glutin::window::Fullscreen;
 use log::error;
+use serde::de::{self, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer};
-use serde_yaml::Value;
 
-use alacritty_terminal::config::{failure_default, option_explicit_none, LOG_TARGET_CONFIG};
-use alacritty_terminal::index::{Column, Line};
+use alacritty_config_derive::ConfigDeserialize;
+use alacritty_terminal::config::LOG_TARGET_CONFIG;
+use alacritty_terminal::index::Column;
 
-use crate::config::ui_config::{DefaultTrueBool, Delta};
+use crate::config::ui_config::Delta;
 
 /// Default Alacritty name, used for window title and class.
 pub const DEFAULT_NAME: &str = "Alacritty";
 
-#[serde(default)]
-#[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(ConfigDeserialize, Debug, Clone, PartialEq, Eq)]
 pub struct WindowConfig {
-    /// Initial dimensions.
-    #[serde(deserialize_with = "failure_default")]
-    pub dimensions: Dimensions,
-
     /// Initial position.
-    #[serde(deserialize_with = "failure_default")]
     pub position: Option<Delta<i32>>,
 
-    /// Pixel padding.
-    #[serde(deserialize_with = "failure_default")]
-    pub padding: Delta<u8>,
-
     /// Draw the window with title bar / borders.
-    #[serde(deserialize_with = "failure_default")]
     pub decorations: Decorations,
 
-    /// Spread out additional padding evenly.
-    #[serde(deserialize_with = "failure_default")]
-    pub dynamic_padding: bool,
-
     /// Startup mode.
-    #[serde(deserialize_with = "failure_default")]
     pub startup_mode: StartupMode,
 
-    /// Window title.
-    #[serde(default = "default_title")]
-    pub title: String,
-
-    /// Window class.
-    #[serde(deserialize_with = "deserialize_class")]
-    pub class: Class,
-
     /// XEmbed parent.
-    #[serde(skip)]
+    #[config(skip)]
     pub embed: Option<c_ulong>,
 
     /// GTK theme variant.
-    #[serde(deserialize_with = "option_explicit_none")]
     pub gtk_theme_variant: Option<String>,
 
+    /// Spread out additional padding evenly.
+    pub dynamic_padding: bool,
+
     /// Use dynamic title.
-    #[serde(default, deserialize_with = "failure_default")]
-    dynamic_title: DefaultTrueBool,
-}
+    pub dynamic_title: bool,
 
-pub fn default_title() -> String {
-    DEFAULT_NAME.to_string()
-}
+    /// Window title.
+    pub title: String,
 
-impl WindowConfig {
-    #[inline]
-    pub fn dynamic_title(&self) -> bool {
-        self.dynamic_title.0
-    }
+    /// Window class.
+    pub class: Class,
 
-    #[inline]
-    pub fn set_dynamic_title(&mut self, dynamic_title: bool) {
-        self.dynamic_title.0 = dynamic_title;
-    }
+    /// Pixel padding.
+    padding: Delta<u8>,
+
+    /// Initial dimensions.
+    dimensions: Dimensions,
 }
 
 impl Default for WindowConfig {
-    fn default() -> WindowConfig {
-        WindowConfig {
-            dimensions: Default::default(),
+    fn default() -> Self {
+        Self {
+            dynamic_title: true,
+            title: DEFAULT_NAME.into(),
             position: Default::default(),
-            padding: Default::default(),
             decorations: Default::default(),
-            dynamic_padding: Default::default(),
             startup_mode: Default::default(),
-            class: Default::default(),
             embed: Default::default(),
             gtk_theme_variant: Default::default(),
-            title: default_title(),
-            dynamic_title: Default::default(),
+            dynamic_padding: Default::default(),
+            class: Default::default(),
+            padding: Default::default(),
+            dimensions: Default::default(),
         }
     }
 }
 
-#[derive(Debug, Deserialize, Copy, Clone, PartialEq, Eq)]
+impl WindowConfig {
+    #[inline]
+    pub fn dimensions(&self) -> Option<Dimensions> {
+        if self.dimensions.columns.0 != 0
+            && self.dimensions.lines != 0
+            && self.startup_mode != StartupMode::Maximized
+        {
+            Some(self.dimensions)
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    pub fn padding(&self, dpr: f64) -> (f32, f32) {
+        let padding_x = (f32::from(self.padding.x) * dpr as f32).floor();
+        let padding_y = (f32::from(self.padding.y) * dpr as f32).floor();
+        (padding_x, padding_y)
+    }
+
+    #[inline]
+    pub fn fullscreen(&self) -> Option<Fullscreen> {
+        if self.startup_mode == StartupMode::Fullscreen {
+            Some(Fullscreen::Borderless(None))
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    pub fn maximized(&self) -> bool {
+        self.startup_mode == StartupMode::Maximized
+    }
+}
+
+#[derive(ConfigDeserialize, Debug, Copy, Clone, PartialEq, Eq)]
 pub enum StartupMode {
     Windowed,
     Maximized,
@@ -109,17 +120,13 @@ impl Default for StartupMode {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Deserialize)]
+#[derive(ConfigDeserialize, Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Decorations {
-    #[serde(rename = "full")]
     Full,
     #[cfg(target_os = "macos")]
-    #[serde(rename = "transparent")]
     Transparent,
     #[cfg(target_os = "macos")]
-    #[serde(rename = "buttonless")]
     Buttonless,
-    #[serde(rename = "none")]
     None,
 }
 
@@ -132,89 +139,82 @@ impl Default for Decorations {
 /// Window Dimensions.
 ///
 /// Newtype to avoid passing values incorrectly.
-#[serde(default)]
-#[derive(Default, Debug, Copy, Clone, Deserialize, PartialEq, Eq)]
+#[derive(ConfigDeserialize, Default, Debug, Copy, Clone, PartialEq, Eq)]
 pub struct Dimensions {
     /// Window width in character columns.
-    #[serde(deserialize_with = "failure_default")]
-    columns: Column,
+    pub columns: Column,
 
     /// Window Height in character lines.
-    #[serde(deserialize_with = "failure_default")]
-    lines: Line,
-}
-
-impl Dimensions {
-    pub fn new(columns: Column, lines: Line) -> Self {
-        Dimensions { columns, lines }
-    }
-
-    /// Get lines.
-    #[inline]
-    pub fn lines_u32(&self) -> u32 {
-        self.lines.0 as u32
-    }
-
-    /// Get columns.
-    #[inline]
-    pub fn columns_u32(&self) -> u32 {
-        self.columns.0 as u32
-    }
+    pub lines: usize,
 }
 
 /// Window class hint.
-#[serde(default)]
-#[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Class {
-    #[serde(deserialize_with = "deserialize_class_resource")]
     pub instance: String,
-
-    #[serde(deserialize_with = "deserialize_class_resource")]
     pub general: String,
 }
 
 impl Default for Class {
     fn default() -> Self {
-        Class { instance: DEFAULT_NAME.into(), general: DEFAULT_NAME.into() }
+        Self { instance: DEFAULT_NAME.into(), general: DEFAULT_NAME.into() }
     }
 }
 
-fn deserialize_class_resource<'a, D>(deserializer: D) -> Result<String, D::Error>
-where
-    D: Deserializer<'a>,
-{
-    let value = Value::deserialize(deserializer)?;
-    match String::deserialize(value) {
-        Ok(value) => Ok(value),
-        Err(err) => {
-            error!(
-                target: LOG_TARGET_CONFIG,
-                "Problem with config: {}, using default value {}", err, DEFAULT_NAME,
-            );
+impl<'de> Deserialize<'de> for Class {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct ClassVisitor;
+        impl<'a> Visitor<'a> for ClassVisitor {
+            type Value = Class;
 
-            Ok(DEFAULT_NAME.into())
+            fn expecting(&self, f: &mut Formatter<'_>) -> fmt::Result {
+                f.write_str("a mapping")
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(Self::Value { instance: value.into(), ..Self::Value::default() })
+            }
+
+            fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
+            where
+                M: MapAccess<'a>,
+            {
+                let mut class = Self::Value::default();
+
+                while let Some((key, value)) = map.next_entry::<String, serde_yaml::Value>()? {
+                    match key.as_str() {
+                        "instance" => match String::deserialize(value) {
+                            Ok(instance) => class.instance = instance,
+                            Err(err) => {
+                                error!(
+                                    target: LOG_TARGET_CONFIG,
+                                    "Config error: class.instance: {}", err
+                                );
+                            },
+                        },
+                        "general" => match String::deserialize(value) {
+                            Ok(general) => class.general = general,
+                            Err(err) => {
+                                error!(
+                                    target: LOG_TARGET_CONFIG,
+                                    "Config error: class.instance: {}", err
+                                );
+                            },
+                        },
+                        _ => (),
+                    }
+                }
+
+                Ok(class)
+            }
         }
-    }
-}
 
-fn deserialize_class<'a, D>(deserializer: D) -> Result<Class, D::Error>
-where
-    D: Deserializer<'a>,
-{
-    let value = Value::deserialize(deserializer)?;
-
-    if let Value::String(instance) = value {
-        return Ok(Class { instance, general: DEFAULT_NAME.into() });
-    }
-
-    match Class::deserialize(value) {
-        Ok(value) => Ok(value),
-        Err(err) => {
-            error!(
-                target: LOG_TARGET_CONFIG,
-                "Problem with config: {}; using class {}", err, DEFAULT_NAME
-            );
-            Ok(Class::default())
-        }
+        deserializer.deserialize_any(ClassVisitor)
     }
 }

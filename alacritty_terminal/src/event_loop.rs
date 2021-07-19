@@ -7,6 +7,7 @@ use std::io::{self, ErrorKind, Read, Write};
 use std::marker::Send;
 use std::sync::Arc;
 use std::thread::JoinHandle;
+use std::time::Instant;
 
 use log::error;
 #[cfg(not(windows))]
@@ -22,7 +23,7 @@ use crate::thread;
 use crate::tty;
 
 /// Max bytes to read from the PTY.
-const MAX_READ: usize = 0x10_000;
+const MAX_READ: usize = u16::max_value() as usize;
 
 /// Messages that may be sent to the `EventLoop`.
 #[derive(Debug)]
@@ -58,20 +59,10 @@ struct Writing {
     written: usize,
 }
 
-/// All of the mutable state needed to run the event loop.
-///
-/// Contains list of items to write, current write state, etc. Anything that
-/// would otherwise be mutated on the `EventLoop` goes here.
-pub struct State {
-    write_list: VecDeque<Cow<'static, [u8]>>,
-    writing: Option<Writing>,
-    parser: ansi::Processor,
-}
-
 pub struct Notifier(pub Sender<Msg>);
 
 impl event::Notify for Notifier {
-    fn notify<B>(&mut self, bytes: B)
+    fn notify<B>(&self, bytes: B)
     where
         B: Into<Cow<'static, [u8]>>,
     {
@@ -91,10 +82,15 @@ impl event::OnResize for Notifier {
     }
 }
 
-impl Default for State {
-    fn default() -> State {
-        State { write_list: VecDeque::new(), parser: ansi::Processor::new(), writing: None }
-    }
+/// All of the mutable state needed to run the event loop.
+///
+/// Contains list of items to write, current write state, etc. Anything that
+/// would otherwise be mutated on the `EventLoop` goes here.
+#[derive(Default)]
+pub struct State {
+    write_list: VecDeque<Cow<'static, [u8]>>,
+    writing: Option<Writing>,
+    parser: ansi::Processor,
 }
 
 impl State {
@@ -221,7 +217,7 @@ where
         let mut terminal = None;
 
         loop {
-            match self.pty.reader().read(&mut buf[..]) {
+            match self.pty.reader().read(buf) {
                 Ok(0) => break,
                 Ok(got) => {
                     // Record bytes read; used to limit time spent in pty_read.
@@ -244,7 +240,7 @@ where
 
                     // Run the parser.
                     for byte in &buf[..got] {
-                        state.parser.advance(&mut **terminal, *byte, &mut self.pty.writer());
+                        state.parser.advance(&mut **terminal, *byte);
                     }
 
                     // Exit if we've processed enough bytes.
@@ -261,8 +257,8 @@ where
             }
         }
 
-        if processed > 0 {
-            // Queue terminal redraw.
+        // Queue terminal redraw unless all processed bytes were synchronized.
+        if state.parser.sync_bytes_count() < processed && processed > 0 {
             self.event_proxy.send_event(Event::Wakeup);
         }
 
@@ -325,11 +321,22 @@ where
             };
 
             'event_loop: loop {
-                if let Err(err) = self.poll.poll(&mut events, None) {
+                // Wakeup the event loop when a synchronized update timeout was reached.
+                let sync_timeout = state.parser.sync_timeout();
+                let timeout = sync_timeout.map(|st| st.saturating_duration_since(Instant::now()));
+
+                if let Err(err) = self.poll.poll(&mut events, timeout) {
                     match err.kind() {
                         ErrorKind::Interrupted => continue,
                         _ => panic!("EventLoop polling error: {:?}", err),
                     }
+                }
+
+                // Handle synchronized update timeout.
+                if events.is_empty() {
+                    state.parser.stop_sync(&mut *self.terminal.lock());
+                    self.event_proxy.send_event(Event::Wakeup);
+                    continue;
                 }
 
                 for event in events.iter() {
@@ -342,9 +349,14 @@ where
 
                         token if token == self.pty.child_event_token() => {
                             if let Some(tty::ChildEvent::Exited) = self.pty.next_child_event() {
-                                if !self.hold {
+                                if self.hold {
+                                    // With hold enabled, make sure the PTY is drained.
+                                    let _ = self.pty_read(&mut state, &mut buf, pipe.as_mut());
+                                } else {
+                                    // Without hold, shutdown the terminal.
                                     self.terminal.lock().exit();
                                 }
+
                                 self.event_proxy.send_event(Event::Wakeup);
                                 break 'event_loop;
                             }

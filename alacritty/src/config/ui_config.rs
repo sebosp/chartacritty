@@ -1,134 +1,169 @@
+use std::cell::RefCell;
 use std::path::PathBuf;
+use std::rc::Rc;
 
+use glutin::event::{ModifiersState, VirtualKeyCode};
 use log::error;
-use serde::{Deserialize, Deserializer};
+use serde::de::Error as SerdeError;
+use serde::{self, Deserialize, Deserializer};
+use unicode_width::UnicodeWidthChar;
 
-use alacritty_terminal::config::{failure_default, Percentage, LOG_TARGET_CONFIG};
+use alacritty_config_derive::ConfigDeserialize;
+use alacritty_terminal::config::{Percentage, Program, LOG_TARGET_CONFIG};
+use alacritty_terminal::term::search::RegexSearch;
 
-use crate::config::bindings::{self, Binding, KeyBinding, MouseBinding};
+use crate::config::bell::BellConfig;
+use crate::config::bindings::{
+    self, Action, Binding, BindingMode, Key, KeyBinding, ModsWrapper, MouseBinding,
+};
+use crate::config::color::Colors;
 use crate::config::debug::Debug;
 use crate::config::font::Font;
 use crate::config::mouse::Mouse;
 use crate::config::window::WindowConfig;
 
-#[derive(Debug, PartialEq, Deserialize)]
-pub struct UIConfig {
+/// Regex used for the default URL hint.
+#[rustfmt::skip]
+const URL_REGEX: &str = "(magnet:|mailto:|gemini:|gopher:|https:|http:|news:|file:|git:|ssh:|ftp:)\
+                         [^\u{0000}-\u{001F}\u{007F}-\u{009F}<>\"\\s{-}\\^⟨⟩`]+";
+
+#[derive(ConfigDeserialize, Debug, PartialEq)]
+pub struct UiConfig {
     /// Font configuration.
-    #[serde(default, deserialize_with = "failure_default")]
     pub font: Font,
 
     /// Window configuration.
-    #[serde(default, deserialize_with = "failure_default")]
     pub window: WindowConfig,
 
-    #[serde(default, deserialize_with = "failure_default")]
     pub mouse: Mouse,
 
-    /// Keybindings.
-    #[serde(default = "default_key_bindings", deserialize_with = "deserialize_key_bindings")]
-    pub key_bindings: Vec<KeyBinding>,
-
-    /// Bindings for the mouse.
-    #[serde(default = "default_mouse_bindings", deserialize_with = "deserialize_mouse_bindings")]
-    pub mouse_bindings: Vec<MouseBinding>,
-
     /// Debug options.
-    #[serde(default, deserialize_with = "failure_default")]
     pub debug: Debug,
 
     /// Send escape sequences using the alt key.
-    #[serde(default, deserialize_with = "failure_default")]
-    alt_send_esc: DefaultTrueBool,
+    pub alt_send_esc: bool,
 
     /// Live config reload.
-    #[serde(default, deserialize_with = "failure_default")]
-    live_config_reload: DefaultTrueBool,
+    pub live_config_reload: bool,
 
-    /// Background opacity from 0.0 to 1.0.
-    #[serde(default, deserialize_with = "failure_default")]
-    background_opacity: Percentage,
+    /// Bell configuration.
+    pub bell: BellConfig,
+
+    /// RGB values for colors.
+    pub colors: Colors,
+
+    /// Should draw bold text with brighter colors instead of bold font.
+    pub draw_bold_text_with_bright_colors: bool,
 
     /// Path where config was loaded from.
-    #[serde(skip)]
+    #[config(skip)]
     pub config_paths: Vec<PathBuf>,
 
-    // TODO: DEPRECATED
-    #[serde(default, deserialize_with = "failure_default")]
-    pub dynamic_title: Option<bool>,
+    /// Regex hints for interacting with terminal content.
+    pub hints: Hints,
+
+    /// Keybindings.
+    key_bindings: KeyBindings,
+
+    /// Bindings for the mouse.
+    mouse_bindings: MouseBindings,
+
+    /// Background opacity from 0.0 to 1.0.
+    background_opacity: Percentage,
 }
 
-impl Default for UIConfig {
+impl Default for UiConfig {
     fn default() -> Self {
-        UIConfig {
+        Self {
+            alt_send_esc: true,
+            live_config_reload: true,
             font: Default::default(),
             window: Default::default(),
             mouse: Default::default(),
-            key_bindings: default_key_bindings(),
-            mouse_bindings: default_mouse_bindings(),
             debug: Default::default(),
-            alt_send_esc: Default::default(),
-            background_opacity: Default::default(),
-            live_config_reload: Default::default(),
-            dynamic_title: Default::default(),
             config_paths: Default::default(),
+            key_bindings: Default::default(),
+            mouse_bindings: Default::default(),
+            background_opacity: Default::default(),
+            bell: Default::default(),
+            colors: Default::default(),
+            draw_bold_text_with_bright_colors: Default::default(),
+            hints: Default::default(),
         }
     }
 }
 
-impl UIConfig {
+impl UiConfig {
+    /// Generate key bindings for all keyboard hints.
+    pub fn generate_hint_bindings(&mut self) {
+        for hint in &self.hints.enabled {
+            let binding = match hint.binding {
+                Some(binding) => binding,
+                None => continue,
+            };
+
+            let binding = KeyBinding {
+                trigger: binding.key,
+                mods: binding.mods.0,
+                mode: BindingMode::empty(),
+                notmode: BindingMode::empty(),
+                action: Action::Hint(hint.clone()),
+            };
+
+            self.key_bindings.0.push(binding);
+        }
+    }
+
     #[inline]
     pub fn background_opacity(&self) -> f32 {
         self.background_opacity.as_f32()
     }
 
     #[inline]
-    pub fn dynamic_title(&self) -> bool {
-        self.dynamic_title.unwrap_or_else(|| self.window.dynamic_title())
+    pub fn key_bindings(&self) -> &[KeyBinding] {
+        &self.key_bindings.0.as_slice()
     }
 
     #[inline]
-    pub fn set_dynamic_title(&mut self, dynamic_title: bool) {
-        self.window.set_dynamic_title(dynamic_title);
-    }
-
-    /// Live config reload.
-    #[inline]
-    pub fn live_config_reload(&self) -> bool {
-        self.live_config_reload.0
-    }
-
-    #[inline]
-    pub fn set_live_config_reload(&mut self, live_config_reload: bool) {
-        self.live_config_reload.0 = live_config_reload;
-    }
-
-    /// Send escape sequences using the alt key.
-    #[inline]
-    pub fn alt_send_esc(&self) -> bool {
-        self.alt_send_esc.0
+    pub fn mouse_bindings(&self) -> &[MouseBinding] {
+        self.mouse_bindings.0.as_slice()
     }
 }
 
-fn default_key_bindings() -> Vec<KeyBinding> {
-    bindings::default_key_bindings()
+#[derive(Debug, PartialEq)]
+struct KeyBindings(Vec<KeyBinding>);
+
+impl Default for KeyBindings {
+    fn default() -> Self {
+        Self(bindings::default_key_bindings())
+    }
 }
 
-fn default_mouse_bindings() -> Vec<MouseBinding> {
-    bindings::default_mouse_bindings()
+impl<'de> Deserialize<'de> for KeyBindings {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Ok(Self(deserialize_bindings(deserializer, Self::default().0)?))
+    }
 }
 
-fn deserialize_key_bindings<'a, D>(deserializer: D) -> Result<Vec<KeyBinding>, D::Error>
-where
-    D: Deserializer<'a>,
-{
-    deserialize_bindings(deserializer, bindings::default_key_bindings())
+#[derive(Debug, PartialEq)]
+struct MouseBindings(Vec<MouseBinding>);
+
+impl Default for MouseBindings {
+    fn default() -> Self {
+        Self(bindings::default_mouse_bindings())
+    }
 }
 
-fn deserialize_mouse_bindings<'a, D>(deserializer: D) -> Result<Vec<MouseBinding>, D::Error>
-where
-    D: Deserializer<'a>,
-{
-    deserialize_bindings(deserializer, bindings::default_mouse_bindings())
+impl<'de> Deserialize<'de> for MouseBindings {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Ok(Self(deserialize_bindings(deserializer, Self::default().0)?))
+    }
 }
 
 fn deserialize_bindings<'a, D, T>(
@@ -148,7 +183,7 @@ where
         match Binding::<T>::deserialize(value) {
             Ok(binding) => bindings.push(binding),
             Err(err) => {
-                error!(target: LOG_TARGET_CONFIG, "Problem with config: {}; ignoring binding", err);
+                error!(target: LOG_TARGET_CONFIG, "Config error: {}; ignoring binding", err);
             },
         }
     }
@@ -163,23 +198,227 @@ where
     Ok(bindings)
 }
 
-#[derive(Deserialize, Copy, Clone, Debug, PartialEq, Eq)]
-pub struct DefaultTrueBool(pub bool);
+/// A delta for a point in a 2 dimensional plane.
+#[derive(ConfigDeserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Delta<T: Default> {
+    /// Horizontal change.
+    pub x: T,
+    /// Vertical change.
+    pub y: T,
+}
 
-impl Default for DefaultTrueBool {
+/// Regex terminal hints.
+#[derive(ConfigDeserialize, Debug, PartialEq, Eq)]
+pub struct Hints {
+    /// Characters for the hint labels.
+    alphabet: HintsAlphabet,
+
+    /// All configured terminal hints.
+    pub enabled: Vec<Hint>,
+}
+
+impl Default for Hints {
     fn default() -> Self {
-        DefaultTrueBool(true)
+        // Add URL hint by default when no other hint is present.
+        let pattern = LazyRegexVariant::Pattern(String::from(URL_REGEX));
+        let regex = LazyRegex(Rc::new(RefCell::new(pattern)));
+
+        #[cfg(not(any(target_os = "macos", windows)))]
+        let action = HintAction::Command(Program::Just(String::from("xdg-open")));
+        #[cfg(target_os = "macos")]
+        let action = HintAction::Command(Program::Just(String::from("open")));
+        #[cfg(windows)]
+        let action = HintAction::Command(Program::WithArgs {
+            program: String::from("cmd"),
+            args: vec!["/c".to_string(), "start".to_string(), "".to_string()],
+        });
+
+        Self {
+            enabled: vec![Hint {
+                regex,
+                action,
+                post_processing: true,
+                mouse: Some(HintMouse { enabled: true, mods: Default::default() }),
+                binding: Some(HintBinding {
+                    key: Key::Keycode(VirtualKeyCode::U),
+                    mods: ModsWrapper(ModifiersState::SHIFT | ModifiersState::CTRL),
+                }),
+            }],
+            alphabet: Default::default(),
+        }
     }
 }
 
-/// A delta for a point in a 2 dimensional plane.
-#[serde(default, bound(deserialize = "T: Deserialize<'de> + Default"))]
-#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
-pub struct Delta<T: Default + PartialEq + Eq> {
-    /// Horizontal change.
-    #[serde(deserialize_with = "failure_default")]
-    pub x: T,
-    /// Vertical change.
-    #[serde(deserialize_with = "failure_default")]
-    pub y: T,
+impl Hints {
+    /// Characters for the hint labels.
+    pub fn alphabet(&self) -> &str {
+        &self.alphabet.0
+    }
 }
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct HintsAlphabet(String);
+
+impl Default for HintsAlphabet {
+    fn default() -> Self {
+        Self(String::from("jfkdls;ahgurieowpq"))
+    }
+}
+
+impl<'de> Deserialize<'de> for HintsAlphabet {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+
+        let mut character_count = 0;
+        for character in value.chars() {
+            if character.width() != Some(1) {
+                return Err(D::Error::custom("characters must be of width 1"));
+            }
+            character_count += 1;
+        }
+
+        if character_count < 2 {
+            return Err(D::Error::custom("must include at last 2 characters"));
+        }
+
+        Ok(Self(value))
+    }
+}
+
+/// Built-in actions for hint mode.
+#[derive(ConfigDeserialize, Clone, Debug, PartialEq, Eq)]
+pub enum HintInternalAction {
+    /// Copy the text to the clipboard.
+    Copy,
+    /// Write the text to the PTY/search.
+    Paste,
+    /// Select the text matching the hint.
+    Select,
+    /// Move the vi mode cursor to the beginning of the hint.
+    MoveViModeCursor,
+}
+
+/// Actions for hint bindings.
+#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+pub enum HintAction {
+    /// Built-in hint action.
+    #[serde(rename = "action")]
+    Action(HintInternalAction),
+
+    /// Command the text will be piped to.
+    #[serde(rename = "command")]
+    Command(Program),
+}
+
+/// Hint configuration.
+#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct Hint {
+    /// Regex for finding matches.
+    pub regex: LazyRegex,
+
+    /// Action executed when this hint is triggered.
+    #[serde(flatten)]
+    pub action: HintAction,
+
+    /// Hint text post processing.
+    #[serde(default)]
+    pub post_processing: bool,
+
+    /// Hint mouse highlighting.
+    pub mouse: Option<HintMouse>,
+
+    /// Binding required to search for this hint.
+    binding: Option<HintBinding>,
+}
+
+/// Binding for triggering a keyboard hint.
+#[derive(Deserialize, Copy, Clone, Debug, PartialEq, Eq)]
+pub struct HintBinding {
+    pub key: Key,
+    #[serde(default)]
+    pub mods: ModsWrapper,
+}
+
+/// Hint mouse highlighting.
+#[derive(ConfigDeserialize, Default, Copy, Clone, Debug, PartialEq, Eq)]
+pub struct HintMouse {
+    /// Hint mouse highlighting availability.
+    pub enabled: bool,
+
+    /// Required mouse modifiers for hint highlighting.
+    pub mods: ModsWrapper,
+}
+
+/// Lazy regex with interior mutability.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LazyRegex(Rc<RefCell<LazyRegexVariant>>);
+
+impl LazyRegex {
+    /// Execute a function with the compiled regex DFAs as parameter.
+    pub fn with_compiled<T, F>(&self, mut f: F) -> T
+    where
+        F: FnMut(&RegexSearch) -> T,
+    {
+        f(self.0.borrow_mut().compiled())
+    }
+}
+
+impl<'de> Deserialize<'de> for LazyRegex {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let regex = LazyRegexVariant::Pattern(String::deserialize(deserializer)?);
+        Ok(Self(Rc::new(RefCell::new(regex))))
+    }
+}
+
+/// Regex which is compiled on demand, to avoid expensive computations at startup.
+#[derive(Clone, Debug)]
+pub enum LazyRegexVariant {
+    Compiled(Box<RegexSearch>),
+    Pattern(String),
+}
+
+impl LazyRegexVariant {
+    /// Get a reference to the compiled regex.
+    ///
+    /// If the regex is not already compiled, this will compile the DFAs and store them for future
+    /// access.
+    fn compiled(&mut self) -> &RegexSearch {
+        // Check if the regex has already been compiled.
+        let regex = match self {
+            Self::Compiled(regex_search) => return regex_search,
+            Self::Pattern(regex) => regex,
+        };
+
+        // Compile the regex.
+        let regex_search = match RegexSearch::new(&regex) {
+            Ok(regex_search) => regex_search,
+            Err(error) => {
+                error!("hint regex is invalid: {}", error);
+                RegexSearch::new("").unwrap()
+            },
+        };
+        *self = Self::Compiled(Box::new(regex_search));
+
+        // Return a reference to the compiled DFAs.
+        match self {
+            Self::Compiled(dfas) => dfas,
+            Self::Pattern(_) => unreachable!(),
+        }
+    }
+}
+
+impl PartialEq for LazyRegexVariant {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Pattern(regex), Self::Pattern(other_regex)) => regex == other_regex,
+            _ => false,
+        }
+    }
+}
+impl Eq for LazyRegexVariant {}

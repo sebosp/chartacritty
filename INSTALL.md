@@ -1,17 +1,4 @@
-# Third Party Repositories
-
-For distributions that do not ship Alacritty officially, there are some third
-party packages available. Only the cargo package is maintained officially, so
-proceed with caution.
-
-## [Fedora](https://copr.fedorainfracloud.org/coprs/pschyska/alacritty)
-
-```
-# dnf copr enable pschyska/alacritty
-# dnf install alacritty
-```
-
-## Cargo
+# Cargo Installation
 
 If you're just interested in the Alacritty binary and you don't need the
 [terminfo file](#terminfo), [desktop entry](#desktop-entry),
@@ -42,8 +29,9 @@ cargo install alacritty
         12. [Gentoo](#gentoo)
         13. [Clear Linux](#clear-linux)
         14. [GNU Guix](#gnu-guix)
-        15. [Windows](#windows)
-        16. [Other](#other)
+        15. [Alpine Linux](#alpine-linux)
+        16. [Windows](#windows)
+        17. [Other](#other)
 2. [Building](#building)
     1. [Linux/Windows](#linux--windows)
     2. [macOS](#macos)
@@ -113,7 +101,7 @@ command that should install all of them. If something is still found to be
 missing, please open an issue.
 
 ```sh
-dnf install cmake freetype-devel fontconfig-devel libxcb-devel
+dnf install cmake freetype-devel fontconfig-devel libxcb-devel g++
 ```
 
 #### CentOS/RHEL 7
@@ -123,7 +111,7 @@ command that should install all of them. If something is still found to be
 missing, please open an issue.
 
 ```sh
-yum install cmake freetype-devel fontconfig-devel
+yum install cmake freetype-devel fontconfig-devel libxcb-devel xcb-util-devel
 yum group install "Development Tools"
 ```
 
@@ -223,6 +211,16 @@ dependencies on [GNU Guix](https://guix.gnu.org/).
 guix environment alacritty
 ```
 
+#### Alpine Linux
+
+On Alpine Linux, you need a few extra libraries to build Alacritty. Here's an
+`apk` command that should install all of them. If something is still found to
+be missing, please open an issue.
+
+```sh
+sudo apk add cmake pkgconf freetype-dev fontconfig-dev python3 libxcb-dev
+```
+
 #### Windows
 
 On windows you will need to have the `{architecture}-pc-windows-msvc` toolchain
@@ -242,7 +240,6 @@ cargo build --release
 ```
 
 If all goes well, this should place a binary at `target/release/alacritty`.
-On Windows this directory should also contain the `winpty-agent.exe`.
 
 ### macOS
 

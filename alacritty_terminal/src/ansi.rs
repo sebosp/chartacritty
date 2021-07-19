@@ -1,14 +1,32 @@
 //! ANSI Terminal Stream Parsing.
 
 use std::convert::TryFrom;
-use std::{io, iter, str};
+use std::time::{Duration, Instant};
+use std::{iter, str};
 
 use log::{debug, trace};
 use serde::{Deserialize, Serialize};
 use vte::{Params, ParamsIter};
 
+use alacritty_config_derive::ConfigDeserialize;
+
 use crate::index::{Column, Line};
 use crate::term::color::Rgb;
+
+/// Maximum time before a synchronized update is aborted.
+const SYNC_UPDATE_TIMEOUT: Duration = Duration::from_millis(150);
+
+/// Maximum number of bytes read in one synchronized update (2MiB).
+const SYNC_BUFFER_SIZE: usize = 0x20_0000;
+
+/// Number of bytes in the synchronized update DCS sequence before the passthrough parameters.
+const SYNC_ESCAPE_START_LEN: usize = 5;
+
+/// Start of the DCS sequence for beginning synchronized updates.
+const SYNC_START_ESCAPE_START: [u8; SYNC_ESCAPE_START_LEN] = [b'\x1b', b'P', b'=', b'1', b's'];
+
+/// Start of the DCS sequence for terminating synchronized updates.
+const SYNC_END_ESCAPE_START: [u8; SYNC_ESCAPE_START_LEN] = [b'\x1b', b'P', b'=', b'2', b's'];
 
 /// Parse colors in XParseColor format.
 fn xparse_color(color: &[u8]) -> Option<Rgb> {
@@ -31,9 +49,13 @@ fn parse_rgb_color(color: &[u8]) -> Option<Rgb> {
 
     // Scale values instead of filling with `0`s.
     let scale = |input: &str| {
-        let max = u32::pow(16, input.len() as u32) - 1;
-        let value = u32::from_str_radix(input, 16).ok()?;
-        Some((255 * value / max) as u8)
+        if input.len() > 4 {
+            None
+        } else {
+            let max = u32::pow(16, input.len() as u32) - 1;
+            let value = u32::from_str_radix(input, 16).ok()?;
+            Some((255 * value / max) as u8)
+        }
     };
 
     Some(Rgb { r: scale(colors[0])?, g: scale(colors[1])?, b: scale(colors[2])? })
@@ -75,58 +97,169 @@ fn parse_number(input: &[u8]) -> Option<u8> {
     Some(num)
 }
 
+/// Internal state for VTE processor.
+#[derive(Debug, Default)]
+struct ProcessorState {
+    /// Last processed character for repetition.
+    preceding_char: Option<char>,
+
+    /// DCS sequence waiting for termination.
+    dcs: Option<Dcs>,
+
+    /// State for synchronized terminal updates.
+    sync_state: SyncState,
+}
+
+#[derive(Debug)]
+struct SyncState {
+    /// Expiration time of the synchronized update.
+    timeout: Option<Instant>,
+
+    /// Sync DCS waiting for termination sequence.
+    pending_dcs: Option<Dcs>,
+
+    /// Bytes read during the synchronized update.
+    buffer: Vec<u8>,
+}
+
+impl Default for SyncState {
+    fn default() -> Self {
+        Self { buffer: Vec::with_capacity(SYNC_BUFFER_SIZE), pending_dcs: None, timeout: None }
+    }
+}
+
+/// Pending DCS sequence.
+#[derive(Debug)]
+enum Dcs {
+    /// Begin of the synchronized update.
+    SyncStart,
+
+    /// End of the synchronized update.
+    SyncEnd,
+}
+
 /// The processor wraps a `vte::Parser` to ultimately call methods on a Handler.
+#[derive(Default)]
 pub struct Processor {
     state: ProcessorState,
     parser: vte::Parser,
 }
 
-/// Internal state for VTE processor.
-struct ProcessorState {
-    preceding_char: Option<char>,
+impl Processor {
+    #[inline]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Process a new byte from the PTY.
+    #[inline]
+    pub fn advance<H>(&mut self, handler: &mut H, byte: u8)
+    where
+        H: Handler,
+    {
+        if self.state.sync_state.timeout.is_none() {
+            let mut performer = Performer::new(&mut self.state, handler);
+            self.parser.advance(&mut performer, byte);
+        } else {
+            self.advance_sync(handler, byte);
+        }
+    }
+
+    /// End a synchronized update.
+    pub fn stop_sync<H>(&mut self, handler: &mut H)
+    where
+        H: Handler,
+    {
+        // Process all synchronized bytes.
+        for i in 0..self.state.sync_state.buffer.len() {
+            let byte = self.state.sync_state.buffer[i];
+            let mut performer = Performer::new(&mut self.state, handler);
+            self.parser.advance(&mut performer, byte);
+        }
+
+        // Resetting state after processing makes sure we don't interpret buffered sync escapes.
+        self.state.sync_state.buffer.clear();
+        self.state.sync_state.timeout = None;
+    }
+
+    /// Synchronized update expiration time.
+    #[inline]
+    pub fn sync_timeout(&self) -> Option<&Instant> {
+        self.state.sync_state.timeout.as_ref()
+    }
+
+    /// Number of bytes in the synchronization buffer.
+    #[inline]
+    pub fn sync_bytes_count(&self) -> usize {
+        self.state.sync_state.buffer.len()
+    }
+
+    /// Process a new byte during a synchronized update.
+    #[cold]
+    fn advance_sync<H>(&mut self, handler: &mut H, byte: u8)
+    where
+        H: Handler,
+    {
+        self.state.sync_state.buffer.push(byte);
+
+        // Handle sync DCS escape sequences.
+        match self.state.sync_state.pending_dcs {
+            Some(_) => self.advance_sync_dcs_end(handler, byte),
+            None => self.advance_sync_dcs_start(),
+        }
+    }
+
+    /// Find the start of sync DCS sequences.
+    fn advance_sync_dcs_start(&mut self) {
+        // Get the last few bytes for comparison.
+        let len = self.state.sync_state.buffer.len();
+        let offset = len.saturating_sub(SYNC_ESCAPE_START_LEN);
+        let end = &self.state.sync_state.buffer[offset..];
+
+        // Check for extension/termination of the synchronized update.
+        if end == SYNC_START_ESCAPE_START {
+            self.state.sync_state.pending_dcs = Some(Dcs::SyncStart);
+        } else if end == SYNC_END_ESCAPE_START || len >= SYNC_BUFFER_SIZE - 1 {
+            self.state.sync_state.pending_dcs = Some(Dcs::SyncEnd);
+        }
+    }
+
+    /// Parse the DCS termination sequence for synchronized updates.
+    fn advance_sync_dcs_end<H>(&mut self, handler: &mut H, byte: u8)
+    where
+        H: Handler,
+    {
+        match byte {
+            // Ignore DCS passthrough characters.
+            0x00..=0x17 | 0x19 | 0x1c..=0x7f | 0xa0..=0xff => (),
+            // Cancel the DCS sequence.
+            0x18 | 0x1a | 0x80..=0x9f => self.state.sync_state.pending_dcs = None,
+            // Dispatch on ESC.
+            0x1b => match self.state.sync_state.pending_dcs.take() {
+                Some(Dcs::SyncStart) => {
+                    self.state.sync_state.timeout = Some(Instant::now() + SYNC_UPDATE_TIMEOUT);
+                },
+                Some(Dcs::SyncEnd) => self.stop_sync(handler),
+                None => (),
+            },
+        }
+    }
 }
 
 /// Helper type that implements `vte::Perform`.
 ///
 /// Processor creates a Performer when running advance and passes the Performer
 /// to `vte::Parser`.
-struct Performer<'a, H: Handler, W: io::Write> {
+struct Performer<'a, H: Handler> {
     state: &'a mut ProcessorState,
     handler: &'a mut H,
-    writer: &'a mut W,
 }
 
-impl<'a, H: Handler + 'a, W: io::Write> Performer<'a, H, W> {
+impl<'a, H: Handler + 'a> Performer<'a, H> {
     /// Create a performer.
     #[inline]
-    pub fn new<'b>(
-        state: &'b mut ProcessorState,
-        handler: &'b mut H,
-        writer: &'b mut W,
-    ) -> Performer<'b, H, W> {
-        Performer { state, handler, writer }
-    }
-}
-
-impl Default for Processor {
-    fn default() -> Processor {
-        Processor { state: ProcessorState { preceding_char: None }, parser: vte::Parser::new() }
-    }
-}
-
-impl Processor {
-    pub fn new() -> Processor {
-        Default::default()
-    }
-
-    #[inline]
-    pub fn advance<H, W>(&mut self, handler: &mut H, byte: u8, writer: &mut W)
-    where
-        H: Handler,
-        W: io::Write,
-    {
-        let mut performer = Performer::new(&mut self.state, handler, writer);
-        self.parser.advance(&mut performer, byte);
+    pub fn new<'b>(state: &'b mut ProcessorState, handler: &'b mut H) -> Performer<'b, H> {
+        Performer { state, handler }
     }
 }
 
@@ -141,6 +274,9 @@ pub trait Handler {
     /// Set the cursor style.
     fn set_cursor_style(&mut self, _: Option<CursorStyle>) {}
 
+    /// Set the cursor shape.
+    fn set_cursor_shape(&mut self, _shape: CursorShape) {}
+
     /// A character to be displayed.
     fn input(&mut self, _c: char) {}
 
@@ -154,21 +290,19 @@ pub trait Handler {
     fn goto_col(&mut self, _: Column) {}
 
     /// Insert blank characters in current line starting from cursor.
-    fn insert_blank(&mut self, _: Column) {}
+    fn insert_blank(&mut self, _: usize) {}
 
     /// Move cursor up `rows`.
-    fn move_up(&mut self, _: Line) {}
+    fn move_up(&mut self, _: usize) {}
 
     /// Move cursor down `rows`.
-    fn move_down(&mut self, _: Line) {}
+    fn move_down(&mut self, _: usize) {}
 
     /// Identify the terminal (should write back to the pty stream).
-    ///
-    /// TODO this should probably return an io::Result
-    fn identify_terminal<W: io::Write>(&mut self, _: &mut W, _intermediate: Option<char>) {}
+    fn identify_terminal(&mut self, _intermediate: Option<char>) {}
 
     /// Report device status.
-    fn device_status<W: io::Write>(&mut self, _: &mut W, _: usize) {}
+    fn device_status(&mut self, _: usize) {}
 
     /// Move cursor forward `cols`.
     fn move_forward(&mut self, _: Column) {}
@@ -177,13 +311,13 @@ pub trait Handler {
     fn move_backward(&mut self, _: Column) {}
 
     /// Move cursor down `rows` and set to column 1.
-    fn move_down_and_cr(&mut self, _: Line) {}
+    fn move_down_and_cr(&mut self, _: usize) {}
 
     /// Move cursor up `rows` and set to column 1.
-    fn move_up_and_cr(&mut self, _: Line) {}
+    fn move_up_and_cr(&mut self, _: usize) {}
 
     /// Put `count` tabs.
-    fn put_tab(&mut self, _count: i64) {}
+    fn put_tab(&mut self, _count: u16) {}
 
     /// Backspace `count` characters.
     fn backspace(&mut self) {}
@@ -209,16 +343,16 @@ pub trait Handler {
     fn set_horizontal_tabstop(&mut self) {}
 
     /// Scroll up `rows` rows.
-    fn scroll_up(&mut self, _: Line) {}
+    fn scroll_up(&mut self, _: usize) {}
 
     /// Scroll down `rows` rows.
-    fn scroll_down(&mut self, _: Line) {}
+    fn scroll_down(&mut self, _: usize) {}
 
     /// Insert `count` blank lines.
-    fn insert_blank_lines(&mut self, _: Line) {}
+    fn insert_blank_lines(&mut self, _: usize) {}
 
     /// Delete `count` lines.
-    fn delete_lines(&mut self, _: Line) {}
+    fn delete_lines(&mut self, _: usize) {}
 
     /// Erase `count` chars in current line following cursor.
     ///
@@ -230,13 +364,13 @@ pub trait Handler {
     ///
     /// Deleting a character is like the delete key on the keyboard - everything
     /// to the right of the deleted things is shifted left.
-    fn delete_chars(&mut self, _: Column) {}
+    fn delete_chars(&mut self, _: usize) {}
 
     /// Move backward `count` tabs.
-    fn move_backward_tabs(&mut self, _count: i64) {}
+    fn move_backward_tabs(&mut self, _count: u16) {}
 
     /// Move forward `count` tabs.
-    fn move_forward_tabs(&mut self, _count: i64) {}
+    fn move_forward_tabs(&mut self, _count: u16) {}
 
     /// Save current cursor position.
     fn save_cursor_position(&mut self) {}
@@ -297,7 +431,7 @@ pub trait Handler {
     fn set_color(&mut self, _: usize, _: Rgb) {}
 
     /// Write a foreground/background color escape sequence with the current color.
-    fn dynamic_color_sequence<W: io::Write>(&mut self, _: &mut W, _: u8, _: usize, _: &str) {}
+    fn dynamic_color_sequence(&mut self, _: u8, _: usize, _: &str) {}
 
     /// Reset an indexed color to original value.
     fn reset_color(&mut self, _: usize) {}
@@ -318,15 +452,22 @@ pub trait Handler {
     fn pop_title(&mut self) {}
 
     /// Report text area size in pixels.
-    fn text_area_size_pixels<W: io::Write>(&mut self, _: &mut W) {}
+    fn text_area_size_pixels(&mut self) {}
 
     /// Report text area size in characters.
-    fn text_area_size_chars<W: io::Write>(&mut self, _: &mut W) {}
+    fn text_area_size_chars(&mut self) {}
 }
 
-/// Describes shape of cursor.
-#[derive(Debug, Eq, PartialEq, Copy, Clone, Hash, Deserialize)]
-pub enum CursorStyle {
+/// Terminal cursor configuration.
+#[derive(ConfigDeserialize, Default, Debug, Eq, PartialEq, Copy, Clone, Hash)]
+pub struct CursorStyle {
+    pub shape: CursorShape,
+    pub blinking: bool,
+}
+
+/// Terminal cursor shape.
+#[derive(ConfigDeserialize, Debug, Eq, PartialEq, Copy, Clone, Hash)]
+pub enum CursorShape {
     /// Cursor is a block like `▒`.
     Block,
 
@@ -337,17 +478,17 @@ pub enum CursorStyle {
     Beam,
 
     /// Cursor is a box like `☐`.
-    #[serde(skip)]
+    #[config(skip)]
     HollowBlock,
 
     /// Invisible cursor.
-    #[serde(skip)]
+    #[config(skip)]
     Hidden,
 }
 
-impl Default for CursorStyle {
-    fn default() -> CursorStyle {
-        CursorStyle::Block
+impl Default for CursorShape {
+    fn default() -> CursorShape {
+        CursorShape::Block
     }
 }
 
@@ -356,7 +497,7 @@ impl Default for CursorStyle {
 pub enum Mode {
     /// ?1
     CursorKeys = 1,
-    /// Select 80 or 132 columns per page.
+    /// Select 80 or 132 columns per page (DECCOLM).
     ///
     /// CSI ? 3 h -> set 132 column font.
     /// CSI ? 3 l -> reset 80 column font.
@@ -367,7 +508,7 @@ pub enum Mode {
     /// * erases all data in page memory
     /// * resets DECLRMM to unavailable
     /// * clears data from the status line (if set to host-writable)
-    DECCOLM = 3,
+    ColumnMode = 3,
     /// IRM Insert Mode.
     ///
     /// NB should be part of non-private mode enum.
@@ -402,6 +543,8 @@ pub enum Mode {
     SgrMouse = 1006,
     /// ?1007
     AlternateScroll = 1007,
+    /// ?1042
+    UrgencyHints = 1042,
     /// ?1049
     SwapScreenAndSetRestoreCursor = 1049,
     /// ?2004
@@ -410,9 +553,7 @@ pub enum Mode {
 
 impl Mode {
     /// Create mode from a primitive.
-    ///
-    /// TODO lots of unhandled values.
-    pub fn from_primitive(intermediate: Option<&u8>, num: i64) -> Option<Mode> {
+    pub fn from_primitive(intermediate: Option<&u8>, num: u16) -> Option<Mode> {
         let private = match intermediate {
             Some(b'?') => true,
             None => false,
@@ -422,7 +563,7 @@ impl Mode {
         if private {
             Some(match num {
                 1 => Mode::CursorKeys,
-                3 => Mode::DECCOLM,
+                3 => Mode::ColumnMode,
                 6 => Mode::Origin,
                 7 => Mode::LineWrap,
                 12 => Mode::BlinkingCursor,
@@ -434,6 +575,7 @@ impl Mode {
                 1005 => Mode::Utf8Mouse,
                 1006 => Mode::SgrMouse,
                 1007 => Mode::AlternateScroll,
+                1042 => Mode::UrgencyHints,
                 1049 => Mode::SwapScreenAndSetRestoreCursor,
                 2004 => Mode::BracketedPaste,
                 _ => {
@@ -492,7 +634,7 @@ pub enum TabulationClearMode {
 ///
 /// The order here matters since the enum should be castable to a `usize` for
 /// indexing a color list.
-#[derive(Debug, Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug, Copy, Clone, Eq, PartialEq, PartialOrd, Ord)]
 pub enum NamedColor {
     /// Black.
     Black = 0,
@@ -604,7 +746,7 @@ impl NamedColor {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Color {
     Named(NamedColor),
     Spec(Rgb),
@@ -732,10 +874,9 @@ impl StandardCharset {
     }
 }
 
-impl<'a, H, W> vte::Perform for Performer<'a, H, W>
+impl<'a, H> vte::Perform for Performer<'a, H>
 where
     H: Handler + 'a,
-    W: io::Write + 'a,
 {
     #[inline]
     fn print(&mut self, c: char) {
@@ -759,11 +900,19 @@ where
     }
 
     #[inline]
-    fn hook(&mut self, params: &Params, intermediates: &[u8], ignore: bool, _c: char) {
-        debug!(
-            "[unhandled hook] params={:?}, ints: {:?}, ignore: {:?}",
-            params, intermediates, ignore
-        );
+    fn hook(&mut self, params: &Params, intermediates: &[u8], ignore: bool, action: char) {
+        match (action, intermediates) {
+            ('s', [b'=']) => {
+                // Start a synchronized update. The end is handled with a separate parser.
+                if params.iter().next().map_or(false, |param| param[0] == 1) {
+                    self.state.dcs = Some(Dcs::SyncStart);
+                }
+            },
+            _ => debug!(
+                "[unhandled hook] params={:?}, ints: {:?}, ignore: {:?}, action: {:?}",
+                params, intermediates, ignore, action
+            ),
+        }
     }
 
     #[inline]
@@ -773,19 +922,23 @@ where
 
     #[inline]
     fn unhook(&mut self) {
-        debug!("[unhandled unhook]");
+        match self.state.dcs {
+            Some(Dcs::SyncStart) => {
+                self.state.sync_state.timeout = Some(Instant::now() + SYNC_UPDATE_TIMEOUT);
+            },
+            Some(Dcs::SyncEnd) => (),
+            _ => debug!("[unhandled unhook]"),
+        }
     }
 
-    // TODO replace OSC parsing with parser combinators.
     #[inline]
     fn osc_dispatch(&mut self, params: &[&[u8]], bell_terminated: bool) {
-        let writer = &mut self.writer;
         let terminator = if bell_terminated { "\x07" } else { "\x1b\\" };
 
         fn unhandled(params: &[&[u8]]) {
             let mut buf = String::new();
             for items in params {
-                buf.push_str("[");
+                buf.push('[');
                 for item in *items {
                     buf.push_str(&format!("{:?},", *item as char));
                 }
@@ -849,7 +1002,6 @@ where
                                 self.handler.set_color(index, color);
                             } else if param == b"?" {
                                 self.handler.dynamic_color_sequence(
-                                    writer,
                                     dynamic_code,
                                     index,
                                     terminator,
@@ -871,13 +1023,13 @@ where
                     && params[1].len() >= 13
                     && params[1][0..12] == *b"CursorShape="
                 {
-                    let style = match params[1][12] as char {
-                        '0' => CursorStyle::Block,
-                        '1' => CursorStyle::Beam,
-                        '2' => CursorStyle::Underline,
+                    let shape = match params[1][12] as char {
+                        '0' => CursorShape::Block,
+                        '1' => CursorShape::Beam,
+                        '2' => CursorShape::Underline,
                         _ => return unhandled(params),
                     };
-                    self.handler.set_cursor_style(Some(style));
+                    self.handler.set_cursor_shape(shape);
                     return;
                 }
                 unhandled(params);
@@ -953,19 +1105,16 @@ where
 
         let mut params_iter = params.iter();
         let handler = &mut self.handler;
-        let writer = &mut self.writer;
 
-        let mut next_param_or = |default: i64| {
+        let mut next_param_or = |default: u16| {
             params_iter.next().map(|param| param[0]).filter(|&param| param != 0).unwrap_or(default)
         };
 
-        match (action, intermediates.get(0)) {
-            ('@', None) => handler.insert_blank(Column(next_param_or(1) as usize)),
-            ('A', None) => {
-                handler.move_up(Line(next_param_or(1) as usize));
-            }
-            ('B', None) | ('e', None) => handler.move_down(Line(next_param_or(1) as usize)),
-            ('b', None) => {
+        match (action, intermediates) {
+            ('@', []) => handler.insert_blank(next_param_or(1) as usize),
+            ('A', []) => handler.move_up(next_param_or(1) as usize),
+            ('B', []) | ('e', []) => handler.move_down(next_param_or(1) as usize),
+            ('b', []) => {
                 if let Some(c) = self.state.preceding_char {
                     for _ in 0..next_param_or(1) {
                         handler.input(c);
@@ -973,17 +1122,17 @@ where
                 } else {
                     debug!("tried to repeat with no preceding char");
                 }
-            }
-            ('C', None) | ('a', None) => handler.move_forward(Column(next_param_or(1) as usize)),
-            ('c', intermediate) if next_param_or(0) == 0 => {
-                handler.identify_terminal(writer, intermediate.map(|&i| i as char))
-            }
-            ('D', None) => handler.move_backward(Column(next_param_or(1) as usize)),
-            ('d', None) => handler.goto_line(Line(next_param_or(1) as usize - 1)),
-            ('E', None) => handler.move_down_and_cr(Line(next_param_or(1) as usize)),
-            ('F', None) => handler.move_up_and_cr(Line(next_param_or(1) as usize)),
-            ('G', None) | ('`', None) => handler.goto_col(Column(next_param_or(1) as usize - 1)),
-            ('g', None) => {
+            },
+            ('C', []) | ('a', []) => handler.move_forward(Column(next_param_or(1) as usize)),
+            ('c', intermediates) if next_param_or(0) == 0 => {
+                handler.identify_terminal(intermediates.get(0).map(|&i| i as char))
+            },
+            ('D', []) => handler.move_backward(Column(next_param_or(1) as usize)),
+            ('d', []) => handler.goto_line(Line(next_param_or(1) as i32 - 1)),
+            ('E', []) => handler.move_down_and_cr(next_param_or(1) as usize),
+            ('F', []) => handler.move_up_and_cr(next_param_or(1) as usize),
+            ('G', []) | ('`', []) => handler.goto_col(Column(next_param_or(1) as usize - 1)),
+            ('g', []) => {
                 let mode = match next_param_or(0) {
                     0 => TabulationClearMode::Current,
                     3 => TabulationClearMode::All,
@@ -994,22 +1143,22 @@ where
                 };
 
                 handler.clear_tabs(mode);
-            }
-            ('H', None) | ('f', None) => {
-                let y = next_param_or(1) as usize;
+            },
+            ('H', []) | ('f', []) => {
+                let y = next_param_or(1) as i32;
                 let x = next_param_or(1) as usize;
                 handler.goto(Line(y - 1), Column(x - 1));
-            }
-            ('h', intermediate) => {
+            },
+            ('h', intermediates) => {
                 for param in params_iter.map(|param| param[0]) {
-                    match Mode::from_primitive(intermediate, param) {
+                    match Mode::from_primitive(intermediates.get(0), param) {
                         Some(mode) => handler.set_mode(mode),
                         None => unhandled!(),
                     }
                 }
-            }
-            ('I', None) => handler.move_forward_tabs(next_param_or(1)),
-            ('J', None) => {
+            },
+            ('I', []) => handler.move_forward_tabs(next_param_or(1)),
+            ('J', []) => {
                 let mode = match next_param_or(0) {
                     0 => ClearMode::Below,
                     1 => ClearMode::Above,
@@ -1022,8 +1171,8 @@ where
                 };
 
                 handler.clear_screen(mode);
-            }
-            ('K', None) => {
+            },
+            ('K', []) => {
                 let mode = match next_param_or(0) {
                     0 => LineClearMode::Right,
                     1 => LineClearMode::Left,
@@ -1035,18 +1184,18 @@ where
                 };
 
                 handler.clear_line(mode);
-            }
-            ('L', None) => handler.insert_blank_lines(Line(next_param_or(1) as usize)),
-            ('l', intermediate) => {
+            },
+            ('L', []) => handler.insert_blank_lines(next_param_or(1) as usize),
+            ('l', intermediates) => {
                 for param in params_iter.map(|param| param[0]) {
-                    match Mode::from_primitive(intermediate, param) {
+                    match Mode::from_primitive(intermediates.get(0), param) {
                         Some(mode) => handler.unset_mode(mode),
                         None => unhandled!(),
                     }
                 }
-            }
-            ('M', None) => handler.delete_lines(Line(next_param_or(1) as usize)),
-            ('m', None) => {
+            },
+            ('M', []) => handler.delete_lines(next_param_or(1) as usize),
+            ('m', []) => {
                 if params.is_empty() {
                     handler.terminal_attribute(Attr::Reset);
                 } else {
@@ -1057,44 +1206,47 @@ where
                         }
                     }
                 }
-            }
-            ('n', None) => handler.device_status(writer, next_param_or(0) as usize),
-            ('P', None) => handler.delete_chars(Column(next_param_or(1) as usize)),
-            ('q', Some(b' ')) => {
+            },
+            ('n', []) => handler.device_status(next_param_or(0) as usize),
+            ('P', []) => handler.delete_chars(next_param_or(1) as usize),
+            ('q', [b' ']) => {
                 // DECSCUSR (CSI Ps SP q) -- Set Cursor Style.
-                let style = match next_param_or(0) {
+                let cursor_style_id = next_param_or(0);
+                let shape = match cursor_style_id {
                     0 => None,
-                    1 | 2 => Some(CursorStyle::Block),
-                    3 | 4 => Some(CursorStyle::Underline),
-                    5 | 6 => Some(CursorStyle::Beam),
+                    1 | 2 => Some(CursorShape::Block),
+                    3 | 4 => Some(CursorShape::Underline),
+                    5 | 6 => Some(CursorShape::Beam),
                     _ => {
                         unhandled!();
                         return;
                     }
                 };
+                let cursor_style =
+                    shape.map(|shape| CursorStyle { shape, blinking: cursor_style_id % 2 == 1 });
 
-                handler.set_cursor_style(style);
-            }
-            ('r', None) => {
+                handler.set_cursor_style(cursor_style);
+            },
+            ('r', []) => {
                 let top = next_param_or(1) as usize;
                 let bottom =
                     params_iter.next().map(|param| param[0] as usize).filter(|&param| param != 0);
 
                 handler.set_scrolling_region(top, bottom);
-            }
-            ('S', None) => handler.scroll_up(Line(next_param_or(1) as usize)),
-            ('s', None) => handler.save_cursor_position(),
-            ('T', None) => handler.scroll_down(Line(next_param_or(1) as usize)),
-            ('t', None) => match next_param_or(1) as usize {
-                14 => handler.text_area_size_pixels(writer),
-                18 => handler.text_area_size_chars(writer),
+            },
+            ('S', []) => handler.scroll_up(next_param_or(1) as usize),
+            ('s', []) => handler.save_cursor_position(),
+            ('T', []) => handler.scroll_down(next_param_or(1) as usize),
+            ('t', []) => match next_param_or(1) as usize {
+                14 => handler.text_area_size_pixels(),
+                18 => handler.text_area_size_chars(),
                 22 => handler.push_title(),
                 23 => handler.pop_title(),
                 _ => unhandled!(),
             },
-            ('u', None) => handler.restore_cursor_position(),
-            ('X', None) => handler.erase_chars(Column(next_param_or(1) as usize)),
-            ('Z', None) => handler.move_backward_tabs(next_param_or(1)),
+            ('u', []) => handler.restore_cursor_position(),
+            ('X', []) => handler.erase_chars(Column(next_param_or(1) as usize)),
+            ('Z', []) => handler.move_backward_tabs(next_param_or(1)),
             _ => unhandled!(),
         }
     }
@@ -1111,12 +1263,12 @@ where
         }
 
         macro_rules! configure_charset {
-            ($charset:path, $intermediate:expr) => {{
-                let index: CharsetIndex = match $intermediate {
-                    Some(b'(') => CharsetIndex::G0,
-                    Some(b')') => CharsetIndex::G1,
-                    Some(b'*') => CharsetIndex::G2,
-                    Some(b'+') => CharsetIndex::G3,
+            ($charset:path, $intermediates:expr) => {{
+                let index: CharsetIndex = match $intermediates {
+                    [b'('] => CharsetIndex::G0,
+                    [b')'] => CharsetIndex::G1,
+                    [b'*'] => CharsetIndex::G2,
+                    [b'+'] => CharsetIndex::G3,
                     _ => {
                         unhandled!();
                         return;
@@ -1126,33 +1278,34 @@ where
             }};
         }
 
-        match (byte, intermediates.get(0)) {
-            (b'B', intermediate) => configure_charset!(StandardCharset::Ascii, intermediate),
-            (b'D', None) => self.handler.linefeed(),
-            (b'E', None) => {
+        match (byte, intermediates) {
+            (b'B', intermediates) => configure_charset!(StandardCharset::Ascii, intermediates),
+            (b'D', []) => self.handler.linefeed(),
+            (b'E', []) => {
                 self.handler.linefeed();
                 self.handler.carriage_return();
-            }
-            (b'H', None) => self.handler.set_horizontal_tabstop(),
-            (b'M', None) => self.handler.reverse_index(),
-            (b'Z', None) => self.handler.identify_terminal(self.writer, None),
-            (b'c', None) => self.handler.reset_state(),
-            (b'0', intermediate) => {
-                configure_charset!(StandardCharset::SpecialCharacterAndLineDrawing, intermediate)
-            }
-            (b'7', None) => self.handler.save_cursor_position(),
-            (b'8', Some(b'#')) => self.handler.decaln(),
-            (b'8', None) => self.handler.restore_cursor_position(),
-            (b'=', None) => self.handler.set_keypad_application_mode(),
-            (b'>', None) => self.handler.unset_keypad_application_mode(),
+            },
+            (b'H', []) => self.handler.set_horizontal_tabstop(),
+            (b'M', []) => self.handler.reverse_index(),
+            (b'Z', []) => self.handler.identify_terminal(None),
+            (b'c', []) => self.handler.reset_state(),
+            (b'0', intermediates) => {
+                configure_charset!(StandardCharset::SpecialCharacterAndLineDrawing, intermediates)
+            },
+            (b'7', []) => self.handler.save_cursor_position(),
+            (b'8', [b'#']) => self.handler.decaln(),
+            (b'8', []) => self.handler.restore_cursor_position(),
+            (b'=', []) => self.handler.set_keypad_application_mode(),
+            (b'>', []) => self.handler.unset_keypad_application_mode(),
             // String terminator, do nothing (parser handles as string terminator).
-            (b'\\', None) => (),
+            (b'\\', []) => (),
             _ => unhandled!(),
         }
     }
 }
 
-fn attrs_from_sgr_parameters(params: &mut ParamsIter) -> Vec<Option<Attr>> {
+#[inline]
+fn attrs_from_sgr_parameters(params: &mut ParamsIter<'_>) -> Vec<Option<Attr>> {
     let mut attrs = Vec::with_capacity(params.size_hint().0);
 
     while let Some(param) = params.next() {
@@ -1242,7 +1395,7 @@ fn attrs_from_sgr_parameters(params: &mut ParamsIter) -> Vec<Option<Attr>> {
 }
 
 /// Parse a color specifier from list of attributes.
-fn parse_sgr_color(params: &mut dyn Iterator<Item = i64>) -> Option<Color> {
+fn parse_sgr_color(params: &mut dyn Iterator<Item = u16>) -> Option<Color> {
     match params.next() {
         Some(2) => Some(Color::Spec(Rgb {
             r: u8::try_from(params.next()?).ok()?,
@@ -1330,11 +1483,9 @@ pub mod C0 {
 // Byte sequences used in these tests are recording of pty stdout.
 #[cfg(test)]
 mod tests {
-    use super::{
-        parse_number, xparse_color, Attr, CharsetIndex, Color, Handler, Processor, StandardCharset,
-    };
+    use super::*;
+
     use crate::term::color::Rgb;
-    use std::io;
 
     struct MockHandler {
         index: CharsetIndex,
@@ -1357,7 +1508,7 @@ mod tests {
             self.index = index;
         }
 
-        fn identify_terminal<W: io::Write>(&mut self, _: &mut W, _intermediate: Option<char>) {
+        fn identify_terminal(&mut self, _intermediate: Option<char>) {
             self.identity_reported = true;
         }
 
@@ -1384,8 +1535,8 @@ mod tests {
         let mut parser = Processor::new();
         let mut handler = MockHandler::default();
 
-        for byte in &BYTES[..] {
-            parser.advance(&mut handler, *byte, &mut io::sink());
+        for byte in BYTES {
+            parser.advance(&mut handler, *byte);
         }
 
         assert_eq!(handler.attr, Some(Attr::Bold));
@@ -1398,8 +1549,8 @@ mod tests {
         let mut parser = Processor::new();
         let mut handler = MockHandler::default();
 
-        for byte in &bytes[..] {
-            parser.advance(&mut handler, *byte, &mut io::sink());
+        for byte in bytes {
+            parser.advance(&mut handler, *byte);
         }
 
         assert!(!handler.identity_reported);
@@ -1407,8 +1558,8 @@ mod tests {
 
         let bytes: &[u8] = &[0x1b, b'[', b'c'];
 
-        for byte in &bytes[..] {
-            parser.advance(&mut handler, *byte, &mut io::sink());
+        for byte in bytes {
+            parser.advance(&mut handler, *byte);
         }
 
         assert!(handler.identity_reported);
@@ -1416,8 +1567,8 @@ mod tests {
 
         let bytes: &[u8] = &[0x1b, b'[', b'0', b'c'];
 
-        for byte in &bytes[..] {
-            parser.advance(&mut handler, *byte, &mut io::sink());
+        for byte in bytes {
+            parser.advance(&mut handler, *byte);
         }
 
         assert!(handler.identity_reported);
@@ -1430,8 +1581,8 @@ mod tests {
         let mut parser = Processor::new();
         let mut handler = MockHandler::default();
 
-        for byte in &bytes[..] {
-            parser.advance(&mut handler, *byte, &mut io::sink());
+        for byte in bytes {
+            parser.advance(&mut handler, *byte);
         }
 
         assert!(handler.identity_reported);
@@ -1442,8 +1593,8 @@ mod tests {
         let mut parser = Processor::new();
         let mut handler = MockHandler::default();
 
-        for byte in &bytes[..] {
-            parser.advance(&mut handler, *byte, &mut io::sink());
+        for byte in bytes {
+            parser.advance(&mut handler, *byte);
         }
 
         assert!(!handler.identity_reported);
@@ -1460,8 +1611,8 @@ mod tests {
         let mut parser = Processor::new();
         let mut handler = MockHandler::default();
 
-        for byte in &BYTES[..] {
-            parser.advance(&mut handler, *byte, &mut io::sink());
+        for byte in BYTES {
+            parser.advance(&mut handler, *byte);
         }
 
         let spec = Rgb { r: 128, g: 66, b: 255 };
@@ -1491,8 +1642,8 @@ mod tests {
         let mut handler = MockHandler::default();
         let mut parser = Processor::new();
 
-        for byte in &BYTES[..] {
-            parser.advance(&mut handler, *byte, &mut io::sink());
+        for byte in BYTES {
+            parser.advance(&mut handler, *byte);
         }
     }
 
@@ -1502,8 +1653,8 @@ mod tests {
         let mut parser = Processor::new();
         let mut handler = MockHandler::default();
 
-        for byte in &BYTES[..] {
-            parser.advance(&mut handler, *byte, &mut io::sink());
+        for byte in BYTES {
+            parser.advance(&mut handler, *byte);
         }
 
         assert_eq!(handler.index, CharsetIndex::G0);
@@ -1517,14 +1668,14 @@ mod tests {
         let mut handler = MockHandler::default();
 
         for byte in &BYTES[..3] {
-            parser.advance(&mut handler, *byte, &mut io::sink());
+            parser.advance(&mut handler, *byte);
         }
 
         assert_eq!(handler.index, CharsetIndex::G1);
         assert_eq!(handler.charset, StandardCharset::SpecialCharacterAndLineDrawing);
 
         let mut handler = MockHandler::default();
-        parser.advance(&mut handler, BYTES[3], &mut io::sink());
+        parser.advance(&mut handler, BYTES[3]);
 
         assert_eq!(handler.index, CharsetIndex::G1);
     }
