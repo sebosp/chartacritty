@@ -102,18 +102,28 @@ pub fn load_http_response(
             {
                 match prom.load_prometheus_response(data) {
                     Ok(num_records) => {
-                        event!(Level::DEBUG,
-                            "load_http_response:(Chart: {}, Series: {}) {} records from {} into TimeSeries",
-                            response.chart_index, response.series_index, num_records, response.source_url
+                        event!(
+                            Level::DEBUG,
+                            "load_http_response:(Chart: {}, Series: {}) {} records from {} into \
+                             TimeSeries",
+                            response.chart_index,
+                            response.series_index,
+                            num_records,
+                            response.source_url
                         );
                         ok_records = num_records;
-                    }
+                    },
                     Err(err) => {
-                        event!(Level::DEBUG,
-                            "load_http_response:(Chart: {}, Series: {}) Error Loading {} into TimeSeries: {:?}",
-                            response.chart_index, response.series_index, response.source_url, err
+                        event!(
+                            Level::DEBUG,
+                            "load_http_response:(Chart: {}, Series: {}) Error Loading {} into \
+                             TimeSeries: {:?}",
+                            response.chart_index,
+                            response.series_index,
+                            response.source_url,
+                            err
                         );
-                    }
+                    },
                 }
                 event!(
                     Level::DEBUG,
@@ -167,7 +177,7 @@ pub fn send_metrics_opengl_vecs(
                 chart_index,
                 series_index
             );
-        }
+        },
         Err(err) => event!(
             Level::ERROR,
             "send_metrics_opengl_vecs:(Chart: {}, Series: {}) Error sending: {:?}",
@@ -209,7 +219,7 @@ pub fn send_chart_decorations_opengl_data(
                 "send_decorations_opengl_data: oneshot::message sent for index: {}",
                 chart_index
             );
-        }
+        },
         Err(err) => event!(Level::ERROR, "send_decorations_opengl_data: Error sending: {:?}", err),
     };
 }
@@ -286,10 +296,10 @@ pub async fn async_coordinator<U>(
                     chart_config.sync_latest_epoch(size);
                     event_proxy.send_event(Event::ChartEvent);
                 }
-            }
+            },
             AsyncTask::SendMetricsOpenGLData(chart_index, data_index, channel) => {
                 send_metrics_opengl_vecs(&chart_config.charts, chart_index, data_index, channel);
-            }
+            },
             AsyncTask::SendChartDecorationsOpenGLData(chart_index, data_index, channel) => {
                 send_chart_decorations_opengl_data(
                     &chart_config.charts,
@@ -297,7 +307,7 @@ pub async fn async_coordinator<U>(
                     data_index,
                     channel,
                 );
-            }
+            },
             AsyncTask::ChangeDisplaySize(height, width, padding_y, padding_x, channel) => {
                 change_display_size(
                     &mut chart_config.charts,
@@ -308,16 +318,16 @@ pub async fn async_coordinator<U>(
                     padding_x,
                     channel,
                 );
-            }
+            },
             AsyncTask::IncrementInputCounter(epoch, value) => {
                 increment_internal_counter(&mut chart_config.charts, "input", epoch, value, size);
-            }
+            },
             AsyncTask::IncrementOutputCounter(epoch, value) => {
                 increment_internal_counter(&mut chart_config.charts, "output", epoch, value, size);
-            }
+            },
             AsyncTask::DecorTimeSync(time_instant) => {
                 curr_decor_time = time_instant;
-            }
+            },
             AsyncTask::DecorUpdate(idx, epoch_ms) => {
                 event!(Level::DEBUG, "DecorUpdate:(Idx:{})", idx);
                 let elapsed = curr_decor_time.elapsed();
@@ -328,7 +338,7 @@ pub async fn async_coordinator<U>(
                     // XXX: Maybe send over the decoration max time instead of the 0.2 seconds
                     event_proxy.send_event(Event::DecorEvent);
                 }
-            }
+            },
         };
     }
     event!(Level::ERROR, "async_coordinator: Exiting. This shouldn't happen");
@@ -378,7 +388,7 @@ async fn fetch_prometheus_response(
             // Instead of an error, return this so we can retry later.
             // XXX: Maybe exponential retries in the future.
             Ok(())
-        }
+        },
         Ok(value) => {
             event!(
                 Level::DEBUG,
@@ -400,13 +410,16 @@ async fn fetch_prometheus_response(
                 .await;
             if let Err(err) = tx_res {
                 event!(
-                Level::ERROR,
-                    "fetch_prometheus_response:(Chart: {}, Series: {}) unable to send data back to coordinator; err={:?}",
-                    chart_index, series_index, err
+                    Level::ERROR,
+                    "fetch_prometheus_response:(Chart: {}, Series: {}) unable to send data back \
+                     to coordinator; err={:?}",
+                    chart_index,
+                    series_index,
+                    err
                 )
             }
             Ok(())
-        }
+        },
     }
 }
 
@@ -440,7 +453,15 @@ pub fn spawn_charts_intervals(
                 };
                 let charts_tx = charts_tx.clone();
                 tokio_handle.spawn(async move {
-                    spawn_datasource_interval_polls(&data_request, charts_tx).await.unwrap_or_else(|_| panic!("spawn_charts_intervals:(Chart: {}, Series: {}) Error spawning datasource internal polls", chart_index, series_index));
+                    spawn_datasource_interval_polls(&data_request, charts_tx).await.unwrap_or_else(
+                        |_| {
+                            panic!(
+                                "spawn_charts_intervals:(Chart: {}, Series: {}) Error spawning \
+                                 datasource internal polls",
+                                chart_index, series_index
+                            )
+                        },
+                    );
                 });
             }
             series_index += 1;
@@ -489,7 +510,7 @@ pub async fn spawn_datasource_interval_polls(
                     async_metric_item.series_index,
                     res
                 );
-            }
+            },
             Err(()) => return Err(()),
         }
     }
@@ -532,10 +553,10 @@ pub fn get_metric_opengl_data(
             ),
         }
     });
-    /*.expect(&format!(
-        "get_metric_opengl_data:(Chart: {}, Series: {}) Unable to spawn get_opengl_task",
-        chart_idx, series_idx
-    ));*/
+    // .expect(&format!(
+    // "get_metric_opengl_data:(Chart: {}, Series: {}) Unable to spawn get_opengl_task",
+    // chart_idx, series_idx
+    // ));
     tokio_handle.block_on(async {
         match opengl_rx.await {
             Ok(data) => {
@@ -548,7 +569,7 @@ pub fn get_metric_opengl_data(
                     data
                 );
                 data
-            }
+            },
             Err(err) => {
                 event!(
                     Level::ERROR,
@@ -559,40 +580,38 @@ pub fn get_metric_opengl_data(
                     err
                 );
                 (vec![], 0f32)
-            }
+            },
         }
     })
 }
 
-/// `tokio_default_setup` creates a default channels and handles, this should be used mostly for testing
-/// to avoid having to create all the tokio boilerplate, I would like to return a struct but
+/// `tokio_default_setup` creates a default channels and handles, this should be used only for
+/// testing to avoid having to create all the tokio boilerplate, I would like to return a struct but
 /// the ownership and cloning and moving of the separate parts does not seem possible then
-pub fn tokio_default_setup<U>(
-    event_proxy: U,
-) -> (tokio::runtime::Handle, mpsc::Sender<AsyncTask>, oneshot::Sender<()>)
-where
-    U: EventListener + Send + 'static,
-{
+pub fn tokio_default_setup(
+) -> (tokio::runtime::Handle, mpsc::Sender<AsyncTask>, oneshot::Sender<()>) {
     // Create the channel that is used to communicate with the
     // charts background task.
-    let (charts_tx, charts_rx) = mpsc::channel(4_096usize);
+    let (charts_tx, _charts_rx) = mpsc::channel(4_096usize);
     // Create a channel to receive a handle from Tokio
-    //
     let (handle_tx, handle_rx) = std::sync::mpsc::channel();
-    // Start the Async I/O runtime, this needs to run in a background thread because in OSX,
-    // only the main thread can write to the graphics card.
-    let (_tokio_thread, tokio_shutdown) = spawn_async_tasks(
-        &crate::config::MockConfig::default(),
-        charts_tx.clone(),
-        charts_rx,
-        handle_tx,
-        SizeInfo::default(),
-        event_proxy,
-    );
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let _tokio_thread = ::std::thread::Builder::new()
+        .name("async I/O".to_owned())
+        .spawn(move || {
+            let mut tokio_runtime =
+                tokio::runtime::Runtime::new().expect("Failed to start new tokio Runtime");
+            info!("Tokio runtime created.");
+            handle_tx
+                .send(tokio_runtime.handle().clone())
+                .expect("Unable to give runtime handle to the main thread");
+            tokio_runtime.block_on(async { shutdown_rx.await.unwrap() });
+        })
+        .expect("Unable to start async I/O thread");
     let tokio_handle =
         handle_rx.recv().expect("Unable to get the tokio handle in a background thread");
 
-    (tokio_handle, charts_tx, tokio_shutdown)
+    (tokio_handle, charts_tx, shutdown_tx)
 }
 
 /// `spawn_async_tasks` Starts a background thread to be used for tokio for async tasks
@@ -609,7 +628,7 @@ where
 {
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let chart_config = config.charts.clone();
-    let decor_config = config.decorations.clone();
+    // let decor_config = config.decorations.clone();
     let tokio_thread = ::std::thread::Builder::new()
         .name("async I/O".to_owned())
         .spawn(move || {

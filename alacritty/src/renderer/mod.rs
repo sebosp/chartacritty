@@ -1,58 +1,40 @@
 use std::collections::HashMap;
 use std::fmt::{self, Display, Formatter};
-use std::fs;
 use std::hash::BuildHasherDefault;
 use std::io;
 use std::mem::size_of;
-use std::path::PathBuf;
 use std::ptr;
-use std::sync::mpsc;
-use std::time::Duration;
 
+use bitflags::bitflags;
 use crossfont::{
-    BitmapBuffer, FontDesc, FontKey, GlyphKey, Rasterize, RasterizedGlyph, Rasterizer, Size, Slant,
-    Style, Weight,
+    BitmapBuffer, Error as RasterizerError, FontDesc, FontKey, GlyphKey, Rasterize,
+    RasterizedGlyph, Rasterizer, Size, Slant, Style, Weight,
 };
 use fnv::FnvHasher;
 use log::{error, info};
-use notify::{watcher, DebouncedEvent, RecursiveMode, Watcher};
+use unicode_width::UnicodeWidthChar;
 
-use alacritty_terminal::config::Cursor;
-use alacritty_terminal::index::{Column, Line};
-use alacritty_terminal::term::cell::{self, Flags};
+use alacritty_terminal::index::Point;
+use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::color::Rgb;
-use alacritty_terminal::term::{CursorKey, RenderableCell, RenderableCellContent, SizeInfo};
-use alacritty_terminal::thread;
+use alacritty_terminal::term::SizeInfo;
 
 use crate::config::font::{Font, FontDescription};
-use crate::config::ui_config::{Delta, UIConfig};
-use crate::config::window::{StartupMode, WindowConfig};
-use crate::cursor;
+use crate::config::ui_config::{Delta, UiConfig};
+use crate::display::content::RenderableCell;
 use crate::gl;
 use crate::gl::types::*;
-use crate::renderer::rects::RenderRect;
+use crate::renderer::charts::ChartRenderer;
+use crate::renderer::hex_bg::HexBgRenderer;
+use crate::renderer::rects::{RectRenderer, RenderRect};
 
+pub mod charts;
+pub mod hex_bg;
 pub mod rects;
 
-// Shader paths for live reload.
-static TEXT_SHADER_F_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/res/text.f.glsl");
-static TEXT_SHADER_V_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/res/text.v.glsl");
-static RECT_SHADER_F_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/res/rect.f.glsl");
-static RECT_SHADER_V_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/res/rect.v.glsl");
-static CHRT_SHADER_F_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/res/rect.f.glsl");
-static CHRT_SHADER_V_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/res/rect.v.glsl");
-static HXBG_SHADER_F_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/res/hex_bg.f.glsl");
-static HXBG_SHADER_V_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/res/hex_bg.v.glsl");
-
-// Shader source which is used when live-shader-reload feature is disable.
+// Shader source.
 static TEXT_SHADER_F: &str = include_str!("../../res/text.f.glsl");
 static TEXT_SHADER_V: &str = include_str!("../../res/text.v.glsl");
-static RECT_SHADER_F: &str = include_str!("../../res/rect.f.glsl");
-static RECT_SHADER_V: &str = include_str!("../../res/rect.v.glsl");
-static CHRT_SHADER_F: &str = include_str!("../../res/rect.f.glsl");
-static CHRT_SHADER_V: &str = include_str!("../../res/rect.v.glsl");
-static HXBG_SHADER_F: &str = include_str!("../../res/hex_bg.f.glsl");
-static HXBG_SHADER_V: &str = include_str!("../../res/hex_bg.v.glsl");
 
 /// `LoadGlyph` allows for copying a rasterized glyph into graphics memory.
 pub trait LoadGlyph {
@@ -63,10 +45,6 @@ pub trait LoadGlyph {
     ///
     /// This can, for instance, be used to reset the texture Atlas.
     fn clear(&mut self);
-}
-
-enum Msg {
-    ShaderReload,
 }
 
 #[derive(Debug)]
@@ -87,7 +65,7 @@ impl Display for Error {
         match self {
             Error::ShaderCreation(err) => {
                 write!(f, "There was an error initializing the shaders: {}", err)
-            }
+            },
         }
     }
 }
@@ -118,43 +96,10 @@ pub struct TextShaderProgram {
     u_background: GLint,
 }
 
-/// Rectangle drawing program.
-///
-/// Uniforms are prefixed with "u".
-#[derive(Debug)]
-pub struct RectShaderProgram {
-    /// Program id.
-    id: GLuint,
-    /// Rectangle color.
-    u_color: GLint,
-}
-
-/// Charts Shader Program
-///
-/// Uniforms are prefixed with "u"
-#[derive(Debug)]
-pub struct ChartsShaderProgram {
-    // Program id,
-    id: GLuint,
-    /// Line color
-    u_color: GLint,
-}
-
-/// Hexagon Background Shader Program
-///
-/// Uniforms are prefixed with "u"
-#[derive(Debug)]
-pub struct HexagonShaderProgram {
-    // Program id,
-    id: GLuint,
-    /// The time uniform to be used to change opacity of different regions
-    u_epoch_millis: GLint,
-}
-
-#[derive(Copy, Debug, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct Glyph {
     tex_id: GLuint,
-    multicolor: u8,
+    multicolor: bool,
     top: i16,
     left: i16,
     width: i16,
@@ -172,9 +117,6 @@ pub struct Glyph {
 pub struct GlyphCache {
     /// Cache of buffered glyphs.
     cache: HashMap<GlyphKey, Glyph, BuildHasherDefault<FnvHasher>>,
-
-    /// Cache of buffered cursor glyphs.
-    cursor_cache: HashMap<CursorKey, Glyph, BuildHasherDefault<FnvHasher>>,
 
     /// Rasterizer for loading new glyphs.
     rasterizer: Rasterizer,
@@ -215,15 +157,14 @@ impl GlyphCache {
         // Need to load at least one glyph for the face before calling metrics.
         // The glyph requested here ('m' at the time of writing) has no special
         // meaning.
-        rasterizer.get_glyph(GlyphKey { font_key: regular, c: 'm', size: font.size })?;
+        rasterizer.get_glyph(GlyphKey { font_key: regular, character: 'm', size: font.size() })?;
 
-        let metrics = rasterizer.metrics(regular, font.size)?;
+        let metrics = rasterizer.metrics(regular, font.size())?;
 
         let mut cache = Self {
             cache: HashMap::default(),
-            cursor_cache: HashMap::default(),
             rasterizer,
-            font_size: font.size,
+            font_size: font.size(),
             font_key: regular,
             bold_key: bold,
             italic_key: italic,
@@ -239,8 +180,10 @@ impl GlyphCache {
 
     fn load_glyphs_for_font<L: LoadGlyph>(&mut self, font: FontKey, loader: &mut L) {
         let size = self.font_size;
+
+        // Cache all ascii characters.
         for i in 32u8..=126u8 {
-            self.get(GlyphKey { font_key: font, c: i as char, size }, loader);
+            self.get(GlyphKey { font_key: font, character: i as char, size }, loader, true);
         }
     }
 
@@ -249,7 +192,7 @@ impl GlyphCache {
         font: &Font,
         rasterizer: &mut Rasterizer,
     ) -> Result<(FontKey, FontKey, FontKey, FontKey), crossfont::Error> {
-        let size = font.size;
+        let size = font.size();
 
         // Load regular font.
         let regular_desc = Self::make_desc(&font.normal(), Slant::Normal, Weight::Normal);
@@ -261,7 +204,7 @@ impl GlyphCache {
             if desc == regular_desc {
                 regular
             } else {
-                rasterizer.load_font(&desc, size).unwrap_or_else(|_| regular)
+                rasterizer.load_font(&desc, size).unwrap_or(regular)
             }
         };
 
@@ -296,7 +239,7 @@ impl GlyphCache {
                 let fallback_desc =
                     Self::make_desc(&Font::default().normal(), Slant::Normal, Weight::Normal);
                 rasterizer.load_font(&fallback_desc, size)
-            }
+            },
         }
     }
 
@@ -309,30 +252,77 @@ impl GlyphCache {
         FontDesc::new(desc.family.clone(), style)
     }
 
-    pub fn get<L>(&mut self, glyph_key: GlyphKey, loader: &mut L) -> &Glyph
+    /// Get a glyph from the font.
+    ///
+    /// If the glyph has never been loaded before, it will be rasterized and inserted into the
+    /// cache.
+    ///
+    /// # Errors
+    ///
+    /// This will fail when the glyph could not be rasterized. Usually this is due to the glyph
+    /// not being present in any font.
+    fn get<L>(&mut self, glyph_key: GlyphKey, loader: &mut L, show_missing: bool) -> Glyph
     where
         L: LoadGlyph,
     {
-        let glyph_offset = self.glyph_offset;
-        let rasterizer = &mut self.rasterizer;
-        let metrics = &self.metrics;
-        self.cache.entry(glyph_key).or_insert_with(|| {
-            let mut rasterized =
-                rasterizer.get_glyph(glyph_key).unwrap_or_else(|_| Default::default());
+        // Try to load glyph from cache.
+        if let Some(glyph) = self.cache.get(&glyph_key) {
+            return *glyph;
+        };
 
-            rasterized.left += i32::from(glyph_offset.x);
-            rasterized.top += i32::from(glyph_offset.y);
-            rasterized.top -= metrics.descent as i32;
+        // Rasterize glyph.
+        let glyph = match self.rasterizer.get_glyph(glyph_key) {
+            Ok(rasterized) => self.load_glyph(loader, rasterized),
+            // Load fallback glyph.
+            Err(RasterizerError::MissingGlyph(rasterized)) if show_missing => {
+                // Use `\0` as "missing" glyph to cache it only once.
+                let missing_key = GlyphKey { character: '\0', ..glyph_key };
+                if let Some(glyph) = self.cache.get(&missing_key) {
+                    *glyph
+                } else {
+                    // If no missing glyph was loaded yet, insert it as `\0`.
+                    let glyph = self.load_glyph(loader, rasterized);
+                    self.cache.insert(missing_key, glyph);
 
-            loader.load_glyph(&rasterized)
-        })
+                    glyph
+                }
+            },
+            Err(_) => self.load_glyph(loader, Default::default()),
+        };
+
+        // Cache rasterized glyph.
+        *self.cache.entry(glyph_key).or_insert(glyph)
+    }
+
+    /// Load glyph into the atlas.
+    ///
+    /// This will apply all transforms defined for the glyph cache to the rasterized glyph before
+    /// insertion.
+    fn load_glyph<L>(&self, loader: &mut L, mut glyph: RasterizedGlyph) -> Glyph
+    where
+        L: LoadGlyph,
+    {
+        glyph.left += i32::from(self.glyph_offset.x);
+        glyph.top += i32::from(self.glyph_offset.y);
+        glyph.top -= self.metrics.descent as i32;
+
+        // The metrics of zero-width characters are based on rendering
+        // the character after the current cell, with the anchor at the
+        // right side of the preceding character. Since we render the
+        // zero-width characters inside the preceding character, the
+        // anchor has been moved to the right by one cell.
+        if glyph.character.width() == Some(0) {
+            glyph.left += self.metrics.average_advance as i32;
+        }
+
+        // Add glyph to cache.
+        loader.load_glyph(&glyph)
     }
 
     /// Clear currently cached data in both GL and the registry.
     pub fn clear_glyph_cache<L: LoadGlyph>(&mut self, loader: &mut L) {
         loader.clear();
         self.cache = HashMap::default();
-        self.cursor_cache = HashMap::default();
 
         self.load_common_glyphs(loader);
     }
@@ -350,12 +340,16 @@ impl GlyphCache {
         let (regular, bold, italic, bold_italic) =
             Self::compute_font_keys(font, &mut self.rasterizer)?;
 
-        self.rasterizer.get_glyph(GlyphKey { font_key: regular, c: 'm', size: font.size })?;
-        let metrics = self.rasterizer.metrics(regular, font.size)?;
+        self.rasterizer.get_glyph(GlyphKey {
+            font_key: regular,
+            character: 'm',
+            size: font.size(),
+        })?;
+        let metrics = self.rasterizer.metrics(regular, font.size())?;
 
-        info!("Font size changed to {:?} with DPR of {}", font.size, dpr);
+        info!("Font size changed to {:?} with DPR of {}", font.size(), dpr);
 
-        self.font_size = font.size;
+        self.font_size = font.size();
         self.font_key = regular;
         self.bold_key = bold;
         self.italic_key = italic;
@@ -381,40 +375,21 @@ impl GlyphCache {
 
     /// Calculate font metrics without access to a glyph cache.
     pub fn static_metrics(font: Font, dpr: f64) -> Result<crossfont::Metrics, crossfont::Error> {
-        let mut rasterizer = crossfont::Rasterizer::new(dpr as f32, font.use_thin_strokes())?;
+        let mut rasterizer = crossfont::Rasterizer::new(dpr as f32, font.use_thin_strokes)?;
         let regular_desc = GlyphCache::make_desc(&font.normal(), Slant::Normal, Weight::Normal);
-        let regular = Self::load_regular_font(&mut rasterizer, &regular_desc, font.size)?;
-        rasterizer.get_glyph(GlyphKey { font_key: regular, c: 'm', size: font.size })?;
+        let regular = Self::load_regular_font(&mut rasterizer, &regular_desc, font.size())?;
+        rasterizer.get_glyph(GlyphKey { font_key: regular, character: 'm', size: font.size() })?;
 
-        rasterizer.metrics(regular, font.size)
+        rasterizer.metrics(regular, font.size())
     }
+}
 
-    pub fn calculate_dimensions(
-        window_config: &WindowConfig,
-        dpr: f64,
-        cell_width: f32,
-        cell_height: f32,
-    ) -> Option<(u32, u32)> {
-        let dimensions = window_config.dimensions;
-
-        if dimensions.columns_u32() == 0
-            || dimensions.lines_u32() == 0
-            || window_config.startup_mode != StartupMode::Windowed
-        {
-            return None;
-        }
-
-        let padding_x = f64::from(window_config.padding.x) * dpr;
-        let padding_y = f64::from(window_config.padding.y) * dpr;
-
-        // Calculate new size based on cols/lines specified in config.
-        let grid_width = cell_width as u32 * dimensions.columns_u32();
-        let grid_height = cell_height as u32 * dimensions.lines_u32();
-
-        let width = padding_x.mul_add(2., f64::from(grid_width)).floor();
-        let height = padding_y.mul_add(2., f64::from(grid_height)).floor();
-
-        Some((width as u32, height as u32))
+// NOTE: These flags must be in sync with their usage in the text.*.glsl shaders.
+bitflags! {
+    #[repr(C)]
+    struct RenderingGlyphFlags: u8 {
+        const WIDE_CHAR = 0b0000_0001;
+        const COLORED   = 0b0000_0010;
     }
 }
 
@@ -424,24 +399,31 @@ struct InstanceData {
     // Coords.
     col: u16,
     row: u16,
+
     // Glyph offset.
     left: i16,
     top: i16,
+
     // Glyph size.
     width: i16,
     height: i16,
+
     // UV offset.
     uv_left: f32,
     uv_bot: f32,
+
     // uv scale.
     uv_width: f32,
     uv_height: f32,
+
     // Color.
     r: u8,
     g: u8,
     b: u8,
-    // Flag indicating that a glyph uses multiple colors; like an Emoji.
-    multicolor: u8,
+
+    // Cell flags like multicolor or fullwidth character.
+    cell_flags: RenderingGlyphFlags,
+
     // Background color.
     bg_r: u8,
     bg_g: u8,
@@ -452,19 +434,16 @@ struct InstanceData {
 #[derive(Debug)]
 pub struct QuadRenderer {
     program: TextShaderProgram,
-    rect_program: RectShaderProgram,
-    charts_program: ChartsShaderProgram,
-    hex_bg_program: HexagonShaderProgram,
     vao: GLuint,
     ebo: GLuint,
     vbo_instance: GLuint,
-    rect_vao: GLuint,
-    rect_vbo: GLuint,
     atlas: Vec<Atlas>,
     current_atlas: usize,
     active_tex: GLuint,
     batch: Batch,
-    rx: mpsc::Receiver<Msg>,
+    rect_renderer: RectRenderer,
+    chart_renderer: ChartRenderer,
+    hex_bg_renderer: HexBgRenderer,
 }
 
 #[derive(Debug)]
@@ -474,8 +453,7 @@ pub struct RenderApi<'a> {
     atlas: &'a mut Vec<Atlas>,
     current_atlas: &'a mut usize,
     program: &'a mut TextShaderProgram,
-    config: &'a UIConfig,
-    cursor_config: Cursor,
+    config: &'a UiConfig,
 }
 
 #[derive(Debug)]
@@ -511,14 +489,18 @@ impl Batch {
         Self { tex: 0, instances: Vec::with_capacity(BATCH_MAX) }
     }
 
-    pub fn add_item(&mut self, cell: RenderableCell, glyph: &Glyph) {
+    pub fn add_item(&mut self, cell: &RenderableCell, glyph: &Glyph) {
         if self.is_empty() {
             self.tex = glyph.tex_id;
         }
 
+        let mut cell_flags = RenderingGlyphFlags::empty();
+        cell_flags.set(RenderingGlyphFlags::COLORED, glyph.multicolor);
+        cell_flags.set(RenderingGlyphFlags::WIDE_CHAR, cell.flags.contains(Flags::WIDE_CHAR));
+
         self.instances.push(InstanceData {
-            col: cell.column.0 as u16,
-            row: cell.line.0 as u16,
+            col: cell.point.column.0 as u16,
+            row: cell.point.line as u16,
 
             top: glyph.top,
             left: glyph.left,
@@ -533,12 +515,12 @@ impl Batch {
             r: cell.fg.r,
             g: cell.fg.g,
             b: cell.fg.b,
+            cell_flags,
 
             bg_r: cell.bg.r,
             bg_g: cell.bg.g,
             bg_b: cell.bg.b,
             bg_a: (cell.bg_alpha * 255.0) as u8,
-            multicolor: glyph.multicolor,
         });
     }
 
@@ -580,19 +562,11 @@ const ATLAS_SIZE: i32 = 1024;
 impl QuadRenderer {
     pub fn new() -> Result<QuadRenderer, Error> {
         let program = TextShaderProgram::new()?;
-        let rect_program = RectShaderProgram::new()?;
-        let charts_program = ChartsShaderProgram::new()?;
-        let hex_bg_program = HexagonShaderProgram::new()?;
 
         let mut vao: GLuint = 0;
         let mut ebo: GLuint = 0;
 
         let mut vbo_instance: GLuint = 0;
-
-        let mut rect_vao: GLuint = 0;
-        let mut rect_vbo: GLuint = 0;
-        let mut rect_ebo: GLuint = 0;
-        //let mut hex_ebo: GLuint = 0;
 
         unsafe {
             gl::Enable(gl::BLEND);
@@ -664,29 +638,16 @@ impl QuadRenderer {
             // UV offset.
             add_attr!(4, gl::FLOAT, f32);
 
-            // Color and multicolor flag.
+            // Color and cell flags.
             //
             // These are packed together because of an OpenGL driver issue on macOS, which caused a
-            // `vec3(u8)` text color and a `u8` multicolor flag to increase the rendering time by a
+            // `vec3(u8)` text color and a `u8` cell flags to increase the rendering time by a
             // huge margin.
             add_attr!(4, gl::UNSIGNED_BYTE, u8);
 
             // Background color.
             add_attr!(4, gl::UNSIGNED_BYTE, u8);
 
-            // Rectangle setup.
-            gl::GenVertexArrays(1, &mut rect_vao);
-            gl::GenBuffers(1, &mut rect_vbo);
-            gl::GenBuffers(1, &mut rect_ebo);
-            gl::BindVertexArray(rect_vao);
-            let indices: [i32; 6] = [0, 1, 3, 1, 2, 3];
-            gl::BindBuffer(gl::ELEMENT_ARRAY_BUFFER, rect_ebo);
-            gl::BufferData(
-                gl::ELEMENT_ARRAY_BUFFER,
-                (size_of::<i32>() * indices.len()) as _,
-                indices.as_ptr() as *const _,
-                gl::STATIC_DRAW,
-            );
             /* TODO: figure out how to use indices for DrawElements
             // ---------------------
             // Filled Hexagon Setup
@@ -725,52 +686,18 @@ impl QuadRenderer {
             gl::BindBuffer(gl::ELEMENT_ARRAY_BUFFER, 0);
         }
 
-        let (msg_tx, msg_rx) = mpsc::channel();
-
-        if cfg!(feature = "live-shader-reload") {
-            thread::spawn_named("live shader reload", move || {
-                let (tx, rx) = std::sync::mpsc::channel();
-                // The Duration argument is a debouncing period.
-                let mut watcher =
-                    watcher(tx, Duration::from_millis(10)).expect("create file watcher");
-                watcher
-                    .watch(TEXT_SHADER_F_PATH, RecursiveMode::NonRecursive)
-                    .expect("watch fragment shader");
-                watcher
-                    .watch(TEXT_SHADER_V_PATH, RecursiveMode::NonRecursive)
-                    .expect("watch vertex shader");
-
-                loop {
-                    let event = rx.recv().expect("watcher event");
-
-                    match event {
-                        DebouncedEvent::Rename(..) => continue,
-                        DebouncedEvent::Create(_)
-                        | DebouncedEvent::Write(_)
-                        | DebouncedEvent::Chmod(_) => {
-                            msg_tx.send(Msg::ShaderReload).expect("msg send ok");
-                        }
-                        _ => {}
-                    }
-                }
-            });
-        }
-
         let mut renderer = Self {
             program,
-            rect_program,
-            charts_program,
-            hex_bg_program,
+            rect_renderer: RectRenderer::new()?,
             vao,
             ebo,
             vbo_instance,
-            rect_vao,
-            rect_vbo,
             atlas: Vec::new(),
             current_atlas: 0,
             active_tex: 0,
             batch: Batch::new(),
-            rx: msg_rx,
+            chart_renderer: ChartRenderer::new()?,
+            hex_bg_renderer: HexBgRenderer::new()?,
         };
 
         let atlas = Atlas::new(ATLAS_SIZE);
@@ -779,150 +706,66 @@ impl QuadRenderer {
         Ok(renderer)
     }
 
-    /// Draw all rectangles simultaneously to prevent excessive program swaps.
-    pub fn draw_rects(&mut self, props: &SizeInfo, rects: Vec<RenderRect>) {
-        // Swap to rectangle rendering program.
+    pub fn prepare_rect_rendering_state(size_info: &SizeInfo) {
+        // Prepare rect rendering state.
         unsafe {
-            // Swap program.
-            gl::UseProgram(self.rect_program.id);
-
             // Remove padding from viewport.
-            gl::Viewport(0, 0, props.width as i32, props.height as i32);
-
-            // Change blending strategy.
+            gl::Viewport(0, 0, size_info.width() as i32, size_info.height() as i32);
             gl::BlendFuncSeparate(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA, gl::SRC_ALPHA, gl::ONE);
-
-            // Setup data and buffers.
-            gl::BindVertexArray(self.rect_vao);
-            gl::BindBuffer(gl::ARRAY_BUFFER, self.rect_vbo);
-
-            // Position.
-            gl::VertexAttribPointer(
-                0,
-                2,
-                gl::FLOAT,
-                gl::FALSE,
-                (size_of::<f32>() * 2) as _,
-                ptr::null(),
-            );
-            gl::EnableVertexAttribArray(0);
         }
+    }
 
-        // Draw all the rects.
-        for rect in rects {
-            self.render_rect(&rect, props);
-        }
-
-        // Deactivate rectangle program again.
+    pub fn activate_regular_state(size_info: &SizeInfo) {
+        // Activate regular state again.
         unsafe {
             // Reset blending strategy.
             gl::BlendFunc(gl::SRC1_COLOR, gl::ONE_MINUS_SRC1_COLOR);
 
-            // Reset data and buffers.
-            gl::BindBuffer(gl::ARRAY_BUFFER, 0);
-            gl::BindVertexArray(0);
-
-            let padding_x = props.padding_x as i32;
-            let padding_y = props.padding_y as i32;
-            let width = props.width as i32;
-            let height = props.height as i32;
+            // Restore viewport with padding.
+            let padding_x = size_info.padding_x() as i32;
+            let padding_y = size_info.padding_y() as i32;
+            let width = size_info.width() as i32;
+            let height = size_info.height() as i32;
             gl::Viewport(padding_x, padding_y, width - 2 * padding_x, height - 2 * padding_y);
-
-            // Disable program.
-            gl::UseProgram(0);
         }
     }
 
+    /// Draw all rectangles simultaneously to prevent excessive program swaps.
+    pub fn draw_rects(&mut self, size_info: &SizeInfo, rects: Vec<RenderRect>) {
+        if rects.is_empty() {
+            return;
+        }
+
+        Self::prepare_rect_rendering_state(size_info);
+
+        self.rect_renderer.draw(size_info, rects);
+
+        Self::activate_regular_state(size_info);
+    }
+
     /// `draw_hex_bg` draws an array of triangles with properties (x,y,r,g,b,a)
-    pub fn draw_hex_bg(&mut self, props: &SizeInfo, opengl_data: &[f32]) {
+    pub fn draw_hex_bg(&mut self, size_info: &SizeInfo, opengl_data: &[f32]) {
         // This function expects a vector that contains 6 data points per vertex:
         // 2 are x,y position and the other 4 are the r,g,b,a
-        /*let opengl_data = vec![
-            0.5f32, 0.5f32, // x, y
-            1.0f32, 0.0f32, 0.0f32, 1.0f32, // RGBA
-            0.8f32, 0.8f32, // x, y
-            0.0f32, 1.0f32, 0.0f32, 1.0f32, // RGBA
-            0.7f32, 0.3f32, // x, y
-            0.0f32, 0.0f32, 1.0f32, 1.0f32, // RGBA
-        ];*/
-        unsafe {
-            // Swap program
-            gl::UseProgram(self.hex_bg_program.id);
+        // let opengl_data = vec![
+        // 0.5f32, 0.5f32, // x, y
+        // 1.0f32, 0.0f32, 0.0f32, 1.0f32, // RGBA
+        // 0.8f32, 0.8f32, // x, y
+        // 0.0f32, 1.0f32, 0.0f32, 1.0f32, // RGBA
+        // 0.7f32, 0.3f32, // x, y
+        // 0.0f32, 0.0f32, 1.0f32, 1.0f32, // RGBA
+        // ];
+        Self::prepare_rect_rendering_state(size_info);
 
-            // Remove padding from viewport
-            gl::Viewport(0, 0, props.width as i32, props.height as i32);
+        self.hex_bg_renderer.draw(opengl_data);
 
-            // Change blending strategy
-            gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
-
-            // Setup data and buffers
-            gl::BindVertexArray(self.rect_vao);
-            gl::BindBuffer(gl::ARRAY_BUFFER, self.rect_vbo);
-
-            // Position
-            gl::EnableVertexAttribArray(0);
-            gl::VertexAttribPointer(
-                0, // location=0 is the vertex position
-                2, // position has 2 values: X, Y
-                gl::FLOAT,
-                gl::FALSE,
-                // [2(x,y) + 4(r,g,b,a) ] -> 6
-                (size_of::<f32>() * 6) as _,
-                ptr::null(),
-            );
-
-            // Colors
-            gl::EnableVertexAttribArray(1);
-            gl::VertexAttribPointer(
-                1, // location=1 is the color
-                4, // Color has 4 items, R, G, B, A
-                gl::FLOAT,
-                gl::FALSE,
-                // [2(x,y) + 4(r,g,b,a) ] -> 6
-                (size_of::<f32>() * 6) as _,
-                // The colors are offset by 2 (x,y) points
-                (size_of::<f32>() * 2) as _,
-            );
-
-            // Load vertex data into array buffer
-            gl::BufferData(
-                gl::ARRAY_BUFFER,
-                (size_of::<f32>() * opengl_data.len()) as _,
-                opengl_data.as_ptr() as *const _,
-                gl::STATIC_DRAW,
-            );
-        }
-
-        self.hex_bg_program.set_epoch_millis(0.0f32);
-
-        unsafe {
-            // Deactivate rectangle program again
-            // Draw the incoming array, opengl_data contains:
-            // [2(x,y) + 4(r,g,b,a) ] -> 6
-            gl::DrawArrays(gl::TRIANGLES, 0, (opengl_data.len() / 6usize) as i32);
-
-            // Reset blending strategy
-            gl::BlendFunc(gl::SRC1_COLOR, gl::ONE_MINUS_SRC1_COLOR);
-
-            // Reset data and buffers
-            gl::BindBuffer(gl::ARRAY_BUFFER, 0);
-            gl::BindVertexArray(0);
-
-            let padding_x = props.padding_x as i32;
-            let padding_y = props.padding_y as i32;
-            let width = props.width as i32;
-            let height = props.height as i32;
-            gl::Viewport(padding_x, padding_y, width - 2 * padding_x, height - 2 * padding_y);
-
-            // Disable program
-            gl::UseProgram(0);
-        }
+        Self::activate_regular_state(size_info);
     }
 
     /// `draw_array` draws a vec made of 2D values in a specific mode
     pub fn draw_array(
         &mut self,
-        props: &SizeInfo,
+        size_info: &SizeInfo,
         opengl_vecs: &[f32],
         color: Rgb,
         alpha: f32,
@@ -936,8 +779,17 @@ impl QuadRenderer {
                 if opengl_vecs.len() < 4 {
                     return;
                 }
-            }
+            },
         };
+        let mut opengl_data_with_color: Vec<f32> = Vec::with_capacity((opengl_vecs.len() / 2) * 6);
+        for position in opengl_vecs.chunks(2) {
+            opengl_data_with_color.push(position[0]);
+            opengl_data_with_color.push(position[1]);
+            opengl_data_with_color.push(f32::from(color.r) / 255.);
+            opengl_data_with_color.push(f32::from(color.g) / 255.);
+            opengl_data_with_color.push(f32::from(color.b) / 255.);
+            opengl_data_with_color.push(alpha);
+        }
         // Translate our enum to opengl enum, maybe this can be ommitted?
         // Maybe we can extend the enum with custom classes that end up being like this.
         // So then it should become a trait
@@ -953,83 +805,18 @@ impl QuadRenderer {
              * DrawArrayMode::GlQuads => gl::QUADS,
              * DrawArrayMode::GlPolygon => gl::POLYGON_MODE, */
         };
-        // TODO: Use the Charts Shader Program (For now a copy of rect)
-        unsafe {
-            // Swap program
-            gl::UseProgram(self.charts_program.id);
 
-            // Remove padding from viewport
-            gl::Viewport(0, 0, props.width as i32, props.height as i32);
+        Self::prepare_rect_rendering_state(size_info);
 
-            // Change blending strategy
-            gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+        self.chart_renderer.draw(&opengl_data_with_color, gl_mode);
 
-            // Setup data and buffers
-            gl::BindVertexArray(self.rect_vao);
-            gl::BindBuffer(gl::ARRAY_BUFFER, self.rect_vbo);
-
-            // Position
-            gl::VertexAttribPointer(
-                0,
-                2,
-                gl::FLOAT,
-                gl::FALSE,
-                (size_of::<f32>() * 2) as _,
-                ptr::null(),
-            );
-            gl::EnableVertexAttribArray(0);
-
-            // Load vertex data into array buffer
-            gl::BufferData(
-                gl::ARRAY_BUFFER,
-                (size_of::<f32>() * opengl_vecs.len()) as _,
-                opengl_vecs.as_ptr() as *const _,
-                gl::STATIC_DRAW,
-            );
-        }
-
-        // Color
-        self.charts_program.set_color(color, alpha);
-
-        // Deactivate rectangle program again
-        unsafe {
-            // Draw the incoming array, opengl_vecs contains 2 points per vertex:
-            gl::DrawArrays(gl_mode, 0, (opengl_vecs.len() / 2usize) as i32);
-
-            // Reset blending strategy
-            gl::BlendFunc(gl::SRC1_COLOR, gl::ONE_MINUS_SRC1_COLOR);
-
-            // Reset data and buffers
-            gl::BindBuffer(gl::ARRAY_BUFFER, 0);
-            gl::BindVertexArray(0);
-
-            let padding_x = props.padding_x as i32;
-            let padding_y = props.padding_y as i32;
-            let width = props.width as i32;
-            let height = props.height as i32;
-            gl::Viewport(padding_x, padding_y, width - 2 * padding_x, height - 2 * padding_y);
-
-            // Disable program
-            gl::UseProgram(0);
-        }
+        Self::activate_regular_state(size_info);
     }
 
-    pub fn with_api<F, T>(
-        &mut self,
-        config: &UIConfig,
-        cursor_config: Cursor,
-        props: &SizeInfo,
-        func: F,
-    ) -> T
+    pub fn with_api<F, T>(&mut self, config: &UiConfig, props: &SizeInfo, func: F) -> T
     where
         F: FnOnce(RenderApi<'_>) -> T,
     {
-        // Flush message queue.
-        if let Ok(Msg::ShaderReload) = self.rx.try_recv() {
-            self.reload_shaders(props);
-        }
-        while self.rx.try_recv().is_ok() {}
-
         unsafe {
             gl::UseProgram(self.program.id);
             self.program.set_term_uniforms(props);
@@ -1047,7 +834,6 @@ impl QuadRenderer {
             current_atlas: &mut self.current_atlas,
             program: &mut self.program,
             config,
-            cursor_config,
         });
 
         unsafe {
@@ -1076,87 +862,35 @@ impl QuadRenderer {
         })
     }
 
-    pub fn reload_shaders(&mut self, props: &SizeInfo) {
-        info!("Reloading shaders...");
-        let result = (TextShaderProgram::new(), RectShaderProgram::new());
-        let (program, rect_program) = match result {
-            (Ok(program), Ok(rect_program)) => {
-                unsafe {
-                    gl::UseProgram(program.id);
-                    program.update_projection(
-                        props.width,
-                        props.height,
-                        props.padding_x,
-                        props.padding_y,
-                    );
-                    gl::UseProgram(0);
-                }
-
-                info!("... successfully reloaded shaders");
-                (program, rect_program)
-            }
-            (Err(err), _) | (_, Err(err)) => {
-                error!("{}", err);
-                return;
-            }
-        };
-
-        self.active_tex = 0;
-        self.program = program;
-        self.rect_program = rect_program;
-    }
-
     pub fn resize(&mut self, size: &SizeInfo) {
         // Viewport.
         unsafe {
             gl::Viewport(
-                size.padding_x as i32,
-                size.padding_y as i32,
-                size.width as i32 - 2 * size.padding_x as i32,
-                size.height as i32 - 2 * size.padding_y as i32,
+                size.padding_x() as i32,
+                size.padding_y() as i32,
+                size.width() as i32 - 2 * size.padding_x() as i32,
+                size.height() as i32 - 2 * size.padding_y() as i32,
             );
 
             // Update projection.
             gl::UseProgram(self.program.id);
-            self.program.update_projection(size.width, size.height, size.padding_x, size.padding_y);
+            self.program.update_projection(
+                size.width(),
+                size.height(),
+                size.padding_x(),
+                size.padding_y(),
+            );
             gl::UseProgram(0);
         }
     }
+}
 
-    /// Render a rectangle.
-    ///
-    /// This requires the rectangle program to be activated.
-    fn render_rect(&mut self, rect: &RenderRect, size: &SizeInfo) {
-        // Do nothing when alpha is fully transparent.
-        if rect.alpha == 0. {
-            return;
-        }
-
-        // Calculate rectangle position.
-        let center_x = size.width / 2.;
-        let center_y = size.height / 2.;
-        let x = (rect.x - center_x) / center_x;
-        let y = -(rect.y - center_y) / center_y;
-        let width = rect.width / center_x;
-        let height = rect.height / center_y;
-
+impl Drop for QuadRenderer {
+    fn drop(&mut self) {
         unsafe {
-            // Setup vertices.
-            let vertices: [f32; 8] = [x + width, y, x + width, y - height, x, y - height, x, y];
-
-            // Load vertex data into array buffer.
-            gl::BufferData(
-                gl::ARRAY_BUFFER,
-                (size_of::<f32>() * vertices.len()) as _,
-                vertices.as_ptr() as *const _,
-                gl::STATIC_DRAW,
-            );
-
-            // Color.
-            self.rect_program.set_color(rect.color, rect.alpha);
-
-            // Draw the rectangle.
-            gl::DrawElements(gl::TRIANGLES, 6, gl::UNSIGNED_INT, ptr::null());
+            gl::DeleteBuffers(1, &self.vbo_instance);
+            gl::DeleteBuffers(1, &self.ebo);
+            gl::DeleteVertexArrays(1, &self.vao);
         }
     }
 }
@@ -1227,28 +961,22 @@ impl<'a> RenderApi<'a> {
     pub fn render_string(
         &mut self,
         glyph_cache: &mut GlyphCache,
-        line: Line,
-        string: &str,
+        point: Point<usize>,
         fg: Rgb,
-        bg: Option<Rgb>,
+        bg: Rgb,
+        string: &str,
     ) {
-        let bg_alpha = bg.map(|_| 1.0).unwrap_or(0.0);
-
         let cells = string
             .chars()
             .enumerate()
-            .map(|(i, c)| RenderableCell {
-                line,
-                column: Column(i),
-                inner: RenderableCellContent::Chars({
-                    let mut chars = [' '; cell::MAX_ZEROWIDTH_CHARS + 1];
-                    chars[0] = c;
-                    chars
-                }),
+            .map(|(i, character)| RenderableCell {
+                point: Point::new(point.line, point.column + i),
+                character,
+                zerowidth: None,
                 flags: Flags::empty(),
-                bg_alpha,
+                bg_alpha: 1.0,
                 fg,
-                bg: bg.unwrap_or(Rgb { r: 0, g: 0, b: 0 }),
+                bg,
             })
             .collect::<Vec<_>>();
 
@@ -1258,7 +986,7 @@ impl<'a> RenderApi<'a> {
     }
 
     #[inline]
-    fn add_render_item(&mut self, cell: RenderableCell, glyph: &Glyph) {
+    fn add_render_item(&mut self, cell: &RenderableCell, glyph: &Glyph) {
         // Flush batch if tex changing.
         if !self.batch.is_empty() && self.batch.tex != glyph.tex_id {
             self.render_batch();
@@ -1272,27 +1000,7 @@ impl<'a> RenderApi<'a> {
         }
     }
 
-    pub fn render_cell(&mut self, cell: RenderableCell, glyph_cache: &mut GlyphCache) {
-        let chars = match cell.inner {
-            RenderableCellContent::Cursor(cursor_key) => {
-                // Raw cell pixel buffers like cursors don't need to go through font lookup.
-                let metrics = glyph_cache.metrics;
-                let glyph = glyph_cache.cursor_cache.entry(cursor_key).or_insert_with(|| {
-                    self.load_glyph(&cursor::get_cursor_glyph(
-                        cursor_key.style,
-                        metrics,
-                        self.config.font.offset.x,
-                        self.config.font.offset.y,
-                        cursor_key.is_wide,
-                        self.cursor_config.thickness(),
-                    ))
-                });
-                self.add_render_item(cell, glyph);
-                return;
-            }
-            RenderableCellContent::Chars(chars) => chars,
-        };
-
+    pub fn render_cell(&mut self, mut cell: RenderableCell, glyph_cache: &mut GlyphCache) {
         // Get font key for cell.
         let font_key = match cell.flags & Flags::BOLD_ITALIC {
             Flags::BOLD_ITALIC => glyph_cache.bold_italic_key,
@@ -1301,37 +1009,26 @@ impl<'a> RenderApi<'a> {
             _ => glyph_cache.font_key,
         };
 
-        // Don't render text of HIDDEN cells.
-        let mut chars = if cell.flags.contains(Flags::HIDDEN) {
-            [' '; cell::MAX_ZEROWIDTH_CHARS + 1]
-        } else {
-            chars
-        };
-
-        // Render tabs as spaces in case the font doesn't support it.
-        if chars[0] == '\t' {
-            chars[0] = ' ';
+        // Ignore hidden cells and render tabs as spaces to prevent font issues.
+        let hidden = cell.flags.contains(Flags::HIDDEN);
+        if cell.character == '\t' || hidden {
+            cell.character = ' ';
         }
 
-        let mut glyph_key = GlyphKey { font_key, size: glyph_cache.font_size, c: chars[0] };
+        let mut glyph_key =
+            GlyphKey { font_key, size: glyph_cache.font_size, character: cell.character };
 
         // Add cell to batch.
-        let glyph = glyph_cache.get(glyph_key, self);
-        self.add_render_item(cell, glyph);
+        let glyph = glyph_cache.get(glyph_key, self, true);
+        self.add_render_item(&cell, &glyph);
 
-        // Render zero-width characters.
-        for c in (&chars[1..]).iter().filter(|c| **c != ' ') {
-            glyph_key.c = *c;
-            let mut glyph = *glyph_cache.get(glyph_key, self);
-
-            // The metrics of zero-width characters are based on rendering
-            // the character after the current cell, with the anchor at the
-            // right side of the preceding character. Since we render the
-            // zero-width characters inside the preceding character, the
-            // anchor has been moved to the right by one cell.
-            glyph.left += glyph_cache.metrics.average_advance as i16;
-
-            self.add_render_item(cell, &glyph);
+        // Render visible zero-width characters.
+        if let Some(zerowidth) = cell.zerowidth.take().filter(|_| !hidden) {
+            for character in zerowidth {
+                glyph_key.character = character;
+                let glyph = glyph_cache.get(glyph_key, self, false);
+                self.add_render_item(&cell, &glyph);
+            }
         }
     }
 }
@@ -1358,10 +1055,10 @@ fn load_glyph(
                 atlas.push(new);
             }
             load_glyph(active_tex, atlas, current_atlas, rasterized)
-        }
+        },
         Err(AtlasInsertError::GlyphTooLarge) => Glyph {
             tex_id: atlas[*current_atlas].id,
-            multicolor: 0,
+            multicolor: false,
             top: 0,
             left: 0,
             width: 0,
@@ -1412,13 +1109,8 @@ impl<'a> Drop for RenderApi<'a> {
 
 impl TextShaderProgram {
     pub fn new() -> Result<TextShaderProgram, ShaderCreationError> {
-        let (vertex_src, fragment_src) = if cfg!(feature = "live-shader-reload") {
-            (None, None)
-        } else {
-            (Some(TEXT_SHADER_V), Some(TEXT_SHADER_F))
-        };
-        let vertex_shader = create_shader(TEXT_SHADER_V_PATH, gl::VERTEX_SHADER, vertex_src)?;
-        let fragment_shader = create_shader(TEXT_SHADER_F_PATH, gl::FRAGMENT_SHADER, fragment_src)?;
+        let vertex_shader = create_shader(gl::VERTEX_SHADER, TEXT_SHADER_V)?;
+        let fragment_shader = create_shader(gl::FRAGMENT_SHADER, TEXT_SHADER_F)?;
         let program = create_program(vertex_shader, fragment_shader)?;
 
         unsafe {
@@ -1482,8 +1174,6 @@ impl TextShaderProgram {
         let offset_x = -1.;
         let offset_y = 1.;
 
-        info!("Width: {}, Height: {}", width, height);
-
         unsafe {
             gl::Uniform4f(self.u_projection, offset_x, offset_y, scale_x, scale_y);
         }
@@ -1491,7 +1181,7 @@ impl TextShaderProgram {
 
     fn set_term_uniforms(&self, props: &SizeInfo) {
         unsafe {
-            gl::Uniform2f(self.u_cell_dim, props.cell_width, props.cell_height);
+            gl::Uniform2f(self.u_cell_dim, props.cell_width(), props.cell_height());
         }
     }
 
@@ -1512,145 +1202,7 @@ impl Drop for TextShaderProgram {
     }
 }
 
-impl RectShaderProgram {
-    pub fn new() -> Result<Self, ShaderCreationError> {
-        let (vertex_src, fragment_src) = if cfg!(feature = "live-shader-reload") {
-            (None, None)
-        } else {
-            (Some(RECT_SHADER_V), Some(RECT_SHADER_F))
-        };
-        let vertex_shader = create_shader(RECT_SHADER_V_PATH, gl::VERTEX_SHADER, vertex_src)?;
-        let fragment_shader = create_shader(RECT_SHADER_F_PATH, gl::FRAGMENT_SHADER, fragment_src)?;
-        let program = create_program(vertex_shader, fragment_shader)?;
-
-        unsafe {
-            gl::DeleteShader(fragment_shader);
-            gl::DeleteShader(vertex_shader);
-            gl::UseProgram(program);
-        }
-
-        // Get uniform locations.
-        let u_color = unsafe { gl::GetUniformLocation(program, b"color\0".as_ptr() as *const _) };
-
-        let shader = Self { id: program, u_color };
-
-        unsafe { gl::UseProgram(0) }
-
-        Ok(shader)
-    }
-
-    fn set_color(&self, color: Rgb, alpha: f32) {
-        unsafe {
-            gl::Uniform4f(
-                self.u_color,
-                f32::from(color.r) / 255.,
-                f32::from(color.g) / 255.,
-                f32::from(color.b) / 255.,
-                alpha,
-            );
-        }
-    }
-}
-
-impl Drop for RectShaderProgram {
-    fn drop(&mut self) {
-        unsafe {
-            gl::DeleteProgram(self.id);
-        }
-    }
-}
-
-impl ChartsShaderProgram {
-    pub fn new() -> Result<Self, ShaderCreationError> {
-        let (vertex_src, fragment_src) = if cfg!(feature = "live-shader-reload") {
-            (None, None)
-        } else {
-            (Some(CHRT_SHADER_V), Some(CHRT_SHADER_F))
-        };
-        let vertex_shader = create_shader(CHRT_SHADER_V_PATH, gl::VERTEX_SHADER, vertex_src)?;
-        let fragment_shader = create_shader(CHRT_SHADER_F_PATH, gl::FRAGMENT_SHADER, fragment_src)?;
-        let program = create_program(vertex_shader, fragment_shader)?;
-
-        unsafe {
-            gl::DeleteShader(fragment_shader);
-            gl::DeleteShader(vertex_shader);
-            gl::UseProgram(program);
-        }
-
-        // get uniform locations
-        let u_color = unsafe { gl::GetUniformLocation(program, b"color\0".as_ptr() as *const _) };
-
-        let shader = ChartsShaderProgram { id: program, u_color };
-
-        unsafe { gl::UseProgram(0) }
-
-        Ok(shader)
-    }
-
-    fn set_color(&self, color: Rgb, alpha: f32) {
-        unsafe {
-            gl::Uniform4f(
-                self.u_color,
-                f32::from(color.r) / 255.,
-                f32::from(color.g) / 255.,
-                f32::from(color.b) / 255.,
-                alpha,
-            );
-        }
-    }
-}
-
-impl Drop for ChartsShaderProgram {
-    fn drop(&mut self) {
-        unsafe {
-            gl::DeleteProgram(self.id);
-        }
-    }
-}
-impl HexagonShaderProgram {
-    pub fn new() -> Result<Self, ShaderCreationError> {
-        let (vertex_src, fragment_src) = if cfg!(feature = "live-shader-reload") {
-            (None, None)
-        } else {
-            (Some(HXBG_SHADER_V), Some(HXBG_SHADER_F))
-        };
-        let vertex_shader = create_shader(HXBG_SHADER_V_PATH, gl::VERTEX_SHADER, vertex_src)?;
-        let fragment_shader = create_shader(HXBG_SHADER_F_PATH, gl::FRAGMENT_SHADER, fragment_src)?;
-        let program = create_program(vertex_shader, fragment_shader)?;
-
-        unsafe {
-            gl::DeleteShader(fragment_shader);
-            gl::DeleteShader(vertex_shader);
-            gl::UseProgram(program);
-        }
-
-        // get uniform locations
-        let u_epoch_millis =
-            unsafe { gl::GetUniformLocation(program, b"epoch_millis\0".as_ptr() as *const _) };
-
-        let shader = HexagonShaderProgram { id: program, u_epoch_millis };
-
-        unsafe { gl::UseProgram(0) }
-
-        Ok(shader)
-    }
-
-    fn set_epoch_millis(&self, epoch_millis: f32) {
-        unsafe {
-            gl::Uniform1f(self.u_epoch_millis, epoch_millis);
-        }
-    }
-}
-
-impl Drop for HexagonShaderProgram {
-    fn drop(&mut self) {
-        unsafe {
-            gl::DeleteProgram(self.id);
-        }
-    }
-}
-
-fn create_program(vertex: GLuint, fragment: GLuint) -> Result<GLuint, ShaderCreationError> {
+pub fn create_program(vertex: GLuint, fragment: GLuint) -> Result<GLuint, ShaderCreationError> {
     unsafe {
         let program = gl::CreateProgram();
         gl::AttachShader(program, vertex);
@@ -1668,19 +1220,7 @@ fn create_program(vertex: GLuint, fragment: GLuint) -> Result<GLuint, ShaderCrea
     }
 }
 
-fn create_shader(
-    path: &str,
-    kind: GLenum,
-    source: Option<&'static str>,
-) -> Result<GLuint, ShaderCreationError> {
-    let from_disk;
-    let source = if let Some(src) = source {
-        src
-    } else {
-        from_disk = fs::read_to_string(path)?;
-        &from_disk[..]
-    };
-
+pub fn create_shader(kind: GLenum, source: &'static str) -> Result<GLuint, ShaderCreationError> {
     let len: [GLint; 1] = [source.len() as GLint];
 
     let shader = unsafe {
@@ -1706,7 +1246,7 @@ fn create_shader(
             gl::DeleteShader(shader);
         }
 
-        Err(ShaderCreationError::Compile(PathBuf::from(path), log))
+        Err(ShaderCreationError::Compile(log))
     }
 }
 
@@ -1762,7 +1302,7 @@ pub enum ShaderCreationError {
     Io(io::Error),
 
     /// Error compiling shader.
-    Compile(PathBuf, String),
+    Compile(String),
 
     /// Problem linking.
     Link(String),
@@ -1781,9 +1321,7 @@ impl Display for ShaderCreationError {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             ShaderCreationError::Io(err) => write!(f, "Unable to read shader: {}", err),
-            ShaderCreationError::Compile(path, log) => {
-                write!(f, "Failed compiling shader at {}: {}", path.display(), log)
-            }
+            ShaderCreationError::Compile(log) => write!(f, "Failed compiling shader: {}", log),
             ShaderCreationError::Link(log) => write!(f, "Failed linking shader: {}", log),
         }
     }
@@ -1897,12 +1435,12 @@ impl Atlas {
         }
 
         // If there's not enough room in current row, go onto next one.
-        if !self.room_in_row(glyph) {
+        if !self.room_in_row(&glyph) {
             self.advance_row()?;
         }
 
         // If there's still not room, there's nothing that can be done here..
-        if !self.room_in_row(glyph) {
+        if !self.room_in_row(&glyph) {
             return Err(AtlasInsertError::Full);
         }
 
@@ -1926,15 +1464,15 @@ impl Atlas {
             gl::BindTexture(gl::TEXTURE_2D, self.id);
 
             // Load data into OpenGL.
-            let (format, buf) = match &glyph.buf {
-                BitmapBuffer::RGB(buf) => {
+            let (format, buffer) = match &glyph.buffer {
+                BitmapBuffer::Rgb(buffer) => {
                     multicolor = false;
-                    (gl::RGB, buf)
-                }
-                BitmapBuffer::RGBA(buf) => {
+                    (gl::RGB, buffer)
+                },
+                BitmapBuffer::Rgba(buffer) => {
                     multicolor = true;
-                    (gl::RGBA, buf)
-                }
+                    (gl::RGBA, buffer)
+                },
             };
 
             gl::TexSubImage2D(
@@ -1946,7 +1484,7 @@ impl Atlas {
                 height,
                 format,
                 gl::UNSIGNED_BYTE,
-                buf.as_ptr() as *const _,
+                buffer.as_ptr() as *const _,
             );
 
             gl::BindTexture(gl::TEXTURE_2D, 0);
@@ -1967,7 +1505,7 @@ impl Atlas {
 
         Glyph {
             tex_id: self.id,
-            multicolor: multicolor as u8,
+            multicolor,
             top: glyph.top as i16,
             left: glyph.left as i16,
             width: width as i16,
@@ -2000,5 +1538,13 @@ impl Atlas {
         self.row_tallest = 0;
 
         Ok(())
+    }
+}
+
+impl Drop for Atlas {
+    fn drop(&mut self) {
+        unsafe {
+            gl::DeleteTextures(1, &self.id);
+        }
     }
 }

@@ -1,13 +1,14 @@
 //! A specialized 2D grid implementation optimized for use in a terminal.
 
 use std::cmp::{max, min};
-use std::ops::{Deref, Index, IndexMut, Range, RangeFrom, RangeFull, RangeTo};
+use std::iter::TakeWhile;
+use std::ops::{Bound, Deref, Index, IndexMut, Range, RangeBounds};
 
 use serde::{Deserialize, Serialize};
 
 use crate::ansi::{CharsetIndex, StandardCharset};
-use crate::index::{Column, IndexRange, Line, Point};
-use crate::term::cell::{Cell, Flags};
+use crate::index::{Column, Line, Point};
+use crate::term::cell::{Flags, ResetDiscriminant};
 
 pub mod resize;
 mod row;
@@ -18,56 +19,24 @@ mod tests;
 pub use self::row::Row;
 use self::storage::Storage;
 
-/// Bidirectional iterator.
-pub trait BidirectionalIterator: Iterator {
-    fn prev(&mut self) -> Option<Self::Item>;
-}
-
-/// An item in the grid along with its Line and Column.
-pub struct Indexed<T> {
-    pub inner: T,
-    pub line: Line,
-    pub column: Column,
-}
-
-impl<T> Deref for Indexed<T> {
-    type Target = T;
-
-    #[inline]
-    fn deref(&self) -> &T {
-        &self.inner
-    }
-}
-
-impl<T: PartialEq> ::std::cmp::PartialEq for Grid<T> {
-    fn eq(&self, other: &Self) -> bool {
-        // Compare struct fields and check result of grid comparison.
-        self.raw.eq(&other.raw)
-            && self.cols.eq(&other.cols)
-            && self.lines.eq(&other.lines)
-            && self.display_offset.eq(&other.display_offset)
-    }
-}
-
-pub trait GridCell {
+pub trait GridCell: Sized {
+    /// Check if the cell contains any content.
     fn is_empty(&self) -> bool;
+
+    /// Perform an opinionated cell reset based on a template cell.
+    fn reset(&mut self, template: &Self);
+
     fn flags(&self) -> &Flags;
     fn flags_mut(&mut self) -> &mut Flags;
-
-    /// Fast equality approximation.
-    ///
-    /// This is a faster alternative to [`PartialEq`],
-    /// but might report unequal cells as equal.
-    fn fast_eq(&self, other: Self) -> bool;
 }
 
-#[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
-pub struct Cursor {
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct Cursor<T> {
     /// The location of this cursor.
     pub point: Point,
 
     /// Template cell when using this cursor.
-    pub template: Cell,
+    pub template: T,
 
     /// Currently configured graphic character sets.
     pub charsets: Charsets,
@@ -100,6 +69,15 @@ impl IndexMut<CharsetIndex> for Charsets {
     }
 }
 
+#[derive(Debug, Copy, Clone)]
+pub enum Scroll {
+    Delta(i32),
+    PageUp,
+    PageDown,
+    Top,
+    Bottom,
+}
+
 /// Grid based terminal content storage.
 ///
 /// ```notrust
@@ -125,27 +103,27 @@ impl IndexMut<CharsetIndex> for Charsets {
 /// │                         │
 /// └─────────────────────────┘  <-- zero
 ///                           ^
-///                          cols
+///                        columns
 /// ```
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Grid<T> {
     /// Current cursor for writing data.
     #[serde(skip)]
-    pub cursor: Cursor,
+    pub cursor: Cursor<T>,
 
     /// Last saved cursor.
     #[serde(skip)]
-    pub saved_cursor: Cursor,
+    pub saved_cursor: Cursor<T>,
 
     /// Lines in the grid. Each row holds a list of cells corresponding to the
     /// columns in that row.
     raw: Storage<T>,
 
     /// Number of columns.
-    cols: Column,
+    columns: usize,
 
     /// Number of visible lines.
-    lines: Line,
+    lines: usize,
 
     /// Offset of displayed area.
     ///
@@ -158,25 +136,16 @@ pub struct Grid<T> {
     max_scroll_limit: usize,
 }
 
-#[derive(Debug, Copy, Clone)]
-pub enum Scroll {
-    Delta(isize),
-    PageUp,
-    PageDown,
-    Top,
-    Bottom,
-}
-
-impl<T: GridCell + Default + PartialEq + Copy> Grid<T> {
-    pub fn new(lines: Line, cols: Column, max_scroll_limit: usize, template: T) -> Grid<T> {
+impl<T: GridCell + Default + PartialEq + Clone> Grid<T> {
+    pub fn new(lines: usize, columns: usize, max_scroll_limit: usize) -> Grid<T> {
         Grid {
-            raw: Storage::with_capacity(lines, Row::new(cols, template)),
+            raw: Storage::with_capacity(lines, columns),
             max_scroll_limit,
             display_offset: 0,
             saved_cursor: Cursor::default(),
             cursor: Cursor::default(),
             lines,
-            cols,
+            columns,
         }
     }
 
@@ -192,21 +161,20 @@ impl<T: GridCell + Default + PartialEq + Copy> Grid<T> {
 
     pub fn scroll_display(&mut self, scroll: Scroll) {
         self.display_offset = match scroll {
-            Scroll::Delta(count) => min(
-                max((self.display_offset as isize) + count, 0isize) as usize,
-                self.history_size(),
-            ),
-            Scroll::PageUp => min(self.display_offset + self.lines.0, self.history_size()),
-            Scroll::PageDown => self.display_offset.saturating_sub(self.lines.0),
+            Scroll::Delta(count) => {
+                min(max((self.display_offset as i32) + count, 0) as usize, self.history_size())
+            },
+            Scroll::PageUp => min(self.display_offset + self.lines, self.history_size()),
+            Scroll::PageDown => self.display_offset.saturating_sub(self.lines),
             Scroll::Top => self.history_size(),
             Scroll::Bottom => 0,
         };
     }
 
-    fn increase_scroll_limit(&mut self, count: usize, template: T) {
+    fn increase_scroll_limit(&mut self, count: usize) {
         let count = min(count, self.max_scroll_limit - self.history_size());
         if count != 0 {
-            self.raw.initialize(count, template, self.cols);
+            self.raw.initialize(count, self.columns);
         }
     }
 
@@ -219,35 +187,60 @@ impl<T: GridCell + Default + PartialEq + Copy> Grid<T> {
     }
 
     #[inline]
-    pub fn scroll_down(&mut self, region: &Range<Line>, positions: Line, template: T) {
-        // Whether or not there is a scrolling region active, as long as it
-        // starts at the top, we can do a full rotation which just involves
-        // changing the start index.
-        //
-        // To accommodate scroll regions, rows are reordered at the end.
-        if region.start == Line(0) && self.max_scroll_limit == 0 {
-            // Rotate the entire line buffer. If there's a scrolling region
-            // active, the bottom lines are restored in the next step.
-            self.raw.rotate_up(*positions);
-
-            // Now, restore any scroll region lines.
-            let lines = self.lines;
-            for i in IndexRange(region.end..lines) {
-                self.raw.swap_lines(i, i + positions);
+    pub fn scroll_down<D>(&mut self, region: &Range<Line>, positions: usize)
+    where
+        T: ResetDiscriminant<D>,
+        D: PartialEq,
+    {
+        // When rotating the entire region, just reset everything.
+        if region.end - region.start <= positions {
+            for i in (region.start.0..region.end.0).map(Line::from) {
+                self.raw[i].reset(&self.cursor.template);
             }
 
-            // Finally, reset recycled lines.
-            for i in IndexRange(Line(0)..positions) {
-                self.raw[i].reset(template);
+            return;
+        }
+
+        // Which implementation we can use depends on the existence of a scrollback history.
+        //
+        // Since a scrollback history prevents us from rotating the entire buffer downwards, we
+        // instead have to rely on a slower, swap-based implementation.
+        if self.max_scroll_limit == 0 {
+            // Swap the lines fixed at the bottom to their target positions after rotation.
+            //
+            // Since we've made sure that the rotation will never rotate away the entire region, we
+            // know that the position of the fixed lines before the rotation must already be
+            // visible.
+            //
+            // We need to start from the top, to make sure the fixed lines aren't swapped with each
+            // other.
+            let screen_lines = self.screen_lines() as i32;
+            for i in (region.end.0..screen_lines).map(Line::from) {
+                self.raw.swap(i, i - positions as i32);
+            }
+
+            // Rotate the entire line buffer downward.
+            self.raw.rotate_down(positions);
+
+            // Ensure all new lines are fully cleared.
+            for i in (0..positions).map(Line::from) {
+                self.raw[i].reset(&self.cursor.template);
+            }
+
+            // Swap the fixed lines at the top back into position.
+            for i in (0..region.start.0).map(Line::from) {
+                self.raw.swap(i, i + positions);
             }
         } else {
             // Subregion rotation.
-            for line in IndexRange((region.start + positions)..region.end).rev() {
-                self.raw.swap_lines(line, line - positions);
+            let range = (region.start + positions).0..region.end.0;
+            for line in range.rev().map(Line::from) {
+                self.raw.swap(line, line - positions);
             }
 
-            for line in IndexRange(region.start..(region.start + positions)) {
-                self.raw[line].reset(template);
+            let range = region.start.0..(region.start + positions).0;
+            for line in range.rev().map(Line::from) {
+                self.raw[line].reset(&self.cursor.template);
             }
         }
     }
@@ -255,113 +248,129 @@ impl<T: GridCell + Default + PartialEq + Copy> Grid<T> {
     /// Move lines at the bottom toward the top.
     ///
     /// This is the performance-sensitive part of scrolling.
-    pub fn scroll_up(&mut self, region: &Range<Line>, positions: Line, template: T) {
-        let num_lines = self.screen_lines().0;
-
-        if region.start == Line(0) {
-            // Update display offset when not pinned to active area.
-            if self.display_offset != 0 {
-                self.display_offset = min(self.display_offset + *positions, self.max_scroll_limit);
+    pub fn scroll_up<D>(&mut self, region: &Range<Line>, positions: usize)
+    where
+        T: ResetDiscriminant<D>,
+        D: PartialEq,
+    {
+        // When rotating the entire region with fixed lines at the top, just reset everything.
+        if region.end - region.start <= positions && region.start != 0 {
+            for i in (region.start.0..region.end.0).map(Line::from) {
+                self.raw[i].reset(&self.cursor.template);
             }
 
-            self.increase_scroll_limit(*positions, template);
+            return;
+        }
 
-            // Rotate the entire line buffer. If there's a scrolling region
-            // active, the bottom lines are restored in the next step.
-            self.raw.rotate(-(*positions as isize));
+        // Update display offset when not pinned to active area.
+        if self.display_offset != 0 {
+            self.display_offset = min(self.display_offset + positions, self.max_scroll_limit);
+        }
 
-            // This next loop swaps "fixed" lines outside of a scroll region
-            // back into place after the rotation. The work is done in buffer-
-            // space rather than terminal-space to avoid redundant
-            // transformations.
-            let fixed_lines = num_lines - *region.end;
+        // Create scrollback for the new lines.
+        self.increase_scroll_limit(positions);
 
-            for i in 0..fixed_lines {
-                self.raw.swap(i, i + *positions);
-            }
+        // Swap the lines fixed at the top to their target positions after rotation.
+        //
+        // Since we've made sure that the rotation will never rotate away the entire region, we
+        // know that the position of the fixed lines before the rotation must already be
+        // visible.
+        //
+        // We need to start from the bottom, to make sure the fixed lines aren't swapped with each
+        // other.
+        for i in (0..region.start.0).rev().map(Line::from) {
+            self.raw.swap(i, i + positions);
+        }
 
-            // Finally, reset recycled lines.
-            //
-            // Recycled lines are just above the end of the scrolling region.
-            for i in 0..*positions {
-                self.raw[i + fixed_lines].reset(template);
-            }
-        } else {
-            // Subregion rotation.
-            for line in IndexRange(region.start..(region.end - positions)) {
-                self.raw.swap_lines(line, line + positions);
-            }
+        // Rotate the entire line buffer upward.
+        self.raw.rotate(-(positions as isize));
 
-            // Clear reused lines.
-            for line in IndexRange((region.end - positions)..region.end) {
-                self.raw[line].reset(template);
-            }
+        // Ensure all new lines are fully cleared.
+        let screen_lines = self.screen_lines();
+        for i in ((screen_lines - positions)..screen_lines).map(Line::from) {
+            self.raw[i].reset(&self.cursor.template);
+        }
+
+        // Swap the fixed lines at the bottom back into position.
+        for i in (region.end.0..(screen_lines as i32)).rev().map(Line::from) {
+            self.raw.swap(i, i - positions);
         }
     }
 
-    pub fn clear_viewport(&mut self, template: T) {
+    pub fn clear_viewport<D>(&mut self)
+    where
+        T: ResetDiscriminant<D>,
+        D: PartialEq,
+    {
         // Determine how many lines to scroll up by.
-        let end = Point { line: 0, col: self.cols() };
+        let end = Point::new(Line(self.lines as i32 - 1), Column(self.columns()));
         let mut iter = self.iter_from(end);
         while let Some(cell) = iter.prev() {
-            if !cell.is_empty() || iter.cur.line >= *self.lines {
+            if !cell.is_empty() || cell.point.line < 0 {
                 break;
             }
         }
-        debug_assert!(iter.cur.line <= *self.lines);
-        let positions = self.lines - iter.cur.line;
-        let region = Line(0)..self.screen_lines();
+        debug_assert!(iter.point.line >= -1);
+        let positions = (iter.point.line.0 + 1) as usize;
+        let region = Line(0)..Line(self.lines as i32);
 
         // Reset display offset.
         self.display_offset = 0;
 
         // Clear the viewport.
-        self.scroll_up(&region, positions, template);
+        self.scroll_up(&region, positions);
 
         // Reset rotated lines.
-        for i in positions.0..self.lines.0 {
-            self.raw[i].reset(template);
+        for line in (0..(self.lines - positions)).map(Line::from) {
+            self.raw[line].reset(&self.cursor.template);
         }
     }
 
     /// Completely reset the grid state.
-    pub fn reset(&mut self, template: T) {
+    pub fn reset<D>(&mut self)
+    where
+        T: ResetDiscriminant<D>,
+        D: PartialEq,
+    {
         self.clear_history();
-
-        // Reset all visible lines.
-        for row in 0..self.raw.len() {
-            self.raw[row].reset(template);
-        }
 
         self.saved_cursor = Cursor::default();
         self.cursor = Cursor::default();
         self.display_offset = 0;
+
+        // Reset all visible lines.
+        let range = self.topmost_line().0..(self.screen_lines() as i32);
+        for line in range.map(Line::from) {
+            self.raw[line].reset(&self.cursor.template);
+        }
     }
 }
 
-#[allow(clippy::len_without_is_empty)]
 impl<T> Grid<T> {
-    /// Clamp a buffer point to the visible region.
-    pub fn clamp_buffer_to_visible(&self, point: Point<usize>) -> Point {
-        if point.line < self.display_offset {
-            Point::new(self.lines - 1, self.cols - 1)
-        } else if point.line >= self.display_offset + self.lines.0 {
-            Point::new(Line(0), Column(0))
-        } else {
-            // Since edgecases are handled, conversion is identical as visible to buffer.
-            self.visible_to_buffer(point.into()).into()
+    /// Reset a visible region within the grid.
+    pub fn reset_region<D, R: RangeBounds<Line>>(&mut self, bounds: R)
+    where
+        T: ResetDiscriminant<D> + GridCell + Clone + Default,
+        D: PartialEq,
+    {
+        let start = match bounds.start_bound() {
+            Bound::Included(line) => *line,
+            Bound::Excluded(line) => *line + 1,
+            Bound::Unbounded => Line(0),
+        };
+
+        let end = match bounds.end_bound() {
+            Bound::Included(line) => *line + 1,
+            Bound::Excluded(line) => *line,
+            Bound::Unbounded => Line(self.screen_lines() as i32),
+        };
+
+        debug_assert!(start < self.screen_lines() as i32);
+        debug_assert!(end <= self.screen_lines() as i32);
+
+        for line in (start.0..end.0).map(Line::from) {
+            self.raw[line].reset(&self.cursor.template);
         }
-    }
-
-    /// Convert viewport relative point to global buffer indexing.
-    #[inline]
-    pub fn visible_to_buffer(&self, point: Point) -> Point<usize> {
-        Point { line: self.lines.0 + self.display_offset - point.line.0 - 1, col: point.col }
-    }
-
-    #[inline]
-    pub fn display_iter(&self) -> DisplayIter<'_, T> {
-        DisplayIter::new(self)
     }
 
     #[inline]
@@ -372,15 +381,15 @@ impl<T> Grid<T> {
 
     /// This is used only for initializing after loading ref-tests.
     #[inline]
-    pub fn initialize_all(&mut self, template: T)
+    pub fn initialize_all(&mut self)
     where
-        T: Copy + GridCell,
+        T: GridCell + Clone + Default,
     {
         // Remove all cached lines to clear them of any content.
         self.truncate();
 
         // Initialize everything with empty new lines.
-        self.raw.initialize(self.max_scroll_limit - self.history_size(), template, self.cols);
+        self.raw.initialize(self.max_scroll_limit - self.history_size(), self.columns);
     }
 
     /// This is used only for truncating before saving ref-tests.
@@ -390,8 +399,21 @@ impl<T> Grid<T> {
     }
 
     #[inline]
-    pub fn iter_from(&self, point: Point<usize>) -> GridIterator<'_, T> {
-        GridIterator { grid: self, cur: point }
+    pub fn iter_from(&self, point: Point) -> GridIterator<'_, T> {
+        GridIterator { grid: self, point }
+    }
+
+    /// Iterator over all visible cells.
+    #[inline]
+    pub fn display_iter(&self) -> DisplayIter<'_, T> {
+        let start = Point::new(Line(-(self.display_offset as i32) - 1), self.last_column());
+        let end = Point::new(start.line + self.lines, Column(self.columns));
+
+        let iter = GridIterator { grid: self, point: start };
+
+        let take_while: DisplayIterTakeFun<'_, T> =
+            Box::new(move |indexed: &Indexed<&T>| indexed.point <= end);
+        iter.take_while(take_while)
     }
 
     #[inline]
@@ -402,130 +424,25 @@ impl<T> Grid<T> {
     #[inline]
     pub fn cursor_cell(&mut self) -> &mut T {
         let point = self.cursor.point;
-        &mut self[&point]
+        &mut self[point.line][point.column]
     }
 }
 
-/// Grid dimensions.
-pub trait Dimensions {
-    /// Total number of lines in the buffer, this includes scrollback and visible lines.
-    fn total_lines(&self) -> usize;
-
-    /// Height of the viewport in lines.
-    fn screen_lines(&self) -> Line;
-
-    /// Width of the terminal in columns.
-    fn cols(&self) -> Column;
-
-    /// Number of invisible lines part of the scrollback history.
-    #[inline]
-    fn history_size(&self) -> usize {
-        self.total_lines() - self.screen_lines().0
+impl<T: PartialEq> PartialEq for Grid<T> {
+    fn eq(&self, other: &Self) -> bool {
+        // Compare struct fields and check result of grid comparison.
+        self.raw.eq(&other.raw)
+            && self.columns.eq(&other.columns)
+            && self.lines.eq(&other.lines)
+            && self.display_offset.eq(&other.display_offset)
     }
 }
 
-impl<G> Dimensions for Grid<G> {
-    #[inline]
-    fn total_lines(&self) -> usize {
-        self.raw.len()
-    }
-
-    #[inline]
-    fn screen_lines(&self) -> Line {
-        self.lines
-    }
-
-    #[inline]
-    fn cols(&self) -> Column {
-        self.cols
-    }
-}
-
-#[cfg(test)]
-impl Dimensions for (Line, Column) {
-    fn total_lines(&self) -> usize {
-        *self.0
-    }
-
-    fn screen_lines(&self) -> Line {
-        self.0
-    }
-
-    fn cols(&self) -> Column {
-        self.1
-    }
-}
-
-pub struct GridIterator<'a, T> {
-    /// Immutable grid reference.
-    grid: &'a Grid<T>,
-
-    /// Current position of the iterator within the grid.
-    cur: Point<usize>,
-}
-
-impl<'a, T> GridIterator<'a, T> {
-    pub fn point(&self) -> Point<usize> {
-        self.cur
-    }
-
-    pub fn cell(&self) -> &'a T {
-        &self.grid[self.cur]
-    }
-}
-
-impl<'a, T> Iterator for GridIterator<'a, T> {
-    type Item = &'a T;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let last_col = self.grid.cols() - 1;
-
-        match self.cur {
-            Point { line, col } if line == 0 && col == last_col => return None,
-            Point { col, .. } if (col == last_col) => {
-                self.cur.line -= 1;
-                self.cur.col = Column(0);
-            }
-            _ => self.cur.col += Column(1),
-        }
-
-        Some(&self.grid[self.cur])
-    }
-}
-
-impl<'a, T> BidirectionalIterator for GridIterator<'a, T> {
-    fn prev(&mut self) -> Option<Self::Item> {
-        let last_col = self.grid.cols() - 1;
-
-        match self.cur {
-            Point { line, col: Column(0) } if line == self.grid.total_lines() - 1 => return None,
-            Point { col: Column(0), .. } => {
-                self.cur.line += 1;
-                self.cur.col = last_col;
-            }
-            _ => self.cur.col -= Column(1),
-        }
-
-        Some(&self.grid[self.cur])
-    }
-}
-
-/// Index active region by line.
 impl<T> Index<Line> for Grid<T> {
     type Output = Row<T>;
 
     #[inline]
     fn index(&self, index: Line) -> &Row<T> {
-        &self.raw[index]
-    }
-}
-
-/// Index with buffer offset.
-impl<T> Index<usize> for Grid<T> {
-    type Output = Row<T>;
-
-    #[inline]
-    fn index(&self, index: usize) -> &Row<T> {
         &self.raw[index]
     }
 }
@@ -537,248 +454,175 @@ impl<T> IndexMut<Line> for Grid<T> {
     }
 }
 
-impl<T> IndexMut<usize> for Grid<T> {
-    #[inline]
-    fn index_mut(&mut self, index: usize) -> &mut Row<T> {
-        &mut self.raw[index]
-    }
-}
-
-impl<'point, T> Index<&'point Point> for Grid<T> {
+impl<T> Index<Point> for Grid<T> {
     type Output = T;
 
     #[inline]
-    fn index<'a>(&'a self, point: &Point) -> &'a T {
-        &self[point.line][point.col]
+    fn index(&self, point: Point) -> &T {
+        &self[point.line][point.column]
     }
 }
 
-impl<'point, T> IndexMut<&'point Point> for Grid<T> {
+impl<T> IndexMut<Point> for Grid<T> {
     #[inline]
-    fn index_mut<'a, 'b>(&'a mut self, point: &'b Point) -> &'a mut T {
-        &mut self[point.line][point.col]
+    fn index_mut(&mut self, point: Point) -> &mut T {
+        &mut self[point.line][point.column]
     }
 }
 
-impl<T> Index<Point<usize>> for Grid<T> {
-    type Output = T;
+/// Grid dimensions.
+pub trait Dimensions {
+    /// Total number of lines in the buffer, this includes scrollback and visible lines.
+    fn total_lines(&self) -> usize;
+
+    /// Height of the viewport in lines.
+    fn screen_lines(&self) -> usize;
+
+    /// Width of the terminal in columns.
+    fn columns(&self) -> usize;
+
+    /// Index for the last column.
+    #[inline]
+    fn last_column(&self) -> Column {
+        Column(self.columns() - 1)
+    }
+
+    /// Line farthest up in the grid history.
+    #[inline]
+    fn topmost_line(&self) -> Line {
+        Line(-(self.history_size() as i32))
+    }
+
+    /// Line farthest down in the grid history.
+    #[inline]
+    fn bottommost_line(&self) -> Line {
+        Line(self.screen_lines() as i32 - 1)
+    }
+
+    /// Number of invisible lines part of the scrollback history.
+    #[inline]
+    fn history_size(&self) -> usize {
+        self.total_lines().saturating_sub(self.screen_lines())
+    }
+}
+
+impl<G> Dimensions for Grid<G> {
+    #[inline]
+    fn total_lines(&self) -> usize {
+        self.raw.len()
+    }
 
     #[inline]
-    fn index(&self, point: Point<usize>) -> &T {
-        &self[point.line][point.col]
+    fn screen_lines(&self) -> usize {
+        self.lines
     }
-}
 
-impl<T> IndexMut<Point<usize>> for Grid<T> {
     #[inline]
-    fn index_mut(&mut self, point: Point<usize>) -> &mut T {
-        &mut self[point.line][point.col]
+    fn columns(&self) -> usize {
+        self.columns
     }
 }
 
-/// A subset of lines in the grid.
-///
-/// May be constructed using Grid::region(..).
-pub struct Region<'a, T> {
-    start: Line,
-    end: Line,
-    raw: &'a Storage<T>,
-}
+#[cfg(test)]
+impl Dimensions for (usize, usize) {
+    fn total_lines(&self) -> usize {
+        self.0
+    }
 
-/// A mutable subset of lines in the grid.
-///
-/// May be constructed using Grid::region_mut(..).
-pub struct RegionMut<'a, T> {
-    start: Line,
-    end: Line,
-    raw: &'a mut Storage<T>,
-}
+    fn screen_lines(&self) -> usize {
+        self.0
+    }
 
-impl<'a, T> RegionMut<'a, T> {
-    /// Call the provided function for every item in this region.
-    pub fn each<F: Fn(&mut T)>(self, func: F) {
-        for row in self {
-            for item in row {
-                func(item)
-            }
-        }
+    fn columns(&self) -> usize {
+        self.1
     }
 }
 
-pub trait IndexRegion<I, T> {
-    /// Get an immutable region of Self.
-    fn region(&self, _: I) -> Region<'_, T>;
-
-    /// Get a mutable region of Self.
-    fn region_mut(&mut self, _: I) -> RegionMut<'_, T>;
+#[derive(Debug, PartialEq)]
+pub struct Indexed<T> {
+    pub point: Point,
+    pub cell: T,
 }
 
-impl<T> IndexRegion<Range<Line>, T> for Grid<T> {
-    fn region(&self, index: Range<Line>) -> Region<'_, T> {
-        assert!(index.start < self.screen_lines());
-        assert!(index.end <= self.screen_lines());
-        assert!(index.start <= index.end);
-        Region { start: index.start, end: index.end, raw: &self.raw }
-    }
+impl<T> Deref for Indexed<T> {
+    type Target = T;
 
-    fn region_mut(&mut self, index: Range<Line>) -> RegionMut<'_, T> {
-        assert!(index.start < self.screen_lines());
-        assert!(index.end <= self.screen_lines());
-        assert!(index.start <= index.end);
-        RegionMut { start: index.start, end: index.end, raw: &mut self.raw }
+    #[inline]
+    fn deref(&self) -> &T {
+        &self.cell
     }
 }
 
-impl<T> IndexRegion<RangeTo<Line>, T> for Grid<T> {
-    fn region(&self, index: RangeTo<Line>) -> Region<'_, T> {
-        assert!(index.end <= self.screen_lines());
-        Region { start: Line(0), end: index.end, raw: &self.raw }
-    }
-
-    fn region_mut(&mut self, index: RangeTo<Line>) -> RegionMut<'_, T> {
-        assert!(index.end <= self.screen_lines());
-        RegionMut { start: Line(0), end: index.end, raw: &mut self.raw }
-    }
-}
-
-impl<T> IndexRegion<RangeFrom<Line>, T> for Grid<T> {
-    fn region(&self, index: RangeFrom<Line>) -> Region<'_, T> {
-        assert!(index.start < self.screen_lines());
-        Region { start: index.start, end: self.screen_lines(), raw: &self.raw }
-    }
-
-    fn region_mut(&mut self, index: RangeFrom<Line>) -> RegionMut<'_, T> {
-        assert!(index.start < self.screen_lines());
-        RegionMut { start: index.start, end: self.screen_lines(), raw: &mut self.raw }
-    }
-}
-
-impl<T> IndexRegion<RangeFull, T> for Grid<T> {
-    fn region(&self, _: RangeFull) -> Region<'_, T> {
-        Region { start: Line(0), end: self.screen_lines(), raw: &self.raw }
-    }
-
-    fn region_mut(&mut self, _: RangeFull) -> RegionMut<'_, T> {
-        RegionMut { start: Line(0), end: self.screen_lines(), raw: &mut self.raw }
-    }
-}
-
-pub struct RegionIter<'a, T> {
-    end: Line,
-    cur: Line,
-    raw: &'a Storage<T>,
-}
-
-pub struct RegionIterMut<'a, T> {
-    end: Line,
-    cur: Line,
-    raw: &'a mut Storage<T>,
-}
-
-impl<'a, T> IntoIterator for Region<'a, T> {
-    type IntoIter = RegionIter<'a, T>;
-    type Item = &'a Row<T>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        RegionIter { end: self.end, cur: self.start, raw: self.raw }
-    }
-}
-
-impl<'a, T> IntoIterator for RegionMut<'a, T> {
-    type IntoIter = RegionIterMut<'a, T>;
-    type Item = &'a mut Row<T>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        RegionIterMut { end: self.end, cur: self.start, raw: self.raw }
-    }
-}
-
-impl<'a, T> Iterator for RegionIter<'a, T> {
-    type Item = &'a Row<T>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.cur < self.end {
-            let index = self.cur;
-            self.cur += 1;
-            Some(&self.raw[index])
-        } else {
-            None
-        }
-    }
-}
-
-impl<'a, T> Iterator for RegionIterMut<'a, T> {
-    type Item = &'a mut Row<T>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.cur < self.end {
-            let index = self.cur;
-            self.cur += 1;
-            unsafe { Some(&mut *(&mut self.raw[index] as *mut _)) }
-        } else {
-            None
-        }
-    }
-}
-
-/// Iterates over the visible area accounting for buffer transform.
-pub struct DisplayIter<'a, T> {
+/// Grid cell iterator.
+pub struct GridIterator<'a, T> {
+    /// Immutable grid reference.
     grid: &'a Grid<T>,
-    offset: usize,
-    limit: usize,
-    col: Column,
-    line: Line,
+
+    /// Current position of the iterator within the grid.
+    point: Point,
 }
 
-impl<'a, T: 'a> DisplayIter<'a, T> {
-    pub fn new(grid: &'a Grid<T>) -> DisplayIter<'a, T> {
-        let offset = grid.display_offset + *grid.screen_lines() - 1;
-        let limit = grid.display_offset;
-        let col = Column(0);
-        let line = Line(0);
-
-        DisplayIter { grid, offset, col, limit, line }
+impl<'a, T> GridIterator<'a, T> {
+    /// Current iteratior position.
+    pub fn point(&self) -> Point {
+        self.point
     }
 
-    pub fn offset(&self) -> usize {
-        self.offset
-    }
-
-    pub fn column(&self) -> Column {
-        self.col
-    }
-
-    pub fn line(&self) -> Line {
-        self.line
+    /// Cell at the current iteratior position.
+    pub fn cell(&self) -> &'a T {
+        &self.grid[self.point]
     }
 }
 
-impl<'a, T: Copy + 'a> Iterator for DisplayIter<'a, T> {
-    type Item = Indexed<T>;
+impl<'a, T> Iterator for GridIterator<'a, T> {
+    type Item = Indexed<&'a T>;
 
-    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        // Return None if we've reached the end.
-        if self.offset == self.limit && self.grid.cols() == self.col {
+        let last_column = self.grid.last_column();
+
+        // Stop once we've reached the end of the grid.
+        if self.point == Point::new(self.grid.bottommost_line(), last_column) {
             return None;
         }
 
-        // Get the next item.
-        let item = Some(Indexed {
-            inner: self.grid.raw[self.offset][self.col],
-            line: self.line,
-            column: self.col,
-        });
-
-        // Update line/col to point to next item.
-        self.col += 1;
-        if self.col == self.grid.cols() && self.offset != self.limit {
-            self.offset -= 1;
-
-            self.col = Column(0);
-            self.line = Line(*self.grid.lines - 1 - (self.offset - self.limit));
+        match self.point {
+            Point { column, .. } if column == last_column => {
+                self.point.column = Column(0);
+                self.point.line += 1;
+            },
+            _ => self.point.column += Column(1),
         }
 
-        item
+        Some(Indexed { cell: &self.grid[self.point], point: self.point })
     }
 }
+
+/// Bidirectional iterator.
+pub trait BidirectionalIterator: Iterator {
+    fn prev(&mut self) -> Option<Self::Item>;
+}
+
+impl<'a, T> BidirectionalIterator for GridIterator<'a, T> {
+    fn prev(&mut self) -> Option<Self::Item> {
+        let topmost_line = self.grid.topmost_line();
+        let last_column = self.grid.last_column();
+
+        // Stop once we've reached the end of the grid.
+        if self.point == Point::new(topmost_line, Column(0)) {
+            return None;
+        }
+
+        match self.point {
+            Point { column: Column(0), .. } => {
+                self.point.column = last_column;
+                self.point.line -= 1;
+            },
+            _ => self.point.column -= Column(1),
+        }
+
+        Some(Indexed { cell: &self.grid[self.point], point: self.point })
+    }
+}
+
+pub type DisplayIter<'a, T> = TakeWhile<GridIterator<'a, T>, DisplayIterTakeFun<'a, T>>;
+type DisplayIterTakeFun<'a, T> = Box<dyn Fn(&Indexed<&'a T>) -> bool>;
