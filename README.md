@@ -1,5 +1,7 @@
 # Chartacritty = Alacritty plus charts
 
+Last updated to v0.8.0 upstream
+
 ![Chartacritty running nvim inside tmux](https://user-images.githubusercontent.com/873436/77846106-de3f5a80-71b3-11ea-87fe-ad054e76d319.png)
 =======
 <p align="center">
