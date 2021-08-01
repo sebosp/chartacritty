@@ -136,6 +136,7 @@ impl DecorationTypes {
 #[serde(tag = "type", content = "props")]
 pub enum DecorationLines {
     Hexagon(HexagonLineBackground),
+    TreeSilhoutte(TreeSilhoutteLineBackground),
 }
 
 impl DecorationLines {
@@ -144,6 +145,10 @@ impl DecorationLines {
             DecorationLines::Hexagon(ref mut hex_lines) => {
                 hex_lines.size_info = size_info;
                 hex_lines.update_opengl_vecs();
+            },
+            DecorationLines::TreeSilhoutte(ref mut tree_lines) => {
+                tree_lines.size_info = size_info;
+                tree_lines.update_opengl_vecs();
             },
         }
     }
@@ -347,6 +352,17 @@ impl Default for HexagonPointBackground {
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+pub struct TreeSilhoutteLineBackground {
+    pub color: Rgb,
+    pub alpha: f32,
+    #[serde(default)]
+    size_info: SizeInfo,
+    radius: f32,
+    #[serde(default)]
+    pub vecs: Vec<f32>,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct HexagonLineBackground {
     // shader_vertex_path: String,
     // shader_fragment_path: String,
@@ -482,9 +498,25 @@ impl HexagonTriangleBackground {
         self.vecs = res;
     }
 }
+impl TreeSilhoutteLineBackground {
+    pub fn new(color: Rgb, alpha: f32, size_info: SizeInfo, radius: f32) -> Self {
+        Self { color, alpha, size_info, radius, vecs: vec![] }
+    }
+
+    pub fn update_opengl_vecs(&mut self) {
+        let mut tree_lines = vec![];
+        let coords = background_fill_hexagon_positions(self.size_info, self.radius);
+        // We need to find the center hexagon. Which should be in the middle of the array
+        let center_idx: usize = coords.len() / 2;
+        let coord = coords[center_idx];
+        tree_lines.append(&mut gen_hexagon_vertices(self.size_info, coord.x, coord.y, self.radius));
+        self.vecs = tree_lines;
+    }
+}
+
 impl HexagonLineBackground {
     pub fn new(color: Rgb, alpha: f32, size_info: SizeInfo, radius: f32) -> Self {
-        HexagonLineBackground {
+        Self {
             // shader_fragment_path: String::from("Unimplemented"),
             // shader_vertex_path: String::from("Unimplemented"),
             color,
