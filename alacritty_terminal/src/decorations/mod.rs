@@ -540,6 +540,49 @@ impl HexagonLineBackground {
         }
         self.vecs = hexagons;
     }
+
+    /// `gen_tree_vertices` Returns the vertices for an tree created at center x,y with a
+    /// specific radius
+    pub fn gen_tree_vertices(size_info: SizeInfo, x: f32, y: f32, radius: f32) -> Vec<f32> {
+        let x_60_degrees_offset = COS_60 * radius;
+        let y_60_degrees_offset = SIN_60 * radius;
+        // Order of vertices:
+        //    3-------2
+        //   /         \
+        //  /           \
+        // 4      .      1
+        //  \           /
+        //   \         /
+        //    5-------6
+        // |     width   |
+        // Mid right - mid left
+        vec![
+            // Bottom Right
+            size_info.scale_x(x + x_60_degrees_offset),
+            size_info.scale_y(y - y_60_degrees_offset),
+            // Lower bottom Right trunk
+            size_info.scale_x(x + x_60_degrees_offset + (x_60_degrees_offset / 6f32)),
+            size_info.scale_y(y - y_60_degrees_offset - (y_60_degrees_offset / 2f32)),
+            // Mid-Lower bottom Right trunk
+            size_info.scale_x(x + x_60_degrees_offset + (x_60_degrees_offset / 4f32)),
+            size_info.scale_y(y - y_60_degrees_offset - (y_60_degrees_offset / 2f32)),
+            /* Mid right:
+            size_info.scale_x(x + radius),
+            size_info.scale_y(y),
+            // Top right:
+            size_info.scale_x(x + x_60_degrees_offset),
+            size_info.scale_y(y + y_60_degrees_offset),
+            // Top left
+            size_info.scale_x(x - x_60_degrees_offset),
+            size_info.scale_y(y + y_60_degrees_offset),
+            // Mid left:
+            size_info.scale_x(x - radius),
+            size_info.scale_y(y),
+            // Bottom left
+            size_info.scale_x(x - x_60_degrees_offset),
+            size_info.scale_y(y - y_60_degrees_offset),*/
+        ]
+    }
 }
 
 impl Decoration for HexagonLineBackground {
