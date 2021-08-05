@@ -811,7 +811,16 @@ impl Display {
                                 renderer::DrawArrayMode::GlLineLoop,
                             );
                         }
-    }
+                    }
+                    DecorationLines::TreeSilhoutte(tree_decor) => {
+                            self.renderer.draw_array(
+                                &size_info,
+                                &tree_decor.vecs,
+                                Rgb { r: 25, g: 88, b: 167 },
+                                0.9f32,
+                                renderer::DrawArrayMode::GlLineStrip,
+                            );
+                    }
                 },
                 DecorationTypes::Triangles(tri_decor) => match tri_decor {
                     DecorationTriangles::Hexagon(hex_tris) => {
