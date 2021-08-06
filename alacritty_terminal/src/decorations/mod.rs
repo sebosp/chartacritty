@@ -504,13 +504,54 @@ impl TreeSilhoutteLineBackground {
     }
 
     pub fn update_opengl_vecs(&mut self) {
-        let mut tree_lines = vec![];
         let coords = background_fill_hexagon_positions(self.size_info, self.radius);
         // We need to find the center hexagon. Which should be in the middle of the array
         let center_idx: usize = coords.len() / 2;
         let coord = coords[center_idx];
-        tree_lines.append(&mut gen_hexagon_vertices(self.size_info, coord.x, coord.y, self.radius));
-        self.vecs = tree_lines;
+        self.vecs = self.gen_tree_vertices(coord.x, coord.y);
+    }
+
+    /// `gen_tree_vertices` Returns the vertices for an tree created at center x,y with a
+    /// specific radius
+    pub fn gen_tree_vertices(&self, x: f32, y: f32) -> Vec<f32> {
+        let x_60_degrees_offset = COS_60 * self.radius;
+        let y_60_degrees_offset = SIN_60 * self.radius;
+        // Order of vertices:
+        //    3-------2
+        //   /         \
+        //  /           \
+        // 4      .      1
+        //  \           /
+        //   \         /
+        //    5-------6
+        // |     width   |
+        // Mid right - mid left
+        vec![
+            // Bottom Right
+            self.size_info.scale_x(x + x_60_degrees_offset),
+            self.size_info.scale_y(y - y_60_degrees_offset),
+            // Lower bottom Right trunk
+            self.size_info.scale_x(x + x_60_degrees_offset - (x_60_degrees_offset / 6f32)),
+            self.size_info.scale_y(y - y_60_degrees_offset + (y_60_degrees_offset / 2f32)),
+            // Mid-Lower bottom Right trunk
+            //self.size_info.scale_x(x + x_60_degrees_offset - (x_60_degrees_offset / 4f32)),
+            //self.size_info.scale_y(y - y_60_degrees_offset + (y_60_degrees_offset / 2f32)),
+            /* Mid right:
+            size_info.scale_x(x + self.radius),
+            size_info.scale_y(y),
+            // Top right:
+            size_info.scale_x(x + x_60_degrees_offset),
+            size_info.scale_y(y + y_60_degrees_offset),
+            // Top left
+            size_info.scale_x(x - x_60_degrees_offset),
+            size_info.scale_y(y + y_60_degrees_offset),
+            // Mid left:
+            size_info.scale_x(x - self.radius),
+            size_info.scale_y(y),
+            // Bottom left
+            size_info.scale_x(x - x_60_degrees_offset),
+            size_info.scale_y(y - y_60_degrees_offset),*/
+        ]
     }
 }
 
@@ -539,49 +580,6 @@ impl HexagonLineBackground {
             ));
         }
         self.vecs = hexagons;
-    }
-
-    /// `gen_tree_vertices` Returns the vertices for an tree created at center x,y with a
-    /// specific radius
-    pub fn gen_tree_vertices(size_info: SizeInfo, x: f32, y: f32, radius: f32) -> Vec<f32> {
-        let x_60_degrees_offset = COS_60 * radius;
-        let y_60_degrees_offset = SIN_60 * radius;
-        // Order of vertices:
-        //    3-------2
-        //   /         \
-        //  /           \
-        // 4      .      1
-        //  \           /
-        //   \         /
-        //    5-------6
-        // |     width   |
-        // Mid right - mid left
-        vec![
-            // Bottom Right
-            size_info.scale_x(x + x_60_degrees_offset),
-            size_info.scale_y(y - y_60_degrees_offset),
-            // Lower bottom Right trunk
-            size_info.scale_x(x + x_60_degrees_offset + (x_60_degrees_offset / 6f32)),
-            size_info.scale_y(y - y_60_degrees_offset - (y_60_degrees_offset / 2f32)),
-            // Mid-Lower bottom Right trunk
-            size_info.scale_x(x + x_60_degrees_offset + (x_60_degrees_offset / 4f32)),
-            size_info.scale_y(y - y_60_degrees_offset - (y_60_degrees_offset / 2f32)),
-            /* Mid right:
-            size_info.scale_x(x + radius),
-            size_info.scale_y(y),
-            // Top right:
-            size_info.scale_x(x + x_60_degrees_offset),
-            size_info.scale_y(y + y_60_degrees_offset),
-            // Top left
-            size_info.scale_x(x - x_60_degrees_offset),
-            size_info.scale_y(y + y_60_degrees_offset),
-            // Mid left:
-            size_info.scale_x(x - radius),
-            size_info.scale_y(y),
-            // Bottom left
-            size_info.scale_x(x - x_60_degrees_offset),
-            size_info.scale_y(y - y_60_degrees_offset),*/
-        ]
     }
 }
 
