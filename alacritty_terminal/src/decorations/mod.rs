@@ -532,10 +532,10 @@ impl TreeSilhoutteLineBackground {
             self.size_info.scale_y(y - y_60_degrees_offset),
             // Lower bottom Right trunk
             self.size_info.scale_x(x + x_60_degrees_offset - (x_60_degrees_offset / 6f32)),
-            self.size_info.scale_y(y - y_60_degrees_offset + (y_60_degrees_offset / 2f32)),
+            self.size_info.scale_y(y - y_60_degrees_offset + (y_60_degrees_offset / 4f32)),
             // Mid-Lower bottom Right trunk
-            //self.size_info.scale_x(x + x_60_degrees_offset - (x_60_degrees_offset / 4f32)),
-            //self.size_info.scale_y(y - y_60_degrees_offset + (y_60_degrees_offset / 2f32)),
+            self.size_info.scale_x(x + x_60_degrees_offset - (x_60_degrees_offset / 4f32)),
+            self.size_info.scale_y(y - y_60_degrees_offset + (y_60_degrees_offset / 2f32)),
             /* Mid right:
             size_info.scale_x(x + self.radius),
             size_info.scale_y(y),
@@ -553,6 +553,15 @@ impl TreeSilhoutteLineBackground {
             size_info.scale_y(y - y_60_degrees_offset),*/
         ]
     }
+}
+
+pub fn parse_svg_path() -> Vec<f32> {
+    // tree is created by hand on some svg editor, let's make an SVG Path parser to create the
+    // lines, this should be read from the config file
+    let res = vec![];
+    let _tree = "M 8 8 L 7 7 L 7 6 L 7 5 L 6 4 L 6 2 L 8 2 L 9 1 L 7 1 L 8 0 L 5 -1 L 5 1 L 2 -1 \
+                 L 3 1 L 3 2 L 2 2 L 1 3 L 2 3 L 3 3 L 3 4 L 3 4 L 4 5 L 5 6 L 4 7 L 3 8";
+    res
 }
 
 impl HexagonLineBackground {
