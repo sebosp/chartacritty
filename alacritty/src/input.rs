@@ -7,6 +7,8 @@
 
 use std::borrow::Cow;
 use std::cmp::{max, min, Ordering};
+use std::ffi::OsStr;
+use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::time::{Duration, Instant};
 
@@ -29,14 +31,13 @@ use alacritty_terminal::term::{ClipboardType, SizeInfo, Term, TermMode};
 use alacritty_terminal::vi_mode::ViMotion;
 
 use crate::clipboard::Clipboard;
-use crate::config::{Action, BindingMode, Config, Key, SearchAction, ViAction};
-use crate::daemon::start_daemon;
+use crate::config::{Action, BindingMode, Key, MouseAction, SearchAction, UiConfig, ViAction};
 use crate::display::hint::HintMatch;
 use crate::display::window::Window;
 use crate::display::Display;
-use crate::event::{ClickState, Event, Mouse, TYPING_SEARCH_DELAY};
+use crate::event::{ClickState, Event, EventType, Mouse, TYPING_SEARCH_DELAY};
 use crate::message_bar::{self, Message};
-use crate::scheduler::{Scheduler, TimerId};
+use crate::scheduler::{Scheduler, TimerId, Topic};
 
 /// Font size change interval.
 pub const FONT_SIZE_STEP: f32 = 0.5;
@@ -80,11 +81,12 @@ pub trait ActionContext<T: EventListener> {
     fn terminal(&self) -> &Term<T>;
     fn terminal_mut(&mut self) -> &mut Term<T>;
     fn spawn_new_instance(&mut self) {}
+    fn create_new_window(&mut self) {}
     fn change_font_size(&mut self, _delta: f32) {}
     fn reset_font_size(&mut self) {}
     fn pop_message(&mut self) {}
     fn message(&self) -> Option<&Message>;
-    fn config(&self) -> &Config;
+    fn config(&self) -> &UiConfig;
     fn event_loop(&self) -> &EventLoopWindowTarget<Event>;
     fn mouse_mode(&self) -> bool;
     fn clipboard_mut(&mut self) -> &mut Clipboard;
@@ -104,7 +106,14 @@ pub trait ActionContext<T: EventListener> {
     fn toggle_vi_mode(&mut self) {}
     fn hint_input(&mut self, _character: char) {}
     fn trigger_hint(&mut self, _hint: &HintMatch) {}
+    fn expand_selection(&mut self) {}
     fn paste(&mut self, _text: &str) {}
+    fn spawn_daemon<I, S>(&self, _program: &str, _args: I)
+    where
+        I: IntoIterator<Item = S> + Debug + Copy,
+        S: AsRef<OsStr>,
+    {
+    }
 }
 
 impl Action {
@@ -137,30 +146,33 @@ impl<T: EventListener> Execute<T> for Action {
                 ctx.scroll(Scroll::Bottom);
                 ctx.write_to_pty(s.clone().into_bytes())
             },
-            Action::Command(program) => start_daemon(program.program(), program.args()),
+            Action::Command(program) => ctx.spawn_daemon(program.program(), program.args()),
             Action::Hint(hint) => {
                 ctx.display().hint_state.start(hint.clone());
                 ctx.mark_dirty();
             },
-            Action::ToggleViMode => ctx.toggle_vi_mode(),
+            Action::ToggleViMode => {
+                ctx.on_typing_start();
+                ctx.toggle_vi_mode()
+            },
             Action::ViMotion(motion) => {
                 ctx.on_typing_start();
                 ctx.terminal_mut().vi_motion(*motion);
                 ctx.mark_dirty();
             },
-            Action::ViAction(ViAction::ToggleNormalSelection) => {
+            Action::Vi(ViAction::ToggleNormalSelection) => {
                 Self::toggle_selection(ctx, SelectionType::Simple);
             },
-            Action::ViAction(ViAction::ToggleLineSelection) => {
+            Action::Vi(ViAction::ToggleLineSelection) => {
                 Self::toggle_selection(ctx, SelectionType::Lines);
             },
-            Action::ViAction(ViAction::ToggleBlockSelection) => {
+            Action::Vi(ViAction::ToggleBlockSelection) => {
                 Self::toggle_selection(ctx, SelectionType::Block);
             },
-            Action::ViAction(ViAction::ToggleSemanticSelection) => {
+            Action::Vi(ViAction::ToggleSemanticSelection) => {
                 Self::toggle_selection(ctx, SelectionType::Semantic);
             },
-            Action::ViAction(ViAction::Open) => {
+            Action::Vi(ViAction::Open) => {
                 let hint = ctx.display().vi_highlighted_hint.take();
                 if let Some(hint) = &hint {
                     ctx.mouse_mut().block_hint_launcher = false;
@@ -168,7 +180,7 @@ impl<T: EventListener> Execute<T> for Action {
                 }
                 ctx.display().vi_highlighted_hint = hint;
             },
-            Action::ViAction(ViAction::SearchNext) => {
+            Action::Vi(ViAction::SearchNext) => {
                 let terminal = ctx.terminal();
                 let direction = ctx.search_direction();
                 let vi_point = terminal.vi_mode_cursor.point;
@@ -182,7 +194,7 @@ impl<T: EventListener> Execute<T> for Action {
                     ctx.mark_dirty();
                 }
             },
-            Action::ViAction(ViAction::SearchPrevious) => {
+            Action::Vi(ViAction::SearchPrevious) => {
                 let terminal = ctx.terminal();
                 let direction = ctx.search_direction().opposite();
                 let vi_point = terminal.vi_mode_cursor.point;
@@ -196,7 +208,7 @@ impl<T: EventListener> Execute<T> for Action {
                     ctx.mark_dirty();
                 }
             },
-            Action::ViAction(ViAction::SearchStart) => {
+            Action::Vi(ViAction::SearchStart) => {
                 let terminal = ctx.terminal();
                 let origin = terminal.vi_mode_cursor.point.sub(terminal, Boundary::None, 1);
 
@@ -205,7 +217,7 @@ impl<T: EventListener> Execute<T> for Action {
                     ctx.mark_dirty();
                 }
             },
-            Action::ViAction(ViAction::SearchEnd) => {
+            Action::Vi(ViAction::SearchEnd) => {
                 let terminal = ctx.terminal();
                 let origin = terminal.vi_mode_cursor.point.add(terminal, Boundary::None, 1);
 
@@ -214,25 +226,24 @@ impl<T: EventListener> Execute<T> for Action {
                     ctx.mark_dirty();
                 }
             },
-            Action::SearchAction(SearchAction::SearchFocusNext) => {
+            Action::Search(SearchAction::SearchFocusNext) => {
                 ctx.advance_search_origin(ctx.search_direction());
             },
-            Action::SearchAction(SearchAction::SearchFocusPrevious) => {
+            Action::Search(SearchAction::SearchFocusPrevious) => {
                 let direction = ctx.search_direction().opposite();
                 ctx.advance_search_origin(direction);
             },
-            Action::SearchAction(SearchAction::SearchConfirm) => ctx.confirm_search(),
-            Action::SearchAction(SearchAction::SearchCancel) => ctx.cancel_search(),
-            Action::SearchAction(SearchAction::SearchClear) => {
+            Action::Search(SearchAction::SearchConfirm) => ctx.confirm_search(),
+            Action::Search(SearchAction::SearchCancel) => ctx.cancel_search(),
+            Action::Search(SearchAction::SearchClear) => {
                 let direction = ctx.search_direction();
                 ctx.cancel_search();
                 ctx.start_search(direction);
             },
-            Action::SearchAction(SearchAction::SearchDeleteWord) => ctx.search_pop_word(),
-            Action::SearchAction(SearchAction::SearchHistoryPrevious) => {
-                ctx.search_history_previous()
-            },
-            Action::SearchAction(SearchAction::SearchHistoryNext) => ctx.search_history_next(),
+            Action::Search(SearchAction::SearchDeleteWord) => ctx.search_pop_word(),
+            Action::Search(SearchAction::SearchHistoryPrevious) => ctx.search_history_previous(),
+            Action::Search(SearchAction::SearchHistoryNext) => ctx.search_history_next(),
+            Action::Mouse(MouseAction::ExpandSelection) => ctx.expand_selection(),
             Action::SearchForward => ctx.start_search(Direction::Right),
             Action::SearchBackward => ctx.start_search(Direction::Left),
             Action::Copy => ctx.copy_selection(ClipboardType::Clipboard),
@@ -320,6 +331,7 @@ impl<T: EventListener> Execute<T> for Action {
             Action::ClearLogNotice => ctx.pop_message(),
             Action::ToggleChartShow => ctx.terminal_mut().toggle_chart_show(),
             Action::SpawnNewInstance => ctx.spawn_new_instance(),
+            Action::CreateNewWindow => ctx.create_new_window(),
             Action::ReceiveChar | Action::None => (),
         }
     }
@@ -514,7 +526,7 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
             self.ctx.mouse_mut().last_click_timestamp = now;
 
             // Update multi-click state.
-            let mouse_config = &self.ctx.config().ui_config.mouse;
+            let mouse_config = &self.ctx.config().mouse;
             self.ctx.mouse_mut().click_state = match self.ctx.mouse().click_state {
                 // Reset click state if button has changed.
                 _ if button != self.ctx.mouse().last_click_button => {
@@ -534,48 +546,9 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
             let display_offset = self.ctx.terminal().grid().display_offset();
             let point = self.ctx.mouse().point(&self.ctx.size_info(), display_offset);
 
-            match button {
-                MouseButton::Left => self.on_left_click(point),
-                MouseButton::Right => self.on_right_click(point),
-                // Do nothing when using buttons other than LMB.
-                _ => self.ctx.mouse_mut().click_state = ClickState::None,
+            if let MouseButton::Left = button {
+                self.on_left_click(point)
             }
-        }
-    }
-
-    /// Handle selection expansion on right click.
-    fn on_right_click(&mut self, point: Point) {
-        match self.ctx.mouse().click_state {
-            ClickState::Click => {
-                let selection_type = if self.ctx.modifiers().ctrl() {
-                    SelectionType::Block
-                } else {
-                    SelectionType::Simple
-                };
-
-                self.expand_selection(point, selection_type);
-            },
-            ClickState::DoubleClick => self.expand_selection(point, SelectionType::Semantic),
-            ClickState::TripleClick => self.expand_selection(point, SelectionType::Lines),
-            ClickState::None => (),
-        }
-    }
-
-    /// Expand existing selection.
-    fn expand_selection(&mut self, point: Point, selection_type: SelectionType) {
-        let cell_side = self.ctx.mouse().cell_side;
-
-        let selection = match &mut self.ctx.terminal_mut().selection {
-            Some(selection) => selection,
-            None => return,
-        };
-
-        selection.ty = selection_type;
-        self.ctx.update_selection(point, cell_side);
-
-        // Move vi mode cursor to mouse click position.
-        if self.ctx.terminal().mode().contains(TermMode::VI) && !self.ctx.search_active() {
-            self.ctx.terminal_mut().vi_mode_cursor.point = point;
         }
     }
 
@@ -634,7 +607,8 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
         }
         self.ctx.display().highlighted_hint = hint;
 
-        self.ctx.scheduler_mut().unschedule(TimerId::SelectionScrolling);
+        let timer_id = TimerId::new(Topic::SelectionScrolling, self.ctx.window().id());
+        self.ctx.scheduler_mut().unschedule(timer_id);
 
         // Copy selection on release, to prevent flooding the display server.
         self.ctx.copy_selection(ClipboardType::Selection);
@@ -680,7 +654,7 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
             .contains(TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL)
             && !self.ctx.modifiers().shift()
         {
-            let multiplier = f64::from(self.ctx.config().scrolling.multiplier);
+            let multiplier = f64::from(self.ctx.config().terminal_config.scrolling.multiplier);
             self.ctx.mouse_mut().scroll_px += new_scroll_px * multiplier;
 
             let cmd = if new_scroll_px > 0. { b'A' } else { b'B' };
@@ -694,7 +668,7 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
             }
             self.ctx.write_to_pty(content);
         } else {
-            let multiplier = f64::from(self.ctx.config().scrolling.multiplier);
+            let multiplier = f64::from(self.ctx.config().terminal_config.scrolling.multiplier);
             self.ctx.mouse_mut().scroll_px += new_scroll_px * multiplier;
 
             let lines = self.ctx.mouse().scroll_px / height;
@@ -752,8 +726,9 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
         } else {
             match state {
                 ElementState::Pressed => {
-                    self.process_mouse_bindings(button);
+                    // Process mouse press before bindings to update the `click_state`.
                     self.on_mouse_press(button);
+                    self.process_mouse_bindings(button);
                 },
                 ElementState::Released => self.on_mouse_release(button),
             }
@@ -771,8 +746,10 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
 
         // Reset search delay when the user is still typing.
         if self.ctx.search_active() {
-            if let Some(timer) = self.ctx.scheduler_mut().get_mut(TimerId::DelayedSearch) {
-                timer.deadline = Instant::now() + TYPING_SEARCH_DELAY;
+            let timer_id = TimerId::new(Topic::DelayedSearch, self.ctx.window().id());
+            let scheduler = self.ctx.scheduler_mut();
+            if let Some(timer) = scheduler.unschedule(timer_id) {
+                scheduler.schedule(timer.event, TYPING_SEARCH_DELAY, false, timer.id);
             }
         }
 
@@ -830,13 +807,10 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
         self.ctx.clear_selection();
 
         let utf8_len = c.len_utf8();
-        let mut bytes = Vec::with_capacity(utf8_len);
-        unsafe {
-            bytes.set_len(utf8_len);
-            c.encode_utf8(&mut bytes[..]);
-        }
+        let mut bytes = vec![0; utf8_len];
+        c.encode_utf8(&mut bytes[..]);
 
-        if self.ctx.config().ui_config.alt_send_esc
+        if self.ctx.config().alt_send_esc
             && *self.ctx.received_count() == 0
             && self.ctx.modifiers().alt()
             && utf8_len == 1
@@ -858,8 +832,8 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
         let mods = *self.ctx.modifiers();
         let mut suppress_chars = None;
 
-        for i in 0..self.ctx.config().ui_config.key_bindings().len() {
-            let binding = &self.ctx.config().ui_config.key_bindings()[i];
+        for i in 0..self.ctx.config().key_bindings().len() {
+            let binding = &self.ctx.config().key_bindings()[i];
 
             let key = match (binding.trigger, input.virtual_keycode) {
                 (Key::Scancode(_), _) => Key::Scancode(input.scancode),
@@ -889,8 +863,8 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
         let mouse_mode = self.ctx.mouse_mode();
         let mods = *self.ctx.modifiers();
 
-        for i in 0..self.ctx.config().ui_config.mouse_bindings().len() {
-            let mut binding = self.ctx.config().ui_config.mouse_bindings()[i].clone();
+        for i in 0..self.ctx.config().mouse_bindings().len() {
+            let mut binding = self.ctx.config().mouse_bindings()[i].clone();
 
             // Require shift for all modifiers when mouse mode is active.
             if mouse_mode {
@@ -951,6 +925,7 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
     fn update_selection_scrolling(&mut self, mouse_y: i32) {
         let dpr = self.ctx.window().dpr;
         let size = self.ctx.size_info();
+        let window_id = self.ctx.window().id();
         let scheduler = self.ctx.scheduler_mut();
 
         // Scale constants by DPI.
@@ -968,26 +943,18 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
         } else if mouse_y >= start_bottom {
             start_bottom - mouse_y - step
         } else {
-            scheduler.unschedule(TimerId::SelectionScrolling);
+            scheduler.unschedule(TimerId::new(Topic::SelectionScrolling, window_id));
             return;
         };
 
         // Scale number of lines scrolled based on distance to boundary.
         let delta = delta as i32 / step as i32;
-        let event = Event::Scroll(Scroll::Delta(delta));
+        let event = Event::new(EventType::Scroll(Scroll::Delta(delta)), Some(window_id));
 
         // Schedule event.
-        match scheduler.get_mut(TimerId::SelectionScrolling) {
-            Some(timer) => timer.event = event.into(),
-            None => {
-                scheduler.schedule(
-                    event.into(),
-                    SELECTION_SCROLLING_INTERVAL,
-                    true,
-                    TimerId::SelectionScrolling,
-                );
-            },
-        }
+        let timer_id = TimerId::new(Topic::SelectionScrolling, window_id);
+        scheduler.unschedule(timer_id);
+        scheduler.schedule(event, SELECTION_SCROLLING_INTERVAL, true, timer_id);
     }
 }
 
@@ -998,7 +965,6 @@ mod tests {
     use glutin::event::{Event as GlutinEvent, VirtualKeyCode, WindowEvent};
 
     use alacritty_terminal::event::Event as TerminalEvent;
-    use alacritty_terminal::selection::Selection;
 
     use crate::config::Binding;
     use crate::message_bar::MessageBuffer;
@@ -1010,7 +976,6 @@ mod tests {
 
     struct ActionContext<'a, T> {
         pub terminal: &'a mut Term<T>,
-        pub selection: &'a mut Option<Selection>,
         pub size_info: &'a SizeInfo,
         pub mouse: &'a mut Mouse,
         pub clipboard: &'a mut Clipboard,
@@ -1018,7 +983,7 @@ mod tests {
         pub received_count: usize,
         pub suppress_chars: bool,
         pub modifiers: ModifiersState,
-        config: &'a Config,
+        config: &'a UiConfig,
     }
 
     impl<'a, T: EventListener> super::ActionContext<T> for ActionContext<'a, T> {
@@ -1040,11 +1005,11 @@ mod tests {
         }
 
         fn terminal(&self) -> &Term<T> {
-            &self.terminal
+            self.terminal
         }
 
         fn terminal_mut(&mut self) -> &mut Term<T> {
-            &mut self.terminal
+            self.terminal
         }
 
         fn size_info(&self) -> SizeInfo {
@@ -1101,7 +1066,7 @@ mod tests {
             self.message_buffer.message()
         }
 
-        fn config(&self) -> &Config {
+        fn config(&self) -> &UiConfig {
             self.config
         }
 
@@ -1130,7 +1095,7 @@ mod tests {
             fn $name() {
                 let (tokio_handle, charts_tx, _tokio_shutdown) = alacritty_terminal::async_utils::tokio_default_setup();
                 let mut clipboard = Clipboard::new_nop();
-                let cfg = Config::default();
+                let cfg = UiConfig::default();
                 let size = SizeInfo::new(
                     21.0,
                     51.0,
@@ -1141,20 +1106,18 @@ mod tests {
                     false,
                 );
 
-                let mut terminal = Term::new(&cfg, size, MockEventProxy, tokio_handle, charts_tx);
+                let mut terminal = Term::new(&cfg.terminal_config, size, MockEventProxy, tokio_handle, charts_tx);
 
                 let mut mouse = Mouse {
                     click_state: $initial_state,
+                    last_click_button: $initial_button,
                     ..Mouse::default()
                 };
 
-                let mut selection = None;
-
-                let mut message_buffer = MessageBuffer::new();
+                let mut message_buffer = MessageBuffer::default();
 
                 let context = ActionContext {
                     terminal: &mut terminal,
-                    selection: &mut selection,
                     mouse: &mut mouse,
                     size_info: &size,
                     clipboard: &mut clipboard,
@@ -1249,7 +1212,7 @@ mod tests {
             },
             window_id: unsafe { std::mem::transmute_copy(&0) },
         },
-        end_state: ClickState::None,
+        end_state: ClickState::Click,
     }
 
     test_clickstate! {

@@ -5,51 +5,33 @@ use std::borrow::Cow;
 use std::env;
 use std::ffi::CStr;
 use std::fs::File;
-use std::io;
+use std::io::{Error, ErrorKind, Result};
 use std::mem::MaybeUninit;
-use std::os::unix::{
-    io::{AsRawFd, FromRawFd, RawFd},
-    process::CommandExt,
-};
+use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
+use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use std::ptr;
-use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 
-use libc::{self, c_int, pid_t, winsize, TIOCSCTTY};
+use libc::{self, c_int, winsize, TIOCSCTTY};
 use log::error;
 use mio::unix::EventedFd;
 use nix::pty::openpty;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use nix::sys::termios::{self, InputFlags, SetArg};
-use signal_hook::{self as sighook, iterator::Signals};
+use signal_hook::consts as sigconsts;
+use signal_hook_mio::v0_6::Signals;
 
-use crate::config::{Config, Program};
+use crate::config::{Program, PtyConfig};
 use crate::event::OnResize;
 use crate::grid::Dimensions;
 use crate::term::SizeInfo;
 use crate::tty::{ChildEvent, EventedPty, EventedReadWrite};
-
-/// Process ID of child process.
-///
-/// Necessary to put this in static storage for `SIGCHLD` to have access.
-static PID: AtomicUsize = AtomicUsize::new(0);
-
-/// File descriptor of terminal master.
-static FD: AtomicI32 = AtomicI32::new(-1);
 
 macro_rules! die {
     ($($arg:tt)*) => {{
         error!($($arg)*);
         std::process::exit(1);
     }}
-}
-
-pub fn child_pid() -> pid_t {
-    PID.load(Ordering::Relaxed) as pid_t
-}
-
-pub fn master_fd() -> RawFd {
-    FD.load(Ordering::Relaxed) as RawFd
 }
 
 /// Get raw fds for master/slave ends of a new PTY.
@@ -75,17 +57,13 @@ fn set_controlling_terminal(fd: c_int) {
     };
 
     if res < 0 {
-        die!("ioctl TIOCSCTTY failed: {}", io::Error::last_os_error());
+        die!("ioctl TIOCSCTTY failed: {}", Error::last_os_error());
     }
 }
 
 #[derive(Debug)]
 struct Passwd<'a> {
     name: &'a str,
-    passwd: &'a str,
-    uid: libc::uid_t,
-    gid: libc::gid_t,
-    gecos: &'a str,
     dir: &'a str,
     shell: &'a str,
 }
@@ -122,10 +100,6 @@ fn get_pw_entry(buf: &mut [i8; 1024]) -> Passwd<'_> {
     // Build a borrowed Passwd struct.
     Passwd {
         name: unsafe { CStr::from_ptr(entry.pw_name).to_str().unwrap() },
-        passwd: unsafe { CStr::from_ptr(entry.pw_passwd).to_str().unwrap() },
-        uid: entry.pw_uid,
-        gid: entry.pw_gid,
-        gecos: unsafe { CStr::from_ptr(entry.pw_gecos).to_str().unwrap() },
         dir: unsafe { CStr::from_ptr(entry.pw_dir).to_str().unwrap() },
         shell: unsafe { CStr::from_ptr(entry.pw_shell).to_str().unwrap() },
     }
@@ -133,10 +107,20 @@ fn get_pw_entry(buf: &mut [i8; 1024]) -> Passwd<'_> {
 
 pub struct Pty {
     child: Child,
-    fd: File,
+    file: File,
     token: mio::Token,
     signals: Signals,
     signals_token: mio::Token,
+}
+
+impl Pty {
+    pub fn child(&self) -> &Child {
+        &self.child
+    }
+
+    pub fn file(&self) -> &File {
+        &self.file
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -153,7 +137,7 @@ fn default_shell(pw: &Passwd<'_>) -> Program {
 }
 
 /// Create a new TTY and return a handle to interact with it.
-pub fn new<C>(config: &Config<C>, size: &SizeInfo, window_id: Option<usize>) -> Pty {
+pub fn new(config: &PtyConfig, size: &SizeInfo, window_id: Option<usize>) -> Result<Pty> {
     let (master, slave) = make_pty(size.to_winsize());
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -202,7 +186,7 @@ pub fn new<C>(config: &Config<C>, size: &SizeInfo, window_id: Option<usize>) -> 
             // Create a new process group.
             let err = libc::setsid();
             if err == -1 {
-                die!("Failed to set session id: {}", io::Error::last_os_error());
+                return Err(Error::new(ErrorKind::Other, "Failed to set session id"));
             }
 
             set_controlling_terminal(slave);
@@ -228,14 +212,10 @@ pub fn new<C>(config: &Config<C>, size: &SizeInfo, window_id: Option<usize>) -> 
     }
 
     // Prepare signal handling before spawning child.
-    let signals = Signals::new(&[sighook::SIGCHLD]).expect("error preparing signal handling");
+    let signals = Signals::new(&[sigconsts::SIGCHLD]).expect("error preparing signal handling");
 
     match builder.spawn() {
         Ok(child) => {
-            // Remember master FD and child PID so other modules can use it.
-            PID.store(child.id() as usize, Ordering::Relaxed);
-            FD.store(master, Ordering::Relaxed);
-
             unsafe {
                 // Maybe this should be done outside of this function so nonblocking
                 // isn't forced upon consumers. Although maybe it should be?
@@ -244,15 +224,28 @@ pub fn new<C>(config: &Config<C>, size: &SizeInfo, window_id: Option<usize>) -> 
 
             let mut pty = Pty {
                 child,
-                fd: unsafe { File::from_raw_fd(master) },
+                file: unsafe { File::from_raw_fd(master) },
                 token: mio::Token::from(0),
                 signals,
                 signals_token: mio::Token::from(0),
             };
             pty.on_resize(size);
-            pty
+            Ok(pty)
+        },
+        Err(err) => Err(Error::new(
+            ErrorKind::NotFound,
+            format!("Failed to spawn command '{}': {}", shell.program(), err),
+        )),
+    }
+}
+
+impl Drop for Pty {
+    fn drop(&mut self) {
+        // Make sure the PTY is terminated properly.
+        unsafe {
+            libc::kill(self.child.id() as i32, libc::SIGHUP);
         }
-        Err(err) => die!("Failed to spawn command '{}': {}", shell.program(), err),
+        let _ = self.child.wait();
     }
 }
 
@@ -267,9 +260,9 @@ impl EventedReadWrite for Pty {
         token: &mut dyn Iterator<Item = mio::Token>,
         interest: mio::Ready,
         poll_opts: mio::PollOpt,
-    ) -> io::Result<()> {
+    ) -> Result<()> {
         self.token = token.next().unwrap();
-        poll.register(&EventedFd(&self.fd.as_raw_fd()), self.token, interest, poll_opts)?;
+        poll.register(&EventedFd(&self.file.as_raw_fd()), self.token, interest, poll_opts)?;
 
         self.signals_token = token.next().unwrap();
         poll.register(
@@ -286,8 +279,8 @@ impl EventedReadWrite for Pty {
         poll: &mio::Poll,
         interest: mio::Ready,
         poll_opts: mio::PollOpt,
-    ) -> io::Result<()> {
-        poll.reregister(&EventedFd(&self.fd.as_raw_fd()), self.token, interest, poll_opts)?;
+    ) -> Result<()> {
+        poll.reregister(&EventedFd(&self.file.as_raw_fd()), self.token, interest, poll_opts)?;
 
         poll.reregister(
             &self.signals,
@@ -298,14 +291,14 @@ impl EventedReadWrite for Pty {
     }
 
     #[inline]
-    fn deregister(&mut self, poll: &mio::Poll) -> io::Result<()> {
-        poll.deregister(&EventedFd(&self.fd.as_raw_fd()))?;
+    fn deregister(&mut self, poll: &mio::Poll) -> Result<()> {
+        poll.deregister(&EventedFd(&self.file.as_raw_fd()))?;
         poll.deregister(&self.signals)
     }
 
     #[inline]
     fn reader(&mut self) -> &mut File {
-        &mut self.fd
+        &mut self.file
     }
 
     #[inline]
@@ -315,7 +308,7 @@ impl EventedReadWrite for Pty {
 
     #[inline]
     fn writer(&mut self) -> &mut File {
-        &mut self.fd
+        &mut self.file
     }
 
     #[inline]
@@ -328,7 +321,7 @@ impl EventedPty for Pty {
     #[inline]
     fn next_child_event(&mut self) -> Option<ChildEvent> {
         self.signals.pending().next().and_then(|signal| {
-            if signal != sighook::SIGCHLD {
+            if signal != sigconsts::SIGCHLD {
                 return None;
             }
 
@@ -349,6 +342,22 @@ impl EventedPty for Pty {
     }
 }
 
+impl OnResize for Pty {
+    /// Resize the PTY.
+    ///
+    /// Tells the kernel that the window size changed with the new pixel
+    /// dimensions and line/column counts.
+    fn on_resize(&mut self, size: &SizeInfo) {
+        let win = size.to_winsize();
+
+        let res = unsafe { libc::ioctl(self.file.as_raw_fd(), libc::TIOCSWINSZ, &win as *const _) };
+
+        if res < 0 {
+            die!("ioctl TIOCSWINSZ failed: {}", Error::last_os_error());
+        }
+    }
+}
+
 /// Types that can produce a `libc::winsize`.
 pub trait ToWinsize {
     /// Get a `libc::winsize`.
@@ -362,22 +371,6 @@ impl<'a> ToWinsize for &'a SizeInfo {
             ws_col: self.columns() as libc::c_ushort,
             ws_xpixel: self.width() as libc::c_ushort,
             ws_ypixel: self.height() as libc::c_ushort,
-        }
-    }
-}
-
-impl OnResize for Pty {
-    /// Resize the PTY.
-    ///
-    /// Tells the kernel that the window size changed with the new pixel
-    /// dimensions and line/column counts.
-    fn on_resize(&mut self, size: &SizeInfo) {
-        let win = size.to_winsize();
-
-        let res = unsafe { libc::ioctl(self.fd.as_raw_fd(), libc::TIOCSWINSZ, &win as *const _) };
-
-        if res < 0 {
-            die!("ioctl TIOCSWINSZ failed: {}", io::Error::last_os_error());
         }
     }
 }

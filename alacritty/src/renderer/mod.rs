@@ -1,9 +1,8 @@
 use std::collections::HashMap;
 use std::fmt::{self, Display, Formatter};
 use std::hash::BuildHasherDefault;
-use std::io;
 use std::mem::size_of;
-use std::ptr;
+use std::{io, ptr};
 
 use bitflags::bitflags;
 use crossfont::{
@@ -28,6 +27,7 @@ use crate::renderer::charts::ChartRenderer;
 use crate::renderer::hex_bg::HexBgRenderer;
 use crate::renderer::rects::{RectRenderer, RenderRect};
 
+pub mod builtin_font;
 pub mod charts;
 pub mod hex_bg;
 pub mod rects;
@@ -195,7 +195,7 @@ impl GlyphCache {
         let size = font.size();
 
         // Load regular font.
-        let regular_desc = Self::make_desc(&font.normal(), Slant::Normal, Weight::Normal);
+        let regular_desc = Self::make_desc(font.normal(), Slant::Normal, Weight::Normal);
 
         let regular = Self::load_regular_font(rasterizer, &regular_desc, size)?;
 
@@ -237,7 +237,7 @@ impl GlyphCache {
                 error!("{}", err);
 
                 let fallback_desc =
-                    Self::make_desc(&Font::default().normal(), Slant::Normal, Weight::Normal);
+                    Self::make_desc(Font::default().normal(), Slant::Normal, Weight::Normal);
                 rasterizer.load_font(&fallback_desc, size)
             },
         }
@@ -270,8 +270,12 @@ impl GlyphCache {
             return *glyph;
         };
 
-        // Rasterize glyph.
-        let glyph = match self.rasterizer.get_glyph(glyph_key) {
+        // Rasterize the glyph using the built-in font for special characters or the user's font
+        // for everything else.
+        let rasterized = builtin_font::builtin_glyph(glyph_key.character, &self.metrics)
+            .map_or_else(|| self.rasterizer.get_glyph(glyph_key), Ok);
+
+        let glyph = match rasterized {
             Ok(rasterized) => self.load_glyph(loader, rasterized),
             // Load fallback glyph.
             Err(RasterizerError::MissingGlyph(rasterized)) if show_missing => {
@@ -368,7 +372,7 @@ impl GlyphCache {
     /// Prefetch glyphs that are almost guaranteed to be loaded anyways.
     fn load_common_glyphs<L: LoadGlyph>(&mut self, loader: &mut L) {
         self.load_glyphs_for_font(self.font_key, loader);
-        self.load_glyphs_for_font(self.bold_italic_key, loader);
+        self.load_glyphs_for_font(self.bold_key, loader);
         self.load_glyphs_for_font(self.italic_key, loader);
         self.load_glyphs_for_font(self.bold_italic_key, loader);
     }
@@ -376,7 +380,7 @@ impl GlyphCache {
     /// Calculate font metrics without access to a glyph cache.
     pub fn static_metrics(font: Font, dpr: f64) -> Result<crossfont::Metrics, crossfont::Error> {
         let mut rasterizer = crossfont::Rasterizer::new(dpr as f32, font.use_thin_strokes)?;
-        let regular_desc = GlyphCache::make_desc(&font.normal(), Slant::Normal, Weight::Normal);
+        let regular_desc = GlyphCache::make_desc(font.normal(), Slant::Normal, Weight::Normal);
         let regular = Self::load_regular_font(&mut rasterizer, &regular_desc, font.size())?;
         rasterizer.get_glyph(GlyphKey { font_key: regular, character: 'm', size: font.size() })?;
 
@@ -474,13 +478,13 @@ pub enum DrawArrayMode {
     GlPoints,
     GlLineStrip,
     GlLineLoop,
-    /* GlTriangleFan,
-     * GlLines,
-     * GlTriangleStrip,
-     * GlTriangles,
-     * GlQuadStrip, // Unsupported
-     * GlQuads,
-     * GlPolygon, */
+    // GlTriangleFan,
+    // GlLines,
+    // GlTriangleStrip,
+    // GlTriangles,
+    // GlQuadStrip, // Unsupported
+    // GlQuads,
+    // GlPolygon,
 }
 
 impl Batch {
@@ -715,18 +719,14 @@ impl QuadRenderer {
         }
     }
 
-    pub fn activate_regular_state(size_info: &SizeInfo) {
+    pub fn activate_regular_state(&self, size_info: &SizeInfo) {
         // Activate regular state again.
         unsafe {
             // Reset blending strategy.
             gl::BlendFunc(gl::SRC1_COLOR, gl::ONE_MINUS_SRC1_COLOR);
 
             // Restore viewport with padding.
-            let padding_x = size_info.padding_x() as i32;
-            let padding_y = size_info.padding_y() as i32;
-            let width = size_info.width() as i32;
-            let height = size_info.height() as i32;
-            gl::Viewport(padding_x, padding_y, width - 2 * padding_x, height - 2 * padding_y);
+            self.set_viewport(size_info);
         }
     }
 
@@ -740,7 +740,7 @@ impl QuadRenderer {
 
         self.rect_renderer.draw(size_info, rects);
 
-        Self::activate_regular_state(size_info);
+        self.activate_regular_state(size_info);
     }
 
     /// `draw_hex_bg` draws an array of triangles with properties (x,y,r,g,b,a)
@@ -759,7 +759,7 @@ impl QuadRenderer {
 
         self.hex_bg_renderer.draw(opengl_data);
 
-        Self::activate_regular_state(size_info);
+        self.activate_regular_state(size_info);
     }
 
     /// `draw_array` draws a vec made of 2D values in a specific mode
@@ -797,20 +797,20 @@ impl QuadRenderer {
             DrawArrayMode::GlPoints => gl::POINTS,
             DrawArrayMode::GlLineStrip => gl::LINE_STRIP,
             DrawArrayMode::GlLineLoop => gl::LINE_LOOP,
-            /* DrawArrayMode::GlTriangleFan => gl::TRIANGLE_FAN,
-             * DrawArrayMode::GlLines => gl::LINES,
-             * DrawArrayMode::GlTriangleStrip => gl::TRIANGLE_STRIP,
-             * DrawArrayMode::GlTriangles => gl::TRIANGLES,
-             * DrawArrayMode::GlQuadStrip => gl::QUAD_STRIP, // Unsupported?
-             * DrawArrayMode::GlQuads => gl::QUADS,
-             * DrawArrayMode::GlPolygon => gl::POLYGON_MODE, */
+            // DrawArrayMode::GlTriangleFan => gl::TRIANGLE_FAN,
+            // DrawArrayMode::GlLines => gl::LINES,
+            // DrawArrayMode::GlTriangleStrip => gl::TRIANGLE_STRIP,
+            // DrawArrayMode::GlTriangles => gl::TRIANGLES,
+            // DrawArrayMode::GlQuadStrip => gl::QUAD_STRIP, // Unsupported?
+            // DrawArrayMode::GlQuads => gl::QUADS,
+            // DrawArrayMode::GlPolygon => gl::POLYGON_MODE,
         };
 
         Self::prepare_rect_rendering_state(size_info);
 
         self.chart_renderer.draw(&opengl_data_with_color, gl_mode);
 
-        Self::activate_regular_state(size_info);
+        self.activate_regular_state(size_info);
     }
 
     pub fn with_api<F, T>(&mut self, config: &UiConfig, props: &SizeInfo, func: F) -> T
@@ -862,15 +862,9 @@ impl QuadRenderer {
         })
     }
 
-    pub fn resize(&mut self, size: &SizeInfo) {
-        // Viewport.
+    pub fn resize(&self, size: &SizeInfo) {
         unsafe {
-            gl::Viewport(
-                size.padding_x() as i32,
-                size.padding_y() as i32,
-                size.width() as i32 - 2 * size.padding_x() as i32,
-                size.height() as i32 - 2 * size.padding_y() as i32,
-            );
+            self.set_viewport(size);
 
             // Update projection.
             gl::UseProgram(self.program.id);
@@ -881,6 +875,19 @@ impl QuadRenderer {
                 size.padding_y(),
             );
             gl::UseProgram(0);
+        }
+    }
+
+    /// Set the viewport for cell rendering.
+    #[inline]
+    pub fn set_viewport(&self, size: &SizeInfo) {
+        unsafe {
+            gl::Viewport(
+                size.padding_x() as i32,
+                size.padding_y() as i32,
+                size.width() as i32 - 2 * size.padding_x() as i32,
+                size.height() as i32 - 2 * size.padding_y() as i32,
+            );
         }
     }
 }
@@ -898,7 +905,7 @@ impl Drop for QuadRenderer {
 impl<'a> RenderApi<'a> {
     pub fn clear(&self, color: Rgb) {
         unsafe {
-            let alpha = self.config.background_opacity();
+            let alpha = self.config.window_opacity();
             gl::ClearColor(
                 (f32::from(color.r) / 255.0).min(1.0) * alpha,
                 (f32::from(color.g) / 255.0).min(1.0) * alpha,
@@ -956,9 +963,9 @@ impl<'a> RenderApi<'a> {
         self.batch.clear();
     }
 
-    /// Render a string in a variable location. Used for printing the render timer, warnings and
+    /// Draw a string in a variable location. Used for printing the render timer, warnings and
     /// errors.
-    pub fn render_string(
+    pub fn draw_string(
         &mut self,
         glyph_cache: &mut GlyphCache,
         point: Point<usize>,
@@ -981,7 +988,7 @@ impl<'a> RenderApi<'a> {
             .collect::<Vec<_>>();
 
         for cell in cells {
-            self.render_cell(cell, glyph_cache);
+            self.draw_cell(cell, glyph_cache);
         }
     }
 
@@ -1000,7 +1007,7 @@ impl<'a> RenderApi<'a> {
         }
     }
 
-    pub fn render_cell(&mut self, mut cell: RenderableCell, glyph_cache: &mut GlyphCache) {
+    pub fn draw_cell(&mut self, mut cell: RenderableCell, glyph_cache: &mut GlyphCache) {
         // Get font key for cell.
         let font_key = match cell.flags & Flags::BOLD_ITALIC {
             Flags::BOLD_ITALIC => glyph_cache.bold_italic_key,
@@ -1435,12 +1442,12 @@ impl Atlas {
         }
 
         // If there's not enough room in current row, go onto next one.
-        if !self.room_in_row(&glyph) {
+        if !self.room_in_row(glyph) {
             self.advance_row()?;
         }
 
         // If there's still not room, there's nothing that can be done here..
-        if !self.room_in_row(&glyph) {
+        if !self.room_in_row(glyph) {
             return Err(AtlasInsertError::Full);
         }
 

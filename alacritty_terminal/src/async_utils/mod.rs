@@ -5,7 +5,7 @@
 //! channel that may contain new data, may request OpenGL data or increment
 //! internal counters.
 use crate::charts::{prometheus, ChartSizeInfo, TimeSeriesChart, TimeSeriesSource};
-use crate::config::Config;
+use crate::config::{ChartsConfig, Config};
 use crate::event::{Event, EventListener};
 use crate::term::SizeInfo;
 use log::*;
@@ -37,6 +37,7 @@ pub enum AsyncTask {
     IncrementOutputCounter(u64, f64),
     DecorUpdate(usize, f32),
     DecorTimeSync(Instant),
+    Shutdown,
     // Maybe add CloudWatch/etc
 }
 
@@ -339,9 +340,12 @@ pub async fn async_coordinator<U>(
                     event_proxy.send_event(Event::DecorEvent);
                 }
             },
+            AsyncTask::Shutdown => {
+                break;
+            },
         };
     }
-    event!(Level::ERROR, "async_coordinator: Exiting. This shouldn't happen");
+    event!(Level::ERROR, "async_coordinator: Exiting");
 }
 /// `fetch_prometheus_response` gets data from prometheus and once data is ready
 /// it sends the results to the coordinator.
@@ -585,50 +589,20 @@ pub fn get_metric_opengl_data(
     })
 }
 
-/// `tokio_default_setup` creates a default channels and handles, this should be used only for
-/// testing to avoid having to create all the tokio boilerplate, I would like to return a struct but
-/// the ownership and cloning and moving of the separate parts does not seem possible then
-pub fn tokio_default_setup(
-) -> (tokio::runtime::Handle, mpsc::Sender<AsyncTask>, oneshot::Sender<()>) {
-    // Create the channel that is used to communicate with the
-    // charts background task.
-    let (charts_tx, _charts_rx) = mpsc::channel(4_096usize);
-    // Create a channel to receive a handle from Tokio
-    let (handle_tx, handle_rx) = std::sync::mpsc::channel();
-    let (shutdown_tx, shutdown_rx) = oneshot::channel();
-    let _tokio_thread = ::std::thread::Builder::new()
-        .name("async I/O".to_owned())
-        .spawn(move || {
-            let mut tokio_runtime =
-                tokio::runtime::Runtime::new().expect("Failed to start new tokio Runtime");
-            info!("Tokio runtime created.");
-            handle_tx
-                .send(tokio_runtime.handle().clone())
-                .expect("Unable to give runtime handle to the main thread");
-            tokio_runtime.block_on(async { shutdown_rx.await.unwrap() });
-        })
-        .expect("Unable to start async I/O thread");
-    let tokio_handle =
-        handle_rx.recv().expect("Unable to get the tokio handle in a background thread");
-
-    (tokio_handle, charts_tx, shutdown_tx)
-}
-
 /// `spawn_async_tasks` Starts a background thread to be used for tokio for async tasks
-pub fn spawn_async_tasks<C, U>(
-    config: &Config<C>,
+pub fn spawn_async_tasks<U>(
+    chart_config: &ChartsConfig,
     charts_tx: mpsc::Sender<AsyncTask>,
     charts_rx: mpsc::Receiver<AsyncTask>,
     handle_tx: std::sync::mpsc::Sender<tokio::runtime::Handle>,
     size_info: SizeInfo,
     event_proxy: U,
-) -> (thread::JoinHandle<()>, oneshot::Sender<()>)
+) -> thread::JoinHandle<()>
 where
     U: EventListener + Send + 'static,
 {
-    let (shutdown_tx, shutdown_rx) = oneshot::channel();
-    let chart_config = config.charts.clone();
     // let decor_config = config.decorations.clone();
+    let chart_config = chart_config.clone();
     let tokio_thread = ::std::thread::Builder::new()
         .name("async I/O".to_owned())
         .spawn(move || {
@@ -640,35 +614,31 @@ where
             handle_tx
                 .send(tokio_runtime.handle().clone())
                 .expect("Unable to give runtime handle to the main thread");
-            let mut chart_array: Vec<TimeSeriesChart> = vec![];
-            if let Some(chart_config) = &chart_config {
-                chart_array = chart_config.charts.clone();
-                let async_chart_config = chart_config.clone();
-                tokio_runtime.spawn(async move {
-                    async_coordinator(charts_rx, async_chart_config, size_info, event_proxy).await;
-                });
-            }
+            let chart_array = chart_config.charts.clone();
+            let async_chart_config = chart_config.clone();
             let tokio_handle = tokio_runtime.handle().clone();
             tokio_runtime.spawn(async {
                 spawn_charts_intervals(chart_array, charts_tx, tokio_handle);
             });
             tokio_runtime.block_on(async {
-                match shutdown_rx.await {
-                    Ok(_) => info!("Got shutdown signal for Tokio"),
-                    Err(err) => error!("Error on the tokio shutdown channel: {:?}", err),
-                }
+                async_coordinator(charts_rx, async_chart_config, size_info, event_proxy).await
             });
             info!("Tokio runtime finished.");
         })
         .expect("Unable to start async I/O thread");
-    (tokio_thread, shutdown_tx)
+    tokio_thread
 }
 
 /// `run` is an example use of the crate without drawing the data.
-pub fn run<U>(config: crate::config::MockConfig, event_proxy: U)
+pub fn run<U>(config: Config, event_proxy: U)
 where
     U: EventListener + Send + 'static,
 {
+    let chart_config = if let Some(chart_config) = config.charts {
+        chart_config
+    } else {
+        return;
+    };
     let size_info = SizeInfo {
         width: 100.,
         height: 100.,
@@ -680,20 +650,26 @@ where
     };
     // Create the channel that is used to communicate with the
     // charts background task.
-    let (charts_tx, charts_rx) = mpsc::channel(4_096usize);
+    let (mut charts_tx, charts_rx) = mpsc::channel(4_096usize);
     // Create a channel to receive a handle from Tokio
     //
     let (handle_tx, handle_rx) = std::sync::mpsc::channel();
     // Start the Async I/O runtime, this needs to run in a background thread because in OSX, only
     // the main thread can write to the graphics card.
-    let (tokio_thread, tokio_shutdown) =
-        spawn_async_tasks(&config, charts_tx, charts_rx, handle_tx, size_info, event_proxy);
-    let _tokio_handle =
+    let tokio_thread = spawn_async_tasks(
+        &chart_config,
+        charts_tx.clone(),
+        charts_rx,
+        handle_tx,
+        size_info,
+        event_proxy,
+    );
+    let tokio_handle =
         handle_rx.recv().expect("Unable to get the tokio handle in a background thread");
 
     // Load some data, fetch the data and draw it.
+    tokio_handle.spawn(async move { charts_tx.send(AsyncTask::Shutdown).await });
 
     // Terminate the background therad:
-    tokio_shutdown.send(()).expect("Unable to send shutdown signal to tokio runtime");
     tokio_thread.join().expect("Unable to shutdown tokio channel");
 }

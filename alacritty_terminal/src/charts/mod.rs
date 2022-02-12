@@ -1788,6 +1788,7 @@ mod tests {
         // The value should return should be the center: 0.0
         let mid = size_test.scale_y(100f64, 50f64);
         assert!((mid - 0.0f32).abs() < f32::EPSILON);
+        // TODO: Padding_y is not being used anymore to calculate the scale_y
         size_test.term_size.padding_y = 25.;
         // display size: 100 px, input the value: 50, padding_y: 25
         // The value returned should be upper-most: 1.0
@@ -1795,7 +1796,7 @@ mod tests {
         // which means some values would have been chopped (anything above
         // 50f32)
         let mid = size_test.scale_y(100f64, 50f64);
-        assert!((mid - 1.0f32).abs() < f32::EPSILON);
+        assert!((mid - 0.0f32).abs() < f32::EPSILON);
     }
 
     fn simple_chart_setup_with_none() -> (ChartSizeInfo, TimeSeriesChart) {

@@ -9,12 +9,14 @@ use serde::{self, Deserialize, Deserializer};
 use unicode_width::UnicodeWidthChar;
 
 use alacritty_config_derive::ConfigDeserialize;
-use alacritty_terminal::config::{Percentage, Program, LOG_TARGET_CONFIG};
+use alacritty_terminal::config::{
+    Config as TerminalConfig, Percentage, Program, LOG_TARGET_CONFIG,
+};
 use alacritty_terminal::term::search::RegexSearch;
 
 use crate::config::bell::BellConfig;
 use crate::config::bindings::{
-    self, Action, Binding, BindingMode, Key, KeyBinding, ModsWrapper, MouseBinding,
+    self, Action, Binding, Key, KeyBinding, ModeWrapper, ModsWrapper, MouseBinding,
 };
 use crate::config::color::Colors;
 use crate::config::debug::Debug;
@@ -24,7 +26,7 @@ use crate::config::window::WindowConfig;
 
 /// Regex used for the default URL hint.
 #[rustfmt::skip]
-const URL_REGEX: &str = "(magnet:|mailto:|gemini:|gopher:|https:|http:|news:|file:|git:|ssh:|ftp:)\
+const URL_REGEX: &str = "(ipfs:|ipns:|magnet:|mailto:|gemini:|gopher:|https:|http:|news:|file:|git:|ssh:|ftp:)\
                          [^\u{0000}-\u{001F}\u{007F}-\u{009F}<>\"\\s{-}\\^⟨⟩`]+";
 
 #[derive(ConfigDeserialize, Debug, PartialEq)]
@@ -62,6 +64,14 @@ pub struct UiConfig {
     /// Regex hints for interacting with terminal content.
     pub hints: Hints,
 
+    /// Offer IPC through a unix socket.
+    #[cfg(unix)]
+    pub ipc_socket: bool,
+
+    /// Config for the alacritty_terminal itself.
+    #[config(flatten)]
+    pub terminal_config: TerminalConfig,
+
     /// Keybindings.
     key_bindings: KeyBindings,
 
@@ -69,14 +79,17 @@ pub struct UiConfig {
     mouse_bindings: MouseBindings,
 
     /// Background opacity from 0.0 to 1.0.
-    background_opacity: Percentage,
+    #[config(deprecated = "use window.opacity instead")]
+    background_opacity: Option<Percentage>,
 }
 
 impl Default for UiConfig {
     fn default() -> Self {
         Self {
-            alt_send_esc: true,
             live_config_reload: true,
+            alt_send_esc: true,
+            #[cfg(unix)]
+            ipc_socket: true,
             font: Default::default(),
             window: Default::default(),
             mouse: Default::default(),
@@ -84,6 +97,7 @@ impl Default for UiConfig {
             config_paths: Default::default(),
             key_bindings: Default::default(),
             mouse_bindings: Default::default(),
+            terminal_config: Default::default(),
             background_opacity: Default::default(),
             bell: Default::default(),
             colors: Default::default(),
@@ -105,8 +119,8 @@ impl UiConfig {
             let binding = KeyBinding {
                 trigger: binding.key,
                 mods: binding.mods.0,
-                mode: BindingMode::empty(),
-                notmode: BindingMode::empty(),
+                mode: binding.mode.mode,
+                notmode: binding.mode.not_mode,
                 action: Action::Hint(hint.clone()),
             };
 
@@ -115,13 +129,13 @@ impl UiConfig {
     }
 
     #[inline]
-    pub fn background_opacity(&self) -> f32 {
-        self.background_opacity.as_f32()
+    pub fn window_opacity(&self) -> f32 {
+        self.background_opacity.unwrap_or(self.window.opacity).as_f32()
     }
 
     #[inline]
     pub fn key_bindings(&self) -> &[KeyBinding] {
-        &self.key_bindings.0.as_slice()
+        self.key_bindings.0.as_slice()
     }
 
     #[inline]
@@ -242,6 +256,7 @@ impl Default for Hints {
                 binding: Some(HintBinding {
                     key: Key::Keycode(VirtualKeyCode::U),
                     mods: ModsWrapper(ModifiersState::SHIFT | ModifiersState::CTRL),
+                    mode: Default::default(),
                 }),
             }],
             alphabet: Default::default(),
@@ -340,6 +355,8 @@ pub struct HintBinding {
     pub key: Key,
     #[serde(default)]
     pub mods: ModsWrapper,
+    #[serde(default)]
+    pub mode: ModeWrapper,
 }
 
 /// Hint mouse highlighting.
@@ -396,7 +413,7 @@ impl LazyRegexVariant {
         };
 
         // Compile the regex.
-        let regex_search = match RegexSearch::new(&regex) {
+        let regex_search = match RegexSearch::new(regex) {
             Ok(regex_search) => regex_search,
             Err(error) => {
                 error!("hint regex is invalid: {}", error);
