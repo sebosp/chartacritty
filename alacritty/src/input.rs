@@ -1093,7 +1093,6 @@ mod tests {
         } => {
             #[test]
             fn $name() {
-                let (tokio_handle, charts_tx, _tokio_shutdown) = alacritty_terminal::async_utils::tokio_default_setup();
                 let mut clipboard = Clipboard::new_nop();
                 let cfg = UiConfig::default();
                 let size = SizeInfo::new(
@@ -1106,7 +1105,7 @@ mod tests {
                     false,
                 );
 
-                let mut terminal = Term::new(&cfg.terminal_config, size, MockEventProxy, tokio_handle, charts_tx);
+                let mut terminal = Term::new(&cfg.terminal_config, size, MockEventProxy);
 
                 let mut mouse = Mouse {
                     click_state: $initial_state,
