@@ -15,15 +15,18 @@ use mio::unix::UnixReady;
 use mio::{self, Events, PollOpt, Ready};
 use mio_extras::channel::{self, Receiver, Sender};
 
-use crate::ansi;
 use crate::event::{self, Event, EventListener};
 use crate::sync::FairMutex;
-use crate::term::{SizeInfo, Term};
-use crate::thread;
-use crate::tty;
+use crate::term::{SizeInfo, Term, TermChartsHandle};
+use crate::{ansi, thread, tty};
 
-/// Max bytes to read from the PTY.
-const MAX_READ: usize = u16::max_value() as usize;
+use crate::async_utils::AsyncTask;
+
+/// Max bytes to read from the PTY before forced terminal synchronization.
+const READ_BUFFER_SIZE: usize = 0x10_0000;
+
+/// Max bytes to read from the PTY while the terminal is locked.
+const MAX_LOCKED_READ: usize = u16::max_value() as usize;
 
 /// Messages that may be sent to the `EventLoop`.
 #[derive(Debug)]
@@ -51,6 +54,7 @@ pub struct EventLoop<T: tty::EventedPty, U: EventListener> {
     event_proxy: U,
     hold: bool,
     ref_test: bool,
+    tokio_setup: Option<TermChartsHandle>,
 }
 
 /// Helper type which tracks how much of a buffer has been written.
@@ -72,13 +76,13 @@ impl event::Notify for Notifier {
             return;
         }
 
-        self.0.send(Msg::Input(bytes)).expect("send event loop msg");
+        let _ = self.0.send(Msg::Input(bytes));
     }
 }
 
 impl event::OnResize for Notifier {
     fn on_resize(&mut self, size: &SizeInfo) {
-        self.0.send(Msg::Resize(*size)).expect("expected send event loop msg");
+        let _ = self.0.send(Msg::Resize(*size));
     }
 }
 
@@ -167,7 +171,12 @@ where
             event_proxy,
             hold,
             ref_test,
+            tokio_setup: None,
         }
+    }
+
+    pub fn set_tokio_setup(&mut self, tokio_setup: TermChartsHandle) {
+        self.tokio_setup = Some(tokio_setup)
     }
 
     pub fn channel(&self) -> Sender<Msg> {
@@ -181,8 +190,20 @@ where
         while let Ok(msg) = self.rx.try_recv() {
             match msg {
                 Msg::Input(input) => state.write_list.push_back(input),
-                Msg::Shutdown => return false,
                 Msg::Resize(size) => self.pty.on_resize(&size),
+                Msg::Shutdown => {
+                    if let Some(tokio_setup) = &self.tokio_setup {
+                        let tokio_handle = tokio_setup.tokio_handle.clone();
+                        let mut charts_tx = tokio_setup.charts_tx.clone();
+                        tokio_handle.spawn(async move {
+                            charts_tx
+                                .send(AsyncTask::Shutdown)
+                                .await
+                                .expect("Unable to send shutdown signal to tokio runtime");
+                        });
+                    }
+                    return false;
+                },
             }
         }
 
@@ -213,47 +234,57 @@ where
     where
         X: Write,
     {
+        let mut unprocessed = 0;
         let mut processed = 0;
+
+        // Reserve the next terminal lock for PTY reading.
+        let _terminal_lease = Some(self.terminal.lease());
         let mut terminal = None;
 
         loop {
-            match self.pty.reader().read(buf) {
-                Ok(0) => break,
-                Ok(got) => {
-                    // Record bytes read; used to limit time spent in pty_read.
-                    processed += got;
-
-                    // Send a copy of bytes read to a subscriber. Used for
-                    // example with ref test recording.
-                    writer = writer.map(|w| {
-                        w.write_all(&buf[..got]).unwrap();
-                        w
-                    });
-
-                    // Get reference to terminal. Lock is acquired on initial
-                    // iteration and held until there's no bytes left to parse
-                    // or we've reached `MAX_READ`.
-                    if terminal.is_none() {
-                        terminal = Some(self.terminal.lock());
-                    }
-                    let terminal = terminal.as_mut().unwrap();
-
-                    // Run the parser.
-                    for byte in &buf[..got] {
-                        state.parser.advance(&mut **terminal, *byte);
-                    }
-
-                    // Exit if we've processed enough bytes.
-                    if processed > MAX_READ {
-                        break;
-                    }
-                }
+            // Read from the PTY.
+            match self.pty.reader().read(&mut buf[unprocessed..]) {
+                // This is received on Windows/macOS when no more data is readable from the PTY.
+                Ok(0) if unprocessed == 0 => break,
+                Ok(got) => unprocessed += got,
                 Err(err) => match err.kind() {
                     ErrorKind::Interrupted | ErrorKind::WouldBlock => {
-                        break;
-                    }
+                        // Go back to mio if we're caught up on parsing and the PTY would block.
+                        if unprocessed == 0 {
+                            break;
+                        }
+                    },
                     _ => return Err(err),
                 },
+            }
+
+            // Attempt to lock the terminal.
+            let terminal = match &mut terminal {
+                Some(terminal) => terminal,
+                None => terminal.insert(match self.terminal.try_lock_unfair() {
+                    // Force block if we are at the buffer size limit.
+                    None if unprocessed >= READ_BUFFER_SIZE => self.terminal.lock_unfair(),
+                    None => continue,
+                    Some(terminal) => terminal,
+                }),
+            };
+
+            // Write a copy of the bytes to the ref test file.
+            if let Some(writer) = &mut writer {
+                writer.write_all(&buf[..unprocessed]).unwrap();
+            }
+
+            // Parse the incoming bytes.
+            for byte in &buf[..unprocessed] {
+                state.parser.advance(&mut **terminal, *byte);
+            }
+
+            processed += unprocessed;
+            unprocessed = 0;
+
+            // Assure we're not blocking the terminal too long unnecessarily.
+            if processed >= MAX_LOCKED_READ {
+                break;
             }
         }
 
@@ -275,21 +306,21 @@ where
                     Ok(0) => {
                         state.set_current(Some(current));
                         break 'write_many;
-                    }
+                    },
                     Ok(n) => {
                         current.advance(n);
                         if current.finished() {
                             state.goto_next();
                             break 'write_one;
                         }
-                    }
+                    },
                     Err(err) => {
                         state.set_current(Some(current));
                         match err.kind() {
                             ErrorKind::Interrupted | ErrorKind::WouldBlock => break 'write_many,
                             _ => return Err(err),
                         }
-                    }
+                    },
                 }
             }
         }
@@ -300,7 +331,7 @@ where
     pub fn spawn(mut self) -> JoinHandle<(Self, State)> {
         thread::spawn_named("PTY reader", move || {
             let mut state = State::default();
-            let mut buf = [0u8; MAX_READ];
+            let mut buf = [0u8; READ_BUFFER_SIZE];
 
             let mut tokens = (0..).map(Into::into);
 
@@ -345,7 +376,7 @@ where
                             if !self.channel_event(channel_token, &mut state) {
                                 break 'event_loop;
                             }
-                        }
+                        },
 
                         token if token == self.pty.child_event_token() => {
                             if let Some(tty::ChildEvent::Exited) = self.pty.next_child_event() {
@@ -360,7 +391,7 @@ where
                                 self.event_proxy.send_event(Event::Wakeup);
                                 break 'event_loop;
                             }
-                        }
+                        },
 
                         token
                             if token == self.pty.read_token()
@@ -381,7 +412,7 @@ where
                                     // This sucks, but checking the process is either racy or
                                     // blocking.
                                     #[cfg(target_os = "linux")]
-                                    if err.kind() == ErrorKind::Other {
+                                    if err.raw_os_error() == Some(libc::EIO) {
                                         continue;
                                     }
 
@@ -396,7 +427,7 @@ where
                                     break 'event_loop;
                                 }
                             }
-                        }
+                        },
                         _ => (),
                     }
                 }

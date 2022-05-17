@@ -15,11 +15,11 @@ use unicode_width::UnicodeWidthChar;
 use crate::ansi::{
     self, Attr, CharsetIndex, Color, CursorShape, CursorStyle, Handler, NamedColor, StandardCharset,
 };
-use crate::config::Config;
+use crate::config::{ChartsConfig, Config};
 use crate::event::{Event, EventListener};
-use crate::grid::{Dimensions, DisplayIter, Grid, Scroll};
+use crate::grid::{Dimensions, Grid, GridIterator, Scroll};
 use crate::index::{self, Boundary, Column, Direction, Line, Point, Side};
-use crate::selection::{Selection, SelectionRange};
+use crate::selection::{Selection, SelectionRange, SelectionType};
 use crate::term::cell::{Cell, Flags, LineLength};
 use crate::term::color::{Colors, Rgb};
 use crate::vi_mode::{ViModeCursor, ViMotion};
@@ -80,6 +80,7 @@ impl Default for TermMode {
 
 /// `TermChartsHandle` allows connecting to the tokio background thread
 /// that is constantly fetching information and calculating OpenGL vecs.
+#[derive(Clone)]
 pub struct TermChartsHandle {
     /// A handle to the tokio current thread runtime
     pub tokio_handle: tokio::runtime::Handle,
@@ -88,7 +89,39 @@ pub struct TermChartsHandle {
     pub charts_tx: tokio_mpsc::Sender<crate::async_utils::AsyncTask>,
 
     /// Wether or not the charts are enabled
-    enabled: bool,
+    // TODO: Rename to charts_enabled.
+    pub enabled: bool,
+}
+
+impl TermChartsHandle {
+    pub fn new_with_thread<T>(
+        charts_config: &ChartsConfig,
+        size_info: SizeInfo,
+        event_proxy: T,
+    ) -> (Self, std::thread::JoinHandle<()>)
+    where
+        T: EventListener + Send + 'static,
+    {
+        // Create the channel that is used to communicate with the
+        // charts background task.
+        let (charts_tx, charts_rx) = tokio::sync::mpsc::channel(4_096usize);
+        // Create a channel to receive a handle from Tokio
+        let (handle_tx, handle_rx) = std::sync::mpsc::channel();
+        // Start the Async I/O runtime, this needs to run in a background thread because in OSX,
+        // only the main thread can write to the graphics card.
+        let tokio_thread = crate::async_utils::spawn_async_tasks(
+            charts_config,
+            charts_tx.clone(),
+            charts_rx,
+            handle_tx,
+            size_info,
+            event_proxy,
+        );
+        let tokio_handle =
+            handle_rx.recv().expect("Unable to get the tokio handle in a background thread");
+
+        (Self { tokio_handle, charts_tx, enabled: true }, tokio_thread)
+    }
 }
 
 /// Terminal size info.
@@ -109,7 +142,7 @@ pub struct SizeInfo {
     /// Horizontal window padding.
     pub padding_x: f32,
 
-    /// Horizontal window padding.
+    /// Vertical window padding.
     pub padding_y: f32,
 
     /// Number of lines in the viewport.
@@ -294,7 +327,7 @@ pub struct Term<T> {
     event_proxy: T,
 
     /// The handle to the background utilities (Should this be Option?)
-    pub charts_handle: TermChartsHandle,
+    pub tokio_setup: Option<TermChartsHandle>,
 
     /// Current title of the window.
     title: Option<String>,
@@ -328,13 +361,7 @@ impl<T> Term<T> {
         self.vi_mode_recompute_selection();
     }
 
-    pub fn new<C>(
-        config: &Config<C>,
-        size: SizeInfo,
-        event_proxy: T,
-        tokio_handle: tokio::runtime::Handle,
-        charts_tx: tokio_mpsc::Sender<crate::async_utils::AsyncTask>,
-    ) -> Term<T> {
+    pub fn new(config: &Config, size: SizeInfo, event_proxy: T) -> Term<T> {
         let num_cols = size.columns;
         let num_lines = size.screen_lines;
 
@@ -344,10 +371,6 @@ impl<T> Term<T> {
 
         let tabs = TabStops::new(grid.columns());
 
-        let mut charts_enabled = false;
-        if let Some(chart_config) = &config.charts {
-            charts_enabled = !chart_config.charts.is_empty();
-        }
         let scroll_region = Line(0)..Line(grid.screen_lines() as i32);
 
         Term {
@@ -367,7 +390,7 @@ impl<T> Term<T> {
             is_focused: true,
             title: None,
             title_stack: Vec::new(),
-            charts_handle: TermChartsHandle { tokio_handle, charts_tx, enabled: charts_enabled },
+            tokio_setup: None,
             selection: None,
             decorations_enabled: true,
             cell_width: size.cell_width as usize,
@@ -375,7 +398,11 @@ impl<T> Term<T> {
         }
     }
 
-    pub fn update_config<C>(&mut self, config: &Config<C>)
+    pub fn set_tokio_setup(&mut self, tokio_setup: TermChartsHandle) {
+        self.tokio_setup = Some(tokio_setup)
+    }
+
+    pub fn update_config(&mut self, config: &Config)
     where
         T: EventListener,
     {
@@ -400,22 +427,27 @@ impl<T> Term<T> {
     /// Convert the active selection to a String.
     pub fn selection_to_string(&self) -> Option<String> {
         let selection_range = self.selection.as_ref().and_then(|s| s.to_range(self))?;
-        let SelectionRange { start, end, is_block } = selection_range;
+        let SelectionRange { start, end, .. } = selection_range;
 
         let mut res = String::new();
 
-        if is_block {
-            for line in (start.line.0..end.line.0).map(Line::from) {
-                res += &self.line_to_string(line, start.column..end.column, start.column.0 != 0);
-
-                // If the last column is included, newline is appended automatically.
-                if end.column != self.columns() - 1 {
+        match self.selection.as_ref() {
+            Some(Selection { ty: SelectionType::Block, .. }) => {
+                for line in (start.line.0..end.line.0).map(Line::from) {
+                    res += self
+                        .line_to_string(line, start.column..end.column, start.column.0 != 0)
+                        .trim_end();
                     res += "\n";
                 }
-            }
-            res += &self.line_to_string(end.line, start.column..end.column, true);
-        } else {
-            res = self.bounds_to_string(start, end);
+
+                res += self.line_to_string(end.line, start.column..end.column, true).trim_end();
+            },
+            Some(Selection { ty: SelectionType::Lines, .. }) => {
+                res = self.bounds_to_string(start, end) + "\n";
+            },
+            _ => {
+                res = self.bounds_to_string(start, end);
+            },
         }
 
         Some(res)
@@ -432,7 +464,7 @@ impl<T> Term<T> {
             res += &self.line_to_string(line, start_col..end_col, line == end.line);
         }
 
-        res
+        res.strip_suffix('\n').map(str::to_owned).unwrap_or(res)
     }
 
     /// Convert a single line in the grid to a String.
@@ -458,7 +490,7 @@ impl<T> Term<T> {
 
             // Skip over cells until next tab-stop once a tab was found.
             if tab_mode {
-                if self.tabs[column] {
+                if self.tabs[column] || cell.c != ' ' {
                     tab_mode = false;
                 } else {
                     continue;
@@ -564,8 +596,10 @@ impl<T> Term<T> {
 
         // Clamp vi cursor to viewport.
         let vi_point = self.vi_mode_cursor.point;
-        self.vi_mode_cursor.point.column = min(vi_point.column, Column(num_cols - 1));
-        self.vi_mode_cursor.point.line = min(vi_point.line, Line(num_lines as i32 - 1));
+        let viewport_top = Line(-(self.grid.display_offset() as i32));
+        let viewport_bottom = viewport_top + self.bottommost_line();
+        self.vi_mode_cursor.point.line = max(min(vi_point.line, viewport_bottom), viewport_top);
+        self.vi_mode_cursor.point.column = min(vi_point.column, self.last_column());
 
         // Reset scrolling region.
         self.scroll_region = Line(0)..Line(self.screen_lines() as i32);
@@ -573,21 +607,23 @@ impl<T> Term<T> {
 
     pub fn increment_counter(&mut self, counter_type: &'static str, increment: f64) {
         let now = std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-        let mut charts_tx = self.charts_handle.charts_tx.clone();
-        self.charts_handle.tokio_handle.spawn(async move {
-            let send_increment_input_counter = charts_tx.send(if counter_type == "input" {
-                crate::async_utils::AsyncTask::IncrementInputCounter(now, increment)
-            } else {
-                crate::async_utils::AsyncTask::IncrementOutputCounter(now, increment)
+        if let Some(tokio_setup) = &self.tokio_setup {
+            let mut charts_tx = tokio_setup.charts_tx.clone();
+            tokio_setup.tokio_handle.spawn(async move {
+                let send_increment_input_counter = charts_tx.send(if counter_type == "input" {
+                    crate::async_utils::AsyncTask::IncrementInputCounter(now, increment)
+                } else {
+                    crate::async_utils::AsyncTask::IncrementOutputCounter(now, increment)
+                });
+                match send_increment_input_counter.await {
+                    Err(err) => error!("Sending IncrementInputCounter Task: err={:?}", err),
+                    Ok(_) => debug!(
+                        "Sent IncrementInputCounter Task for instant {} with value: {}",
+                        now, increment
+                    ),
+                }
             });
-            match send_increment_input_counter.await {
-                Err(err) => error!("Sending IncrementInputCounter Task: err={:?}", err),
-                Ok(_) => debug!(
-                    "Sent IncrementInputCounter Task for instant {} with value: {}",
-                    now, increment
-                ),
-            }
-        });
+        }
         //.expect("Unable to queue async task for send_increment_input_counter");
     }
 
@@ -603,7 +639,9 @@ impl<T> Term<T> {
 
     #[inline]
     pub fn toggle_chart_show(&mut self) {
-        self.charts_handle.enabled = !self.charts_handle.enabled;
+        if let Some(ref mut tokio_setup) = self.tokio_setup {
+            tokio_setup.enabled = !tokio_setup.enabled;
+        }
     }
 
     /// Active terminal modes.
@@ -647,6 +685,12 @@ impl<T> Term<T> {
         self.selection =
             self.selection.take().and_then(|s| s.rotate(self, &region, -(lines as i32)));
 
+        // Scroll vi mode cursor.
+        let line = &mut self.vi_mode_cursor.point.line;
+        if region.start <= *line && region.end > *line {
+            *line = min(*line + lines, region.end - 1);
+        }
+
         // Scroll between origin and bottom
         self.grid.scroll_down(&region, lines);
     }
@@ -666,8 +710,15 @@ impl<T> Term<T> {
         // Scroll selection.
         self.selection = self.selection.take().and_then(|s| s.rotate(self, &region, lines as i32));
 
-        // Scroll from origin to bottom less number of lines.
         self.grid.scroll_up(&region, lines);
+
+        // Scroll vi mode cursor.
+        let viewport_top = Line(-(self.grid.display_offset() as i32));
+        let top = if region.start == 0 { viewport_top } else { region.start };
+        let line = &mut self.vi_mode_cursor.point.line;
+        if (top <= *line) && region.end > *line {
+            *line = max(*line - lines, top);
+        }
     }
 
     fn deccolm(&mut self)
@@ -684,7 +735,11 @@ impl<T> Term<T> {
 
     #[inline]
     pub fn charts_enabled(&self) -> bool {
-        self.charts_handle.enabled
+        if let Some(tokio_setup) = &self.tokio_setup {
+            tokio_setup.enabled
+        } else {
+            false
+        }
     }
 
     #[inline]
@@ -716,7 +771,7 @@ impl<T> Term<T> {
         }
 
         // Update UI about cursor blinking state changes.
-        self.event_proxy.send_event(Event::CursorBlinkingChange(self.cursor_style().blinking));
+        self.event_proxy.send_event(Event::CursorBlinkingChange);
     }
 
     /// Move vi mode cursor.
@@ -791,7 +846,9 @@ impl<T> Term<T> {
                 point.column = Column(1);
                 point.line += 1;
             },
-            Direction::Right if flags.contains(Flags::WIDE_CHAR) => point.column += 1,
+            Direction::Right if flags.contains(Flags::WIDE_CHAR) => {
+                point.column = min(point.column + 1, self.last_column());
+            },
             Direction::Left if flags.intersects(Flags::WIDE_CHAR | Flags::WIDE_CHAR_SPACER) => {
                 if flags.contains(Flags::WIDE_CHAR_SPACER) {
                     point.column -= 1;
@@ -866,9 +923,9 @@ impl<T> Term<T> {
             // Remove wide char and spacer.
             let wide = cursor_cell.flags.contains(Flags::WIDE_CHAR);
             let point = self.grid.cursor.point;
-            if wide {
+            if wide && point.column < self.last_column() {
                 self.grid[point.line][point.column + 1].flags.remove(Flags::WIDE_CHAR_SPACER);
-            } else {
+            } else if point.column > 0 {
                 self.grid[point.line][point.column - 1].clear_wide();
             }
 
@@ -887,6 +944,10 @@ impl<T> Term<T> {
         cursor_cell.fg = fg;
         cursor_cell.bg = bg;
         cursor_cell.flags = flags;
+    }
+
+    pub fn colors(&self) -> &Colors {
+        &self.colors
     }
 }
 
@@ -1499,13 +1560,24 @@ impl<T: EventListener> Handler for Term<T> {
                 if self.mode.contains(TermMode::ALT_SCREEN) {
                     self.grid.reset_region(..);
                 } else {
+                    let old_offset = self.grid.display_offset();
+
                     self.grid.clear_viewport();
+
+                    // Compute number of lines scrolled by clearing the viewport.
+                    let lines = self.grid.display_offset().saturating_sub(old_offset);
+
+                    self.vi_mode_cursor.point.line =
+                        (self.vi_mode_cursor.point.line - lines).grid_clamp(self, Boundary::Grid);
                 }
 
                 self.selection = None;
             },
             ansi::ClearMode::Saved if self.history_size() > 0 => {
                 self.grid.clear_history();
+
+                self.vi_mode_cursor.point.line =
+                    self.vi_mode_cursor.point.line.grid_clamp(self, Boundary::Cursor);
 
                 self.selection = self.selection.take().filter(|s| !s.intersects_range(..Line(0)));
             },
@@ -1547,8 +1619,7 @@ impl<T: EventListener> Handler for Term<T> {
         self.mode &= TermMode::VI;
         self.mode.insert(TermMode::default());
 
-        let blinking = self.cursor_style().blinking;
-        self.event_proxy.send_event(Event::CursorBlinkingChange(blinking));
+        self.event_proxy.send_event(Event::CursorBlinkingChange);
     }
 
     #[inline]
@@ -1652,7 +1723,7 @@ impl<T: EventListener> Handler for Term<T> {
             ansi::Mode::BlinkingCursor => {
                 let style = self.cursor_style.get_or_insert(self.default_cursor_style);
                 style.blinking = true;
-                self.event_proxy.send_event(Event::CursorBlinkingChange(true));
+                self.event_proxy.send_event(Event::CursorBlinkingChange);
             },
         }
     }
@@ -1694,7 +1765,7 @@ impl<T: EventListener> Handler for Term<T> {
             ansi::Mode::BlinkingCursor => {
                 let style = self.cursor_style.get_or_insert(self.default_cursor_style);
                 style.blinking = false;
-                self.event_proxy.send_event(Event::CursorBlinkingChange(false));
+                self.event_proxy.send_event(Event::CursorBlinkingChange);
             },
         }
     }
@@ -1754,8 +1825,7 @@ impl<T: EventListener> Handler for Term<T> {
         self.cursor_style = style;
 
         // Notify UI about blinking changes.
-        let blinking = style.unwrap_or(self.default_cursor_style).blinking;
-        self.event_proxy.send_event(Event::CursorBlinkingChange(blinking));
+        self.event_proxy.send_event(Event::CursorBlinkingChange);
     }
 
     #[inline]
@@ -1922,7 +1992,7 @@ impl RenderableCursor {
 ///
 /// This contains all content required to render the current terminal view.
 pub struct RenderableContent<'a> {
-    pub display_iter: DisplayIter<'a, Cell>,
+    pub display_iter: GridIterator<'a, Cell>,
     pub selection: Option<SelectionRange>,
     pub cursor: RenderableCursor,
     pub display_offset: usize,
@@ -1980,9 +2050,8 @@ pub mod test {
             .unwrap_or(0);
 
         // Create terminal with the appropriate dimensions.
-        let (tokio_handle, charts_tx, _tokio_shutdown) = crate::async_utils::tokio_default_setup();
         let size = SizeInfo::new(num_cols as f32, lines.len() as f32, 1., 1., 0., 0., false);
-        let mut term = Term::new(&Config::<()>::default(), size, (), tokio_handle, charts_tx);
+        let mut term = Term::new(&Config::default(), size, ());
 
         // Fill terminal with content.
         for (line, text) in lines.iter().enumerate() {
@@ -2017,17 +2086,118 @@ mod tests {
     use std::mem;
 
     use crate::ansi::{self, CharsetIndex, Handler, StandardCharset};
-    use crate::config::MockConfig;
+    use crate::config::Config;
     use crate::grid::{Grid, Scroll};
     use crate::index::{Column, Point, Side};
     use crate::selection::{Selection, SelectionType};
     use crate::term::cell::{Cell, Flags};
 
     #[test]
+    fn scroll_display_page_up() {
+        let size = SizeInfo::new(5., 10., 1.0, 1.0, 0.0, 0.0, false);
+        let mut term = Term::new(&Config::default(), size, ());
+
+        // Create 11 lines of scrollback.
+        for _ in 0..20 {
+            term.newline();
+        }
+
+        // Scrollable amount to top is 11.
+        term.scroll_display(Scroll::PageUp);
+        assert_eq!(term.vi_mode_cursor.point, Point::new(Line(-1), Column(0)));
+        assert_eq!(term.grid.display_offset(), 10);
+
+        // Scrollable amount to top is 1.
+        term.scroll_display(Scroll::PageUp);
+        assert_eq!(term.vi_mode_cursor.point, Point::new(Line(-2), Column(0)));
+        assert_eq!(term.grid.display_offset(), 11);
+
+        // Scrollable amount to top is 0.
+        term.scroll_display(Scroll::PageUp);
+        assert_eq!(term.vi_mode_cursor.point, Point::new(Line(-2), Column(0)));
+        assert_eq!(term.grid.display_offset(), 11);
+    }
+
+    #[test]
+    fn scroll_display_page_down() {
+        let size = SizeInfo::new(5., 10., 1.0, 1.0, 0.0, 0.0, false);
+        let mut term = Term::new(&Config::default(), size, ());
+
+        // Create 11 lines of scrollback.
+        for _ in 0..20 {
+            term.newline();
+        }
+
+        // Change display_offset to topmost.
+        term.grid_mut().scroll_display(Scroll::Top);
+        term.vi_mode_cursor = ViModeCursor::new(Point::new(Line(-11), Column(0)));
+
+        // Scrollable amount to bottom is 11.
+        term.scroll_display(Scroll::PageDown);
+        assert_eq!(term.vi_mode_cursor.point, Point::new(Line(-1), Column(0)));
+        assert_eq!(term.grid.display_offset(), 1);
+
+        // Scrollable amount to bottom is 1.
+        term.scroll_display(Scroll::PageDown);
+        assert_eq!(term.vi_mode_cursor.point, Point::new(Line(0), Column(0)));
+        assert_eq!(term.grid.display_offset(), 0);
+
+        // Scrollable amount to bottom is 0.
+        term.scroll_display(Scroll::PageDown);
+        assert_eq!(term.vi_mode_cursor.point, Point::new(Line(0), Column(0)));
+        assert_eq!(term.grid.display_offset(), 0);
+    }
+
+    #[test]
+    fn simple_selection_works() {
+        let size = SizeInfo::new(5., 5., 1.0, 1.0, 0.0, 0.0, false);
+        let mut term = Term::new(&Config::default(), size, ());
+        let grid = term.grid_mut();
+        for i in 0..4 {
+            if i == 1 {
+                continue;
+            }
+
+            grid[Line(i)][Column(0)].c = '"';
+
+            for j in 1..4 {
+                grid[Line(i)][Column(j)].c = 'a';
+            }
+
+            grid[Line(i)][Column(4)].c = '"';
+        }
+        grid[Line(2)][Column(0)].c = ' ';
+        grid[Line(2)][Column(4)].c = ' ';
+        grid[Line(2)][Column(4)].flags.insert(Flags::WRAPLINE);
+        grid[Line(3)][Column(0)].c = ' ';
+
+        // Multiple lines contain an empty line.
+        term.selection = Some(Selection::new(
+            SelectionType::Simple,
+            Point { line: Line(0), column: Column(0) },
+            Side::Left,
+        ));
+        if let Some(s) = term.selection.as_mut() {
+            s.update(Point { line: Line(2), column: Column(4) }, Side::Right);
+        }
+        assert_eq!(term.selection_to_string(), Some(String::from("\"aaa\"\n\n aaa ")));
+
+        // A wrapline.
+        term.selection = Some(Selection::new(
+            SelectionType::Simple,
+            Point { line: Line(2), column: Column(0) },
+            Side::Left,
+        ));
+        if let Some(s) = term.selection.as_mut() {
+            s.update(Point { line: Line(3), column: Column(4) }, Side::Right);
+        }
+        assert_eq!(term.selection_to_string(), Some(String::from(" aaa  aaa\"")));
+    }
+
+    #[test]
     fn semantic_selection_works() {
-        let (tokio_handle, charts_tx, _tokio_shutdown) = crate::async_utils::tokio_default_setup();
         let size = SizeInfo::new(5., 3., 1.0, 1.0, 0.0, 0.0, false);
-        let mut term = Term::new(&MockConfig::default(), size, (), tokio_handle, charts_tx);
+        let mut term = Term::new(&Config::default(), size, ());
         let mut grid: Grid<Cell> = Grid::new(3, 5, 0);
         for i in 0..5 {
             for j in 0..2 {
@@ -2074,9 +2244,8 @@ mod tests {
 
     #[test]
     fn line_selection_works() {
-        let (tokio_handle, charts_tx, _tokio_shutdown) = crate::async_utils::tokio_default_setup();
         let size = SizeInfo::new(5., 1., 1.0, 1.0, 0.0, 0.0, false);
-        let mut term = Term::new(&MockConfig::default(), size, (), tokio_handle, charts_tx);
+        let mut term = Term::new(&Config::default(), size, ());
         let mut grid: Grid<Cell> = Grid::new(1, 5, 0);
         for i in 0..5 {
             grid[Line(0)][Column(i)].c = 'a';
@@ -2095,29 +2264,46 @@ mod tests {
     }
 
     #[test]
-    fn selecting_empty_line() {
-        let (tokio_handle, charts_tx, _tokio_shutdown) = crate::async_utils::tokio_default_setup();
-        let size = SizeInfo::new(3.0, 3.0, 1.0, 1.0, 0.0, 0.0, false);
-        let mut term = Term::new(&MockConfig::default(), size, (), tokio_handle, charts_tx);
-        let mut grid: Grid<Cell> = Grid::new(3, 3, 0);
-        for l in 0..3 {
-            if l != 1 {
-                for c in 0..3 {
-                    grid[Line(l)][Column(c)].c = 'a';
-                }
+    fn block_selection_works() {
+        let size = SizeInfo::new(5., 5., 1.0, 1.0, 0.0, 0.0, false);
+        let mut term = Term::new(&Config::default(), size, ());
+        let grid = term.grid_mut();
+        for i in 1..4 {
+            grid[Line(i)][Column(0)].c = '"';
+
+            for j in 1..4 {
+                grid[Line(i)][Column(j)].c = 'a';
             }
+
+            grid[Line(i)][Column(4)].c = '"';
         }
+        grid[Line(2)][Column(2)].c = ' ';
+        grid[Line(2)][Column(4)].flags.insert(Flags::WRAPLINE);
+        grid[Line(3)][Column(4)].c = ' ';
 
-        mem::swap(&mut term.grid, &mut grid);
-
-        let mut selection = Selection::new(
-            SelectionType::Simple,
-            Point { line: Line(0), column: Column(0) },
+        term.selection = Some(Selection::new(
+            SelectionType::Block,
+            Point { line: Line(0), column: Column(3) },
             Side::Left,
-        );
-        selection.update(Point { line: Line(2), column: Column(2) }, Side::Right);
-        term.selection = Some(selection);
-        assert_eq!(term.selection_to_string(), Some("aaa\n\naaa\n".into()));
+        ));
+
+        // The same column.
+        if let Some(s) = term.selection.as_mut() {
+            s.update(Point { line: Line(3), column: Column(3) }, Side::Right);
+        }
+        assert_eq!(term.selection_to_string(), Some(String::from("\na\na\na")));
+
+        // The first column.
+        if let Some(s) = term.selection.as_mut() {
+            s.update(Point { line: Line(3), column: Column(0) }, Side::Left);
+        }
+        assert_eq!(term.selection_to_string(), Some(String::from("\n\"aa\n\"a\n\"aa")));
+
+        // The last column.
+        if let Some(s) = term.selection.as_mut() {
+            s.update(Point { line: Line(3), column: Column(4) }, Side::Right);
+        }
+        assert_eq!(term.selection_to_string(), Some(String::from("\na\"\na\"\na")));
     }
 
     /// Check that the grid can be serialized back and forth losslessly.
@@ -2135,9 +2321,8 @@ mod tests {
 
     #[test]
     fn input_line_drawing_character() {
-        let (tokio_handle, charts_tx, _tokio_shutdown) = crate::async_utils::tokio_default_setup();
         let size = SizeInfo::new(21.0, 51.0, 3.0, 3.0, 0.0, 0.0, false);
-        let mut term = Term::new(&MockConfig::default(), size, (), tokio_handle, charts_tx);
+        let mut term = Term::new(&Config::default(), size, ());
         let cursor = Point::new(Line(0), Column(0));
         term.configure_charset(CharsetIndex::G0, StandardCharset::SpecialCharacterAndLineDrawing);
         term.input('a');
@@ -2146,10 +2331,103 @@ mod tests {
     }
 
     #[test]
+    fn clearing_viewport_keeps_history_position() {
+        let size = SizeInfo::new(10.0, 20.0, 1.0, 1.0, 0.0, 0.0, false);
+        let mut term = Term::new(&Config::default(), size, ());
+
+        // Create 10 lines of scrollback.
+        for _ in 0..29 {
+            term.newline();
+        }
+
+        // Change the display area.
+        term.scroll_display(Scroll::Top);
+
+        assert_eq!(term.grid.display_offset(), 10);
+
+        // Clear the viewport.
+        term.clear_screen(ansi::ClearMode::All);
+
+        assert_eq!(term.grid.display_offset(), 10);
+    }
+
+    #[test]
+    fn clearing_viewport_with_vi_mode_keeps_history_position() {
+        let size = SizeInfo::new(10.0, 20.0, 1.0, 1.0, 0.0, 0.0, false);
+        let mut term = Term::new(&Config::default(), size, ());
+
+        // Create 10 lines of scrollback.
+        for _ in 0..29 {
+            term.newline();
+        }
+
+        // Enable vi mode.
+        term.toggle_vi_mode();
+
+        // Change the display area and the vi cursor position.
+        term.scroll_display(Scroll::Top);
+        term.vi_mode_cursor.point = Point::new(Line(-5), Column(3));
+
+        assert_eq!(term.grid.display_offset(), 10);
+
+        // Clear the viewport.
+        term.clear_screen(ansi::ClearMode::All);
+
+        assert_eq!(term.grid.display_offset(), 10);
+        assert_eq!(term.vi_mode_cursor.point, Point::new(Line(-5), Column(3)));
+    }
+
+    #[test]
+    fn clearing_scrollback_resets_display_offset() {
+        let size = SizeInfo::new(10.0, 20.0, 1.0, 1.0, 0.0, 0.0, false);
+        let mut term = Term::new(&Config::default(), size, ());
+
+        // Create 10 lines of scrollback.
+        for _ in 0..29 {
+            term.newline();
+        }
+
+        // Change the display area.
+        term.scroll_display(Scroll::Top);
+
+        assert_eq!(term.grid.display_offset(), 10);
+
+        // Clear the scrollback buffer.
+        term.clear_screen(ansi::ClearMode::Saved);
+
+        assert_eq!(term.grid.display_offset(), 0);
+    }
+
+    #[test]
+    fn clearing_scrollback_sets_vi_cursor_into_viewport() {
+        let size = SizeInfo::new(10.0, 20.0, 1.0, 1.0, 0.0, 0.0, false);
+        let mut term = Term::new(&Config::default(), size, ());
+
+        // Create 10 lines of scrollback.
+        for _ in 0..29 {
+            term.newline();
+        }
+
+        // Enable vi mode.
+        term.toggle_vi_mode();
+
+        // Change the display area and the vi cursor position.
+        term.scroll_display(Scroll::Top);
+        term.vi_mode_cursor.point = Point::new(Line(-5), Column(3));
+
+        assert_eq!(term.grid.display_offset(), 10);
+
+        // Clear the scrollback buffer.
+        term.clear_screen(ansi::ClearMode::Saved);
+
+        assert_eq!(term.grid.display_offset(), 0);
+        assert_eq!(term.vi_mode_cursor.point, Point::new(Line(0), Column(3)));
+    }
+
+    #[test]
     fn clear_saved_lines() {
-        let (tokio_handle, charts_tx, _tokio_shutdown) = crate::async_utils::tokio_default_setup();
         let size = SizeInfo::new(21.0, 51.0, 3.0, 3.0, 0.0, 0.0, false);
-        let mut term = Term::new(&MockConfig::default(), size, (), tokio_handle, charts_tx);
+        let mut term = Term::new(&Config::default(), size, ());
 
         // Add one line of scrollback.
         term.grid.scroll_up(&(Line(0)..Line(1)), 1);
@@ -2169,10 +2447,29 @@ mod tests {
     }
 
     #[test]
+    fn vi_cursor_keep_pos_on_scrollback_buffer() {
+        let size = SizeInfo::new(5., 10., 1.0, 1.0, 0.0, 0.0, false);
+        let mut term = Term::new(&Config::default(), size, ());
+
+        // Create 11 lines of scrollback.
+        for _ in 0..20 {
+            term.newline();
+        }
+
+        // Enable vi mode.
+        term.toggle_vi_mode();
+
+        term.scroll_display(Scroll::Top);
+        term.vi_mode_cursor.point.line = Line(-11);
+
+        term.linefeed();
+        assert_eq!(term.vi_mode_cursor.point.line, Line(-12));
+    }
+
+    #[test]
     fn grow_lines_updates_active_cursor_pos() {
-        let (tokio_handle, charts_tx, _tokio_shutdown) = crate::async_utils::tokio_default_setup();
         let mut size = SizeInfo::new(100.0, 10.0, 1.0, 1.0, 0.0, 0.0, false);
-        let mut term = Term::new(&MockConfig::default(), size, (), tokio_handle, charts_tx);
+        let mut term = Term::new(&Config::default(), size, ());
 
         // Create 10 lines of scrollback.
         for _ in 0..19 {
@@ -2191,9 +2488,8 @@ mod tests {
 
     #[test]
     fn grow_lines_updates_inactive_cursor_pos() {
-        let (tokio_handle, charts_tx, _tokio_shutdown) = crate::async_utils::tokio_default_setup();
         let mut size = SizeInfo::new(100.0, 10.0, 1.0, 1.0, 0.0, 0.0, false);
-        let mut term = Term::new(&MockConfig::default(), size, (), tokio_handle, charts_tx);
+        let mut term = Term::new(&Config::default(), size, ());
 
         // Create 10 lines of scrollback.
         for _ in 0..19 {
@@ -2218,9 +2514,8 @@ mod tests {
 
     #[test]
     fn shrink_lines_updates_active_cursor_pos() {
-        let (tokio_handle, charts_tx, _tokio_shutdown) = crate::async_utils::tokio_default_setup();
         let mut size = SizeInfo::new(100.0, 10.0, 1.0, 1.0, 0.0, 0.0, false);
-        let mut term = Term::new(&MockConfig::default(), size, (), tokio_handle, charts_tx);
+        let mut term = Term::new(&Config::default(), size, ());
 
         // Create 10 lines of scrollback.
         for _ in 0..19 {
@@ -2239,9 +2534,8 @@ mod tests {
 
     #[test]
     fn shrink_lines_updates_inactive_cursor_pos() {
-        let (tokio_handle, charts_tx, _tokio_shutdown) = crate::async_utils::tokio_default_setup();
         let mut size = SizeInfo::new(100.0, 10.0, 1.0, 1.0, 0.0, 0.0, false);
-        let mut term = Term::new(&MockConfig::default(), size, (), tokio_handle, charts_tx);
+        let mut term = Term::new(&Config::default(), size, ());
 
         // Create 10 lines of scrollback.
         for _ in 0..19 {
@@ -2266,9 +2560,8 @@ mod tests {
 
     #[test]
     fn window_title() {
-        let (tokio_handle, charts_tx, _tokio_shutdown) = crate::async_utils::tokio_default_setup();
         let size = SizeInfo::new(21.0, 51.0, 3.0, 3.0, 0.0, 0.0, false);
-        let mut term = Term::new(&MockConfig::default(), size, (), tokio_handle, charts_tx);
+        let mut term = Term::new(&Config::default(), size, ());
 
         // Title None by default.
         assert_eq!(term.title, None);

@@ -10,14 +10,18 @@ env:
 
 jobs:
   macos:
-    runs-on: macos-latest
+    runs-on: macos-11
 
     steps:
       - uses: actions/checkout@v2
+      - name: Install ARM target
+        run: rustup update && rustup target add aarch64-apple-darwin
       - name: Test
         run: cargo test --release
-      - name: Make App
-        run: make dmg
+      - name: Build ARM
+        run: cargo build --release --target=aarch64-apple-darwin
+      - name: Make DMG
+        run: make dmg-universal
       - name: Upload Application
         run: |
           mv ./target/release/osx/Alacritty.dmg ./Alacritty-${GITHUB_REF##*/}.dmg
@@ -63,16 +67,19 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get install cmake pkg-config libfreetype6-dev libfontconfig1-dev \
-            libxcb-xfixes0-dev python3
+            libxcb-xfixes0-dev libxkbcommon-dev python3
       - name: Test
         run: cargo test --release
       - name: Gzip manpage
-        run: gzip -c "./extra/alacritty.man" > "./alacritty.1.gz"
+        run: |
+          gzip -c "./extra/alacritty.man" > "./alacritty.1.gz"
+          gzip -c "./extra/alacritty-msg.man" > "./alacritty-msg.1.gz"
       - name: Upload Assets
         run: |
           mv ./extra/logo/alacritty-term.svg ./Alacritty.svg
           ./.github/workflows/upload_asset.sh ./Alacritty.svg $GITHUB_TOKEN
           ./.github/workflows/upload_asset.sh ./alacritty.1.gz $GITHUB_TOKEN
+          ./.github/workflows/upload_asset.sh ./alacritty-msg.1.gz $GITHUB_TOKEN
           ./.github/workflows/upload_asset.sh ./extra/completions/alacritty.bash $GITHUB_TOKEN
           ./.github/workflows/upload_asset.sh ./extra/completions/alacritty.fish $GITHUB_TOKEN
           ./.github/workflows/upload_asset.sh ./extra/completions/_alacritty $GITHUB_TOKEN

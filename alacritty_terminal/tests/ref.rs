@@ -6,7 +6,7 @@ use std::io::Read;
 use std::path::Path;
 
 use alacritty_terminal::ansi;
-use alacritty_terminal::config::MockConfig;
+use alacritty_terminal::config::Config;
 use alacritty_terminal::event::{Event, EventListener};
 use alacritty_terminal::grid::{Dimensions, Grid};
 use alacritty_terminal::index::{Column, Line};
@@ -101,12 +101,10 @@ fn ref_test(dir: &Path) {
     let grid: Grid<Cell> = json::from_str(&serialized_grid).unwrap();
     let ref_config: RefConfig = json::from_str(&serialized_cfg).unwrap();
 
-    let mut config = MockConfig::default();
+    let mut config = Config::default();
     config.scrolling.set_history(ref_config.history_size);
 
-    let (tokio_handle, charts_tx, _tokio_shutdown) =
-        alacritty_terminal::async_utils::tokio_default_setup();
-    let mut terminal = Term::new(&config, size, Mock, tokio_handle, charts_tx);
+    let mut terminal = Term::new(&config, size, Mock);
     let mut parser = ansi::Processor::new();
 
     for byte in recording {

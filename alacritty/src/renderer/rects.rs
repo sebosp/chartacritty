@@ -10,9 +10,8 @@ use alacritty_terminal::term::color::Rgb;
 use alacritty_terminal::term::SizeInfo;
 
 use crate::display::content::RenderableCell;
-use crate::gl;
 use crate::gl::types::*;
-use crate::renderer;
+use crate::{gl, renderer};
 
 #[derive(Debug, Copy, Clone)]
 pub struct RenderRect {
@@ -158,9 +157,9 @@ impl RenderLines {
     /// Update the stored lines with the next cell info.
     #[inline]
     pub fn update(&mut self, cell: &RenderableCell) {
-        self.update_flag(&cell, Flags::UNDERLINE);
-        self.update_flag(&cell, Flags::DOUBLE_UNDERLINE);
-        self.update_flag(&cell, Flags::STRIKEOUT);
+        self.update_flag(cell, Flags::UNDERLINE);
+        self.update_flag(cell, Flags::DOUBLE_UNDERLINE);
+        self.update_flag(cell, Flags::STRIKEOUT);
     }
 
     /// Update the lines for a specific flag.

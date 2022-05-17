@@ -5,11 +5,104 @@ The sections should follow the order `Packaging`, `Added`, `Changed`, `Fixed` an
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 0.11.0-dev
+
+### Packaging
+
+- Minimum Rust version has been bumped to 1.56.0
+
+### Changed
+
+- The `--help` output was reworked with a new colorful syntax
+
+### Fixed
+
+- OSC 4 not handling `?`
+- `?` in OSC strings reporting default colors instead of modified ones
+- OSC 104 not clearing colors when second parameter is empty
+
+## 0.10.0
+
+### Packaging
+
+- New `extra/alacritty-msg.man` manpage for the `alacritty msg` subcommand
+- Minimum Rust version has been bumped to 1.53.0
+
+### Added
+
+- Option `colors.transparent_background_colors` to allow applying opacity to all background colors
+- Support for running multiple windows from a single Alacritty instance (see docs/features.md)
+- Urgency support on Wayland via `xdg_activation_v1`
+
+### Changed
+
+- `ExpandSelection` is now a configurable mouse binding action
+- Config option `background_opacity`, you should use `window.opacity` instead
+- Reload configuration files when their symbolic link is replaced
+- Strip trailing whitespaces when yanking from a block selection
+- Display area keeps history position when viewport is cleared
+- Commands spawn from the current directory of the foreground shell in Unix-like systems
+- Remove trailing newline from strings taken from hints or simple/semantic selections
+- Builtin font is now used for box drawing characters from `U+2500` to `U+259f`
+- Logs now print the time since startup instead of the local time
+
+### Fixed
+
+- Line indicator obstructing vi mode cursor when scrolled into history
+- Vi mode search starting in the line below the vi cursor
+- Invisible cursor with matching foreground/background colors
+- Crash when hovering over a match emptied by post-processing
+- Crash when the vi cursor is on the scrollback and viewport clear is invoked
+- Freeze when the vi cursor is on the scrollback and scrollback clear is invoked
+- Vi cursor on topmost of the display moving downward when scrolled into history with active output
+- Input lag on Wayland with Nvidia binary driver
+- Crash when hovering the mouse over fullwidth characters
+- Do not create logfile if the file already exists
+
+### Removed
+
+- Wayland client side decorations were simplified
+
+## 0.9.0
+
+### Packaging
+
+- Minimum Rust version has been bumped to 1.46.0
+
+### Added
+
+- Support for `ipfs`/`ipns` URLs
+- Mode field for regex hint bindings
+
+### Fixed
+
+- Regression in rendering performance with dense grids since 0.6.0
+- Crash/Freezes with partially visible fullwidth characters due to alt screen resize
+- Incorrect vi cursor position after invoking `ScrollPage*` action
+- Slow PTY read performance with extremely dense grids
+- Crash when resizing during vi mode
+- Unintentional text selection range change after leaving vi mode
+- Deadlock on Windows during high frequency output
+- Search without vi mode not starting at the correct location when scrolled into history
+- Crash when starting a vi mode search from the bottommost line
+- Original scroll position not restored after canceling search
+- Clipboard copy skipping non-empty cells when encountering an interrupted tab character
+- Vi mode cursor moving downward when scrolled in history with active output
+- Crash when moving fullwidth characters off the side of the terminal in insert mode
+- Broken bitmap font rendering with FreeType 2.11+
+- Crash with non-utf8 font paths on Linux
+- Newly installed fonts not rendering until Alacritty restart
+
 ## 0.8.0
 
 ### Packaging
 
 - Minimum Rust version has been bumped to 1.45.0
+
+### Packaging
+
+- Updated shell completions
+- Added ARM executable to prebuilt macOS binaries
 
 ### Added
 
