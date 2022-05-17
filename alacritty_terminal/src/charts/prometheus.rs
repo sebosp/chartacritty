@@ -1,8 +1,8 @@
+//! `Prometheus HTTP API` data structures
 use crate::charts::TimeSeries;
 use crate::charts::ValueCollisionPolicy;
 use crate::term::color::Rgb;
 use hyper::client::connect::HttpConnector;
-/// `Prometheus HTTP API` data structures
 use hyper::Client;
 use hyper_tls::HttpsConnector;
 use log::*;
