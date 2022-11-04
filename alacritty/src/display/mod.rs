@@ -1245,7 +1245,7 @@ impl Display {
                                 * max_hexagon_opacity;
                             self.renderer.draw_array(
                                 size_info,
-                                &opengl_data,
+                                opengl_data,
                                 Rgb { r: 25, g: 88, b: 167 },
                                 curr_opacity.abs(),
                                 renderer::DrawArrayMode::LineLoop,
