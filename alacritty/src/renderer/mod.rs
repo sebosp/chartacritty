@@ -45,9 +45,9 @@ pub enum Error {
 
 #[derive(Debug)]
 pub enum DrawArrayMode {
-    GlPoints,
-    GlLineStrip,
-    GlLineLoop,
+    Points,
+    LineStrip,
+    LineLoop,
     // GlTriangleFan,
     // GlLines,
     // GlTriangleStrip,
@@ -272,7 +272,7 @@ impl Renderer {
         mode: DrawArrayMode,
     ) {
         match mode {
-            DrawArrayMode::GlPoints => (),
+            DrawArrayMode::Points => (),
             _ =>
             // All types, except for Points, need at least 2 x,y coordinates to work on
             {
@@ -294,9 +294,9 @@ impl Renderer {
         // Maybe we can extend the enum with custom classes that end up being like this.
         // So then it should become a trait
         let gl_mode = match mode {
-            DrawArrayMode::GlPoints => gl::POINTS,
-            DrawArrayMode::GlLineStrip => gl::LINE_STRIP,
-            DrawArrayMode::GlLineLoop => gl::LINE_LOOP,
+            DrawArrayMode::Points => gl::POINTS,
+            DrawArrayMode::LineStrip => gl::LINE_STRIP,
+            DrawArrayMode::LineLoop => gl::LINE_LOOP,
             // DrawArrayMode::GlTriangleFan => gl::TRIANGLE_FAN,
             // DrawArrayMode::GlLines => gl::LINES,
             // DrawArrayMode::GlTriangleStrip => gl::TRIANGLE_STRIP,

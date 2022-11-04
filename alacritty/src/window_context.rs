@@ -116,8 +116,8 @@ impl WindowContext {
         let mut tokio_setup: Option<TermChartsHandle> = None;
         if let Some(charts_config) = &config.terminal_config.charts {
             let (tokio_setup_tmp, tokio_thread_tmp) = TermChartsHandle::new_with_thread(
-                &charts_config,
-                display.size_info.clone().into(),
+                charts_config,
+                display.size_info.into(),
                 event_proxy.clone(),
             );
             terminal.set_tokio_setup(tokio_setup_tmp.clone());

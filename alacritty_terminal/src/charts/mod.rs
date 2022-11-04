@@ -2083,7 +2083,7 @@ mod tests {
             upsert_type: UpsertType::default(),
             prev_value: (0, None),
         };
-        assert_eq!(bad.sanity_check(), false);
+        assert!(!bad.sanity_check());
         let good = TimeSeries {
             metrics: vec![(0, Some(0f64)), (1, Some(1f64)), (2, Some(2f64)), (3, Some(3f64))],
             active_items: 4,

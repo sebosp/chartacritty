@@ -623,7 +623,7 @@ impl Display {
 
         let mut decorations = DecorationsConfig::optional_decor_to_sized(
             config.terminal_config.decorations.clone(),
-            size_info.clone().into(),
+            size_info.into(),
         );
         decorations.init_timers();
         Ok(Self {
@@ -776,7 +776,7 @@ impl Display {
             if let Some(ref tokio_setup) = self.tokio_setup {
                 let tokio_setup = tokio_setup.clone();
                 let mut charts_tx = tokio_setup.charts_tx.clone();
-                let tokio_handle = tokio_setup.tokio_handle.clone();
+                let tokio_handle = tokio_setup.tokio_handle;
                 tokio_handle.spawn(async move {
                     let send_display_size = charts_tx.send(
                         alacritty_terminal::async_utils::AsyncTask::ChangeDisplaySize(
@@ -818,7 +818,7 @@ impl Display {
 
         self.renderer.resize(&self.size_info);
         // SEB: TODO: do not call when decorations are not enabled
-        self.decorations.set_size_info(self.size_info.clone().into());
+        self.decorations.set_size_info(self.size_info.into());
 
         if self.collect_damage() {
             let lines = self.size_info.screen_lines();
@@ -1117,7 +1117,7 @@ impl Display {
         // Draw the charts
         if charts_enabled {
             if let (Some(tokio_handle), Some(charts_tx)) = (tokio_handle, charts_tx) {
-                self.draw_charts(&config, &size_info, charts_tx, tokio_handle);
+                self.draw_charts(config, &size_info, charts_tx, tokio_handle);
             }
         } else {
             debug!("Charts are not enabled");
@@ -1178,7 +1178,7 @@ impl Display {
                         tokio_handle.clone(),
                     );
                     self.renderer.draw_array(
-                        &size_info,
+                        size_info,
                         &opengl_data.0,
                         Rgb {
                             r: chart_config.charts[chart_idx].decorations[decoration_idx].color().r,
@@ -1186,7 +1186,7 @@ impl Display {
                             b: chart_config.charts[chart_idx].decorations[decoration_idx].color().b,
                         },
                         opengl_data.1,
-                        renderer::DrawArrayMode::GlLineStrip,
+                        renderer::DrawArrayMode::LineStrip,
                     );
                 }
                 for series_idx in 0..chart_config.charts[chart_idx].sources.len() {
@@ -1198,7 +1198,7 @@ impl Display {
                         tokio_handle.clone(),
                     );
                     self.renderer.draw_array(
-                        &size_info,
+                        size_info,
                         &opengl_data.0,
                         Rgb {
                             r: chart_config.charts[chart_idx].sources[series_idx].color().r,
@@ -1206,7 +1206,7 @@ impl Display {
                             b: chart_config.charts[chart_idx].sources[series_idx].color().b,
                         },
                         opengl_data.1,
-                        renderer::DrawArrayMode::GlLineStrip,
+                        renderer::DrawArrayMode::LineStrip,
                     );
                 }
             }
@@ -1244,37 +1244,37 @@ impl Display {
                                 / wind_screen_size)
                                 * max_hexagon_opacity;
                             self.renderer.draw_array(
-                                &size_info,
+                                size_info,
                                 &opengl_data,
                                 Rgb { r: 25, g: 88, b: 167 },
                                 curr_opacity.abs(),
-                                renderer::DrawArrayMode::GlLineLoop,
+                                renderer::DrawArrayMode::LineLoop,
                             );
                         }
                     },
                     DecorationLines::TreeSilhoutte(tree_decor) => {
                         self.renderer.draw_array(
-                            &size_info,
+                            size_info,
                             &tree_decor.vecs,
                             Rgb { r: 25, g: 88, b: 167 },
                             0.9f32,
-                            renderer::DrawArrayMode::GlLineStrip,
+                            renderer::DrawArrayMode::LineStrip,
                         );
                     },
                 },
                 DecorationTypes::Triangles(tri_decor) => match tri_decor {
                     DecorationTriangles::Hexagon(hex_tris) => {
-                        self.renderer.draw_hex_bg(&size_info, &hex_tris.vecs);
+                        self.renderer.draw_hex_bg(size_info, &hex_tris.vecs);
                     },
                 },
                 DecorationTypes::Points(point_decor) => match point_decor {
                     DecorationPoints::Hexagon(hex_points) => {
                         self.renderer.draw_array(
-                            &size_info,
+                            size_info,
                             &hex_points.vecs,
                             Rgb { r: 25, g: 88, b: 167 },
                             0.7f32,
-                            renderer::DrawArrayMode::GlPoints,
+                            renderer::DrawArrayMode::Points,
                         );
                     },
                 },
