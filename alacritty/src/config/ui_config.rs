@@ -1,14 +1,15 @@
 use std::cell::RefCell;
+use std::fmt::{self, Formatter};
 use std::path::PathBuf;
 use std::rc::Rc;
 
 use glutin::event::{ModifiersState, VirtualKeyCode};
 use log::error;
-use serde::de::Error as SerdeError;
+use serde::de::{Error as SerdeError, MapAccess, Visitor};
 use serde::{self, Deserialize, Deserializer};
 use unicode_width::UnicodeWidthChar;
 
-use alacritty_config_derive::ConfigDeserialize;
+use alacritty_config_derive::{ConfigDeserialize, SerdeReplace};
 use alacritty_terminal::config::{
     Config as TerminalConfig, Percentage, Program, LOG_TARGET_CONFIG,
 };
@@ -29,7 +30,7 @@ use crate::config::window::WindowConfig;
 const URL_REGEX: &str = "(ipfs:|ipns:|magnet:|mailto:|gemini:|gopher:|https:|http:|news:|file:|git:|ssh:|ftp:)\
                          [^\u{0000}-\u{001F}\u{007F}-\u{009F}<>\"\\s{-}\\^⟨⟩`]+";
 
-#[derive(ConfigDeserialize, Debug, PartialEq)]
+#[derive(ConfigDeserialize, Clone, Debug, PartialEq)]
 pub struct UiConfig {
     /// Font configuration.
     pub font: Font,
@@ -144,7 +145,7 @@ impl UiConfig {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(SerdeReplace, Clone, Debug, PartialEq, Eq)]
 struct KeyBindings(Vec<KeyBinding>);
 
 impl Default for KeyBindings {
@@ -162,7 +163,7 @@ impl<'de> Deserialize<'de> for KeyBindings {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(SerdeReplace, Clone, Debug, PartialEq, Eq)]
 struct MouseBindings(Vec<MouseBinding>);
 
 impl Default for MouseBindings {
@@ -222,7 +223,7 @@ pub struct Delta<T: Default> {
 }
 
 /// Regex terminal hints.
-#[derive(ConfigDeserialize, Debug, PartialEq, Eq)]
+#[derive(ConfigDeserialize, Clone, Debug, PartialEq, Eq)]
 pub struct Hints {
     /// Characters for the hint labels.
     alphabet: HintsAlphabet,
@@ -236,6 +237,7 @@ impl Default for Hints {
         // Add URL hint by default when no other hint is present.
         let pattern = LazyRegexVariant::Pattern(String::from(URL_REGEX));
         let regex = LazyRegex(Rc::new(RefCell::new(pattern)));
+        let content = HintContent::new(Some(regex), true);
 
         #[cfg(not(any(target_os = "macos", windows)))]
         let action = HintAction::Command(Program::Just(String::from("xdg-open")));
@@ -249,7 +251,7 @@ impl Default for Hints {
 
         Self {
             enabled: vec![Hint {
-                regex,
+                content,
                 action,
                 post_processing: true,
                 mouse: Some(HintMouse { enabled: true, mods: Default::default() }),
@@ -271,7 +273,7 @@ impl Hints {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(SerdeReplace, Clone, Debug, PartialEq, Eq)]
 struct HintsAlphabet(String);
 
 impl Default for HintsAlphabet {
@@ -332,7 +334,8 @@ pub enum HintAction {
 #[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct Hint {
     /// Regex for finding matches.
-    pub regex: LazyRegex,
+    #[serde(flatten)]
+    pub content: HintContent,
 
     /// Action executed when this hint is triggered.
     #[serde(flatten)]
@@ -347,6 +350,80 @@ pub struct Hint {
 
     /// Binding required to search for this hint.
     binding: Option<HintBinding>,
+}
+
+#[derive(Default, Clone, Debug, PartialEq, Eq)]
+pub struct HintContent {
+    /// Regex for finding matches.
+    pub regex: Option<LazyRegex>,
+
+    /// Escape sequence hyperlinks.
+    pub hyperlinks: bool,
+}
+
+impl HintContent {
+    pub fn new(regex: Option<LazyRegex>, hyperlinks: bool) -> Self {
+        Self { regex, hyperlinks }
+    }
+}
+
+impl<'de> Deserialize<'de> for HintContent {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct HintContentVisitor;
+        impl<'a> Visitor<'a> for HintContentVisitor {
+            type Value = HintContent;
+
+            fn expecting(&self, f: &mut Formatter<'_>) -> fmt::Result {
+                f.write_str("a mapping")
+            }
+
+            fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
+            where
+                M: MapAccess<'a>,
+            {
+                let mut content = Self::Value::default();
+
+                while let Some((key, value)) = map.next_entry::<String, serde_yaml::Value>()? {
+                    match key.as_str() {
+                        "regex" => match Option::<LazyRegex>::deserialize(value) {
+                            Ok(regex) => content.regex = regex,
+                            Err(err) => {
+                                error!(
+                                    target: LOG_TARGET_CONFIG,
+                                    "Config error: hint's regex: {}", err
+                                );
+                            },
+                        },
+                        "hyperlinks" => match bool::deserialize(value) {
+                            Ok(hyperlink) => content.hyperlinks = hyperlink,
+                            Err(err) => {
+                                error!(
+                                    target: LOG_TARGET_CONFIG,
+                                    "Config error: hint's hyperlinks: {}", err
+                                );
+                            },
+                        },
+                        _ => (),
+                    }
+                }
+
+                // Require at least one of hyperlinks or regex trigger hint matches.
+                if content.regex.is_none() && !content.hyperlinks {
+                    return Err(M::Error::custom(
+                        "Config error: At least on of the hint's regex or hint's hyperlinks must \
+                         be set",
+                    ));
+                }
+
+                Ok(content)
+            }
+        }
+
+        deserializer.deserialize_any(HintContentVisitor)
+    }
 }
 
 /// Binding for triggering a keyboard hint.

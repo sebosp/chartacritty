@@ -6,6 +6,7 @@ use std::io::Write;
 use std::mem;
 #[cfg(not(windows))]
 use std::os::unix::io::{AsRawFd, RawFd};
+use std::rc::Rc;
 #[cfg(not(any(target_os = "macos", windows)))]
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -14,25 +15,30 @@ use crossfont::Size;
 use glutin::event::{Event as GlutinEvent, ModifiersState, WindowEvent};
 use glutin::event_loop::{EventLoopProxy, EventLoopWindowTarget};
 use glutin::window::WindowId;
-use log::info;
+use log::{error, info};
 use serde_json as json;
 #[cfg(all(feature = "wayland", not(any(target_os = "macos", windows))))]
 use wayland_client::EventQueue;
 
+use alacritty_config::SerdeReplace;
 use alacritty_terminal::event::Event as TerminalEvent;
 use alacritty_terminal::event_loop::{EventLoop as PtyEventLoop, Msg, Notifier};
 use alacritty_terminal::grid::{Dimensions, Scroll};
 use alacritty_terminal::index::Direction;
 use alacritty_terminal::sync::FairMutex;
+use alacritty_terminal::term::test::TermSize;
 use alacritty_terminal::term::{Term, TermChartsHandle, TermMode};
 use alacritty_terminal::tty;
 
+#[cfg(unix)]
+use crate::cli::IpcConfig;
 use crate::cli::WindowOptions;
 use crate::clipboard::Clipboard;
 use crate::config::UiConfig;
 use crate::display::Display;
 use crate::event::{ActionContext, Event, EventProxy, EventType, Mouse, SearchState};
 use crate::input;
+use crate::logging::LOG_TARGET_IPC_CONFIG;
 use crate::message_bar::MessageBuffer;
 use crate::scheduler::Scheduler;
 
@@ -42,6 +48,7 @@ pub struct WindowContext {
     pub display: Display,
     event_queue: Vec<GlutinEvent<'static, Event>>,
     terminal: Arc<FairMutex<Term<EventProxy>>>,
+    cursor_blink_timed_out: bool,
     modifiers: ModifiersState,
     search_state: SearchState,
     received_count: usize,
@@ -50,17 +57,20 @@ pub struct WindowContext {
     font_size: Size,
     mouse: Mouse,
     dirty: bool,
+    occluded: bool,
     preserve_title: bool,
     #[cfg(not(windows))]
     master_fd: RawFd,
     #[cfg(not(windows))]
     shell_pid: u32,
+    ipc_config: Vec<(String, serde_yaml::Value)>,
+    config: Rc<UiConfig>,
 }
 
 impl WindowContext {
     /// Create a new terminal window context.
     pub fn new(
-        config: &UiConfig,
+        config: Rc<UiConfig>,
         options: &WindowOptions,
         window_event_loop: &EventLoopWindowTarget<Event>,
         proxy: EventLoopProxy<Event>,
@@ -77,8 +87,8 @@ impl WindowContext {
         // Create a display.
         //
         // The display manages a window and can draw the terminal.
-        let display = Display::new(
-            config,
+        let mut display = Display::new(
+            &config,
             window_event_loop,
             &identity,
             #[cfg(all(feature = "wayland", not(any(target_os = "macos", windows))))]
@@ -99,19 +109,20 @@ impl WindowContext {
         // wrapped in a clonable mutex since both the I/O loop and display need to
         // access it.
         let mut terminal =
-            Term::new(&config.terminal_config, display.size_info, event_proxy.clone());
+            Term::new(&config.terminal_config, &display.size_info, event_proxy.clone());
 
         // If tokio is enabled (i.e. charts are enabled) then capture the thread join handle
-        let mut tokio_thread: Option<std::thread::JoinHandle<()>> = None;
+        let mut _tokio_thread: Option<std::thread::JoinHandle<()>> = None;
         let mut tokio_setup: Option<TermChartsHandle> = None;
         if let Some(charts_config) = &config.terminal_config.charts {
             let (tokio_setup_tmp, tokio_thread_tmp) = TermChartsHandle::new_with_thread(
                 &charts_config,
-                display.size_info.clone(),
+                display.size_info.clone().into(),
                 event_proxy.clone(),
             );
             terminal.set_tokio_setup(tokio_setup_tmp.clone());
-            tokio_thread = Some(tokio_thread_tmp);
+            display.set_tokio_setup(tokio_setup_tmp.clone());
+            _tokio_thread = Some(tokio_thread_tmp);
             tokio_setup = Some(tokio_setup_tmp);
         }
         let terminal = Arc::new(FairMutex::new(terminal));
@@ -121,7 +132,7 @@ impl WindowContext {
         // The PTY forks a process to run the shell on the slave side of the
         // pseudoterminal. A file descriptor for the master side is retained for
         // reading/writing to the shell.
-        let pty = tty::new(&pty_config, &display.size_info, display.window.x11_window_id())?;
+        let pty = tty::new(&pty_config, display.size_info.into(), display.window.id().into())?;
 
         #[cfg(not(windows))]
         let master_fd = pty.file().as_raw_fd();
@@ -157,56 +168,88 @@ impl WindowContext {
             event_proxy.send_event(TerminalEvent::CursorBlinkingChange.into());
         }
 
+        let font_size = config.font.size();
+
         // Create context for the Alacritty window.
         Ok(WindowContext {
-            font_size: config.font.size(),
-            notifier: Notifier(loop_tx),
+            preserve_title,
+            font_size,
             terminal,
             display,
-            preserve_title,
             #[cfg(not(windows))]
             master_fd,
             #[cfg(not(windows))]
             shell_pid,
+            config,
+            notifier: Notifier(loop_tx),
+            cursor_blink_timed_out: Default::default(),
             suppress_chars: Default::default(),
             message_buffer: Default::default(),
             received_count: Default::default(),
             search_state: Default::default(),
             event_queue: Default::default(),
+            ipc_config: Default::default(),
             modifiers: Default::default(),
             mouse: Default::default(),
             dirty: Default::default(),
+            occluded: Default::default(),
         })
     }
 
     /// Update the terminal window to the latest config.
-    pub fn update_config(&mut self, old_config: &UiConfig, config: &UiConfig) {
-        self.display.update_config(config);
-        self.terminal.lock().update_config(&config.terminal_config);
+    pub fn update_config(&mut self, new_config: Rc<UiConfig>) {
+        let old_config = mem::replace(&mut self.config, new_config);
+
+        // Apply ipc config if there are overrides.
+        if !self.ipc_config.is_empty() {
+            let mut config = (*self.config).clone();
+
+            // Apply each option, removing broken ones.
+            let mut i = 0;
+            while i < self.ipc_config.len() {
+                let (key, value) = &self.ipc_config[i];
+
+                match config.replace(key, value.clone()) {
+                    Err(err) => {
+                        error!(
+                            target: LOG_TARGET_IPC_CONFIG,
+                            "Unable to override option '{}': {}", key, err
+                        );
+                        self.ipc_config.swap_remove(i);
+                    },
+                    Ok(_) => i += 1,
+                }
+            }
+
+            self.config = Rc::new(config);
+        }
+
+        self.display.update_config(&self.config);
+        self.terminal.lock().update_config(&self.config.terminal_config);
 
         // Reload cursor if its thickness has changed.
         if (old_config.terminal_config.cursor.thickness()
-            - config.terminal_config.cursor.thickness())
+            - self.config.terminal_config.cursor.thickness())
         .abs()
             > f32::EPSILON
         {
             self.display.pending_update.set_cursor_dirty();
         }
 
-        if old_config.font != config.font {
+        if old_config.font != self.config.font {
             // Do not update font size if it has been changed at runtime.
             if self.font_size == old_config.font.size() {
-                self.font_size = config.font.size();
+                self.font_size = self.config.font.size();
             }
 
-            let font = config.font.clone().with_size(self.font_size);
+            let font = self.config.font.clone().with_size(self.font_size);
             self.display.pending_update.set_font(font);
         }
 
         // Update display if padding options were changed.
         let window_config = &old_config.window;
-        if window_config.padding(1.) != config.window.padding(1.)
-            || window_config.dynamic_padding != config.window.dynamic_padding
+        if window_config.padding(1.) != self.config.window.padding(1.)
+            || window_config.dynamic_padding != self.config.window.dynamic_padding
         {
             self.display.pending_update.dirty = true;
         }
@@ -219,22 +262,18 @@ impl WindowContext {
         // │ N  │       Y       │              N              ││     N     │
         // │ N  │       N       │              _              ││     Y     │
         if !self.preserve_title
-            && (!config.window.dynamic_title
+            && (!self.config.window.dynamic_title
                 || self.display.window.title() == old_config.window.identity.title)
         {
-            self.display.window.set_title(config.window.identity.title.clone());
+            self.display.window.set_title(self.config.window.identity.title.clone());
         }
-
-        // Set subpixel anti-aliasing.
-        #[cfg(target_os = "macos")]
-        crossfont::set_font_smoothing(config.font.use_thin_strokes);
 
         // Disable shadows for transparent windows on macOS.
         #[cfg(target_os = "macos")]
-        self.display.window.set_has_shadow(config.window_opacity() >= 1.0);
+        self.display.window.set_has_shadow(self.config.window_opacity() >= 1.0);
 
         // Update hint keys.
-        self.display.hint_state.update_alphabet(config.hints.alphabet());
+        self.display.hint_state.update_alphabet(self.config.hints.alphabet());
 
         // Update cursor blinking.
         let event = Event::new(TerminalEvent::CursorBlinkingChange.into(), None);
@@ -243,12 +282,48 @@ impl WindowContext {
         self.dirty = true;
     }
 
+    /// Update the IPC config overrides.
+    #[cfg(unix)]
+    pub fn update_ipc_config(&mut self, config: Rc<UiConfig>, ipc_config: IpcConfig) {
+        // Clear previous IPC errors.
+        self.message_buffer.remove_target(LOG_TARGET_IPC_CONFIG);
+
+        if ipc_config.reset {
+            self.ipc_config.clear();
+        } else {
+            for option in &ipc_config.options {
+                // Separate config key/value.
+                let (key, value) = match option.split_once('=') {
+                    Some(split) => split,
+                    None => {
+                        error!(
+                            target: LOG_TARGET_IPC_CONFIG,
+                            "'{}': IPC config option missing value", option
+                        );
+                        continue;
+                    },
+                };
+
+                // Try and parse value as yaml.
+                match serde_yaml::from_str(value) {
+                    Ok(value) => self.ipc_config.push((key.to_owned(), value)),
+                    Err(err) => error!(
+                        target: LOG_TARGET_IPC_CONFIG,
+                        "'{}': Invalid IPC config value: {:?}", option, err
+                    ),
+                }
+            }
+        }
+
+        // Reload current config to pull new IPC config.
+        self.update_config(config);
+    }
+
     /// Process events for this terminal window.
     pub fn handle_event(
         &mut self,
         event_loop: &EventLoopWindowTarget<Event>,
         event_proxy: &EventLoopProxy<Event>,
-        config: &mut UiConfig,
         clipboard: &mut Clipboard,
         scheduler: &mut Scheduler,
         event: GlutinEvent<'_, Event>,
@@ -260,13 +335,14 @@ impl WindowContext {
             },
             // Continue to process all pending events.
             GlutinEvent::RedrawEventsCleared => (),
-            // Remap DPR change event to remove the lifetime.
+            // Remap scale_factor change event to remove the lifetime.
             GlutinEvent::WindowEvent {
                 event: WindowEvent::ScaleFactorChanged { scale_factor, new_inner_size },
                 window_id,
             } => {
                 let size = (new_inner_size.width, new_inner_size.height);
-                let event = Event::new(EventType::DprChanged(scale_factor, size), window_id);
+                let event =
+                    Event::new(EventType::ScaleFactorChanged(scale_factor, size), window_id);
                 self.event_queue.push(event.into());
                 return;
             },
@@ -283,6 +359,7 @@ impl WindowContext {
         let old_is_searching = self.search_state.history_index.is_some();
 
         let context = ActionContext {
+            cursor_blink_timed_out: &mut self.cursor_blink_timed_out,
             message_buffer: &mut self.message_buffer,
             received_count: &mut self.received_count,
             suppress_chars: &mut self.suppress_chars,
@@ -293,17 +370,18 @@ impl WindowContext {
             display: &mut self.display,
             mouse: &mut self.mouse,
             dirty: &mut self.dirty,
+            occluded: &mut self.occluded,
             terminal: &mut terminal,
             #[cfg(not(windows))]
             master_fd: self.master_fd,
             #[cfg(not(windows))]
             shell_pid: self.shell_pid,
             preserve_title: self.preserve_title,
+            config: &self.config,
             event_proxy,
             event_loop,
             clipboard,
             scheduler,
-            config,
         };
         let mut processor = input::Processor::new(context);
 
@@ -320,14 +398,15 @@ impl WindowContext {
                 &self.message_buffer,
                 &self.search_state,
                 old_is_searching,
-                config,
+                &self.config,
             );
+            self.dirty = true;
         }
 
         if self.dirty || self.mouse.hint_highlight_dirty {
             self.dirty |= self.display.update_highlighted_hints(
                 &terminal,
-                config,
+                &self.config,
                 &self.mouse,
                 self.modifiers,
             );
@@ -340,7 +419,10 @@ impl WindowContext {
             return;
         }
 
-        if self.dirty {
+        if self.dirty && !self.occluded {
+            // Force the display to process any pending display update.
+            self.display.process_renderer_update();
+
             self.dirty = false;
 
             // Request immediate re-draw if visual bell animation is not finished yet.
@@ -349,7 +431,7 @@ impl WindowContext {
             }
 
             // Redraw screen.
-            self.display.draw(terminal, &self.message_buffer, config, &self.search_state);
+            self.display.draw(terminal, &self.message_buffer, &self.config, &self.search_state);
         }
     }
 
@@ -367,7 +449,9 @@ impl WindowContext {
 
         let serialized_grid = json::to_string(&grid).expect("serialize grid");
 
-        let serialized_size = json::to_string(&self.display.size_info).expect("serialize size");
+        let size_info = &self.display.size_info;
+        let size = TermSize::new(size_info.columns(), size_info.screen_lines());
+        let serialized_size = json::to_string(&size).expect("serialize size");
 
         let serialized_config = format!("{{\"history_size\":{}}}", grid.history_size());
 

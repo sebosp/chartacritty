@@ -1,8 +1,10 @@
 use std::sync::{Arc, Mutex};
 
 use log::{Level, Log, Metadata, Record};
+use serde::Deserialize;
 
-use alacritty_config_derive::ConfigDeserialize;
+use alacritty_config::SerdeReplace as _;
+use alacritty_config_derive::{ConfigDeserialize, SerdeReplace};
 
 #[derive(ConfigDeserialize, Debug, PartialEq, Eq)]
 enum TestEnum {
@@ -35,6 +37,8 @@ struct Test {
     enom_big: TestEnum,
     #[config(deprecated)]
     enom_error: TestEnum,
+    #[config(removed = "it's gone")]
+    gone: bool,
 }
 
 impl Default for Test {
@@ -48,6 +52,7 @@ impl Default for Test {
             enom_small: TestEnum::default(),
             enom_big: TestEnum::default(),
             enom_error: TestEnum::default(),
+            gone: false,
         }
     }
 }
@@ -60,12 +65,16 @@ struct Test2<T: Default> {
     field3: usize,
     #[config(alias = "aliased")]
     field4: u8,
+    newtype: NewType,
 }
 
 #[derive(ConfigDeserialize, Default)]
 struct Test3 {
     flatty: usize,
 }
+
+#[derive(SerdeReplace, Deserialize, Default, PartialEq, Eq, Debug)]
+struct NewType(usize);
 
 #[test]
 fn config_deserialize() {
@@ -90,6 +99,7 @@ fn config_deserialize() {
         enom_small: "one"
         enom_big: "THREE"
         enom_error: "HugaBuga"
+        gone: false
     "#,
     )
     .unwrap();
@@ -101,6 +111,7 @@ fn config_deserialize() {
     assert_eq!(test.enom_small, TestEnum::One);
     assert_eq!(test.enom_big, TestEnum::Three);
     assert_eq!(test.enom_error, Test::default().enom_error);
+    assert!(!test.gone);
     assert_eq!(test.nesting.field1, Test::default().nesting.field1);
     assert_eq!(test.nesting.field2, None);
     assert_eq!(test.nesting.field3, Test::default().nesting.field3);
@@ -116,8 +127,9 @@ fn config_deserialize() {
     ]);
     let warn_logs = logger.warn_logs.lock().unwrap();
     assert_eq!(warn_logs.as_slice(), [
-        "Config warning: field1 is deprecated; use field2 instead",
-        "Config warning: enom_error is deprecated",
+        "Config warning: field1 has been deprecated; use field2 instead",
+        "Config warning: enom_error has been deprecated",
+        "Config warning: gone has been removed; it's gone",
     ]);
 }
 
@@ -152,4 +164,34 @@ impl Log for Logger {
     }
 
     fn flush(&self) {}
+}
+
+#[test]
+fn field_replacement() {
+    let mut test = Test::default();
+
+    let value = serde_yaml::to_value(13).unwrap();
+    test.replace("nesting.field2", value).unwrap();
+
+    assert_eq!(test.nesting.field2, Some(13));
+}
+
+#[test]
+fn replace_derive() {
+    let mut test = Test::default();
+
+    let value = serde_yaml::to_value(9).unwrap();
+    test.replace("nesting.newtype", value).unwrap();
+
+    assert_eq!(test.nesting.newtype, NewType(9));
+}
+
+#[test]
+fn replace_flatten() {
+    let mut test = Test::default();
+
+    let value = serde_yaml::to_value(7).unwrap();
+    test.replace("flatty", value).unwrap();
+
+    assert_eq!(test.flatten.flatty, 7);
 }

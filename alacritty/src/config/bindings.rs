@@ -9,7 +9,7 @@ use serde::de::{self, Error as SerdeError, MapAccess, Unexpected, Visitor};
 use serde::{Deserialize, Deserializer};
 use serde_yaml::Value as SerdeValue;
 
-use alacritty_config_derive::ConfigDeserialize;
+use alacritty_config_derive::{ConfigDeserialize, SerdeReplace};
 
 use alacritty_terminal::config::Program;
 use alacritty_terminal::term::TermMode;
@@ -186,6 +186,9 @@ pub enum Action {
     /// Toggle fullscreen.
     ToggleFullscreen,
 
+    /// Toggle maximized.
+    ToggleMaximized,
+
     /// Toggle simple fullscreen on macOS.
     #[cfg(target_os = "macos")]
     ToggleSimpleFullscreen,
@@ -275,6 +278,8 @@ pub enum ViAction {
     SearchEnd,
     /// Launch the URL below the vi mode cursor.
     Open,
+    /// Centers the screen around the vi mode cursor.
+    CenterAroundViCursor,
 }
 
 /// Search mode specific actions.
@@ -498,6 +503,8 @@ pub fn default_key_bindings() -> Vec<KeyBinding> {
             ViAction::SearchPrevious;
         Return,                        +BindingMode::VI, ~BindingMode::SEARCH;
             ViAction::Open;
+        Z,                             +BindingMode::VI, ~BindingMode::SEARCH;
+            ViAction::CenterAroundViCursor;
         K,                             +BindingMode::VI, ~BindingMode::SEARCH;
             ViMotion::Up;
         J,                             +BindingMode::VI, ~BindingMode::SEARCH;
@@ -895,7 +902,7 @@ struct RawBinding {
 }
 
 impl RawBinding {
-    fn into_mouse_binding(self) -> Result<MouseBinding, Self> {
+    fn into_mouse_binding(self) -> Result<MouseBinding, Box<Self>> {
         if let Some(mouse) = self.mouse {
             Ok(Binding {
                 trigger: mouse,
@@ -905,11 +912,11 @@ impl RawBinding {
                 notmode: self.notmode,
             })
         } else {
-            Err(self)
+            Err(Box::new(self))
         }
     }
 
-    fn into_key_binding(self) -> Result<KeyBinding, Self> {
+    fn into_key_binding(self) -> Result<KeyBinding, Box<Self>> {
         if let Some(key) = self.key {
             Ok(KeyBinding {
                 trigger: key,
@@ -919,7 +926,7 @@ impl RawBinding {
                 notmode: self.notmode,
             })
         } else {
-            Err(self)
+            Err(Box::new(self))
         }
     }
 }
@@ -1009,7 +1016,7 @@ impl<'a> Deserialize<'a> for RawBinding {
                             let val = map.next_value::<SerdeValue>()?;
                             if val.is_u64() {
                                 let scancode = val.as_u64().unwrap();
-                                if scancode > u64::from(std::u32::MAX) {
+                                if scancode > u64::from(u32::MAX) {
                                     return Err(<V::Error as Error>::custom(format!(
                                         "Invalid key binding, scancode too big: {}",
                                         scancode
@@ -1187,7 +1194,7 @@ impl<'a> Deserialize<'a> for KeyBinding {
 ///
 /// Our deserialize impl wouldn't be covered by a derive(Deserialize); see the
 /// impl below.
-#[derive(Debug, Copy, Clone, Hash, Default, Eq, PartialEq)]
+#[derive(SerdeReplace, Debug, Copy, Clone, Hash, Default, Eq, PartialEq)]
 pub struct ModsWrapper(pub ModifiersState);
 
 impl ModsWrapper {

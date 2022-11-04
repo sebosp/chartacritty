@@ -1,24 +1,26 @@
-use std::cmp::max;
+use std::cmp;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
 use serde::Deserialize;
 
-use alacritty_config_derive::ConfigDeserialize;
+use alacritty_config_derive::{ConfigDeserialize, SerdeReplace};
 
 mod scrolling;
 
 use crate::ansi::{CursorShape, CursorStyle};
 
 pub use crate::charts::ChartsConfig;
-pub use crate::config::scrolling::Scrolling;
+pub use crate::config::scrolling::{Scrolling, MAX_SCROLLBACK_LINES};
 pub use crate::decorations::DecorationsConfig;
 
+/// Logging target for config error messages.
 pub const LOG_TARGET_CONFIG: &str = "alacritty_config_derive";
+
 const MIN_BLINK_INTERVAL: u64 = 10;
 
 /// Top-level config type.
-#[derive(ConfigDeserialize, Debug, PartialEq, Default)]
+#[derive(ConfigDeserialize, Clone, Debug, PartialEq, Default)]
 pub struct Config {
     /// TERM env variable.
     pub env: HashMap<String, String>,
@@ -40,7 +42,7 @@ pub struct Config {
     pub pty_config: PtyConfig,
 }
 
-#[derive(ConfigDeserialize, Clone, Debug, PartialEq, Default)]
+#[derive(ConfigDeserialize, Clone, Debug, PartialEq, Eq, Default)]
 pub struct PtyConfig {
     /// Path to a shell program to run on startup.
     pub shell: Option<Program>,
@@ -82,6 +84,7 @@ pub struct Cursor {
 
     thickness: Percentage,
     blink_interval: u64,
+    blink_timeout: u8,
 }
 
 impl Default for Cursor {
@@ -90,6 +93,7 @@ impl Default for Cursor {
             thickness: Percentage(0.15),
             unfocused_hollow: true,
             blink_interval: 750,
+            blink_timeout: 5,
             style: Default::default(),
             vi_mode_style: Default::default(),
         }
@@ -114,11 +118,22 @@ impl Cursor {
 
     #[inline]
     pub fn blink_interval(self) -> u64 {
-        max(self.blink_interval, MIN_BLINK_INTERVAL)
+        cmp::max(self.blink_interval, MIN_BLINK_INTERVAL)
+    }
+
+    #[inline]
+    pub fn blink_timeout(self) -> u64 {
+        const MILLIS_IN_SECOND: u64 = 1000;
+        match self.blink_timeout {
+            0 => 0,
+            blink_timeout => {
+                cmp::max(self.blink_interval * 5 / MILLIS_IN_SECOND, blink_timeout as u64)
+            },
+        }
     }
 }
 
-#[derive(Deserialize, Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(SerdeReplace, Deserialize, Debug, Copy, Clone, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum ConfigCursorStyle {
     Shape(CursorShape),
@@ -215,7 +230,7 @@ impl Program {
 }
 
 /// Wrapper around f32 that represents a percentage value between 0.0 and 1.0.
-#[derive(Deserialize, Clone, Copy, Debug, PartialEq)]
+#[derive(SerdeReplace, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub struct Percentage(f32);
 
 impl Default for Percentage {
@@ -226,13 +241,7 @@ impl Default for Percentage {
 
 impl Percentage {
     pub fn new(value: f32) -> Self {
-        Percentage(if value < 0.0 {
-            0.0
-        } else if value > 1.0 {
-            1.0
-        } else {
-            value
-        })
+        Percentage(value.clamp(0., 1.))
     }
 
     pub fn as_f32(self) -> f32 {

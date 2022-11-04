@@ -21,6 +21,13 @@ pub fn watch(mut paths: Vec<PathBuf>, event_proxy: EventLoopProxy<Event>) {
         return;
     }
 
+    // Exclude char devices like `/dev/null`, sockets, and so on, by checking that file type is a
+    // regular file.
+    paths.retain(|path| {
+        // Call `metadata` to resolve symbolink links.
+        path.metadata().map_or(false, |metadata| metadata.file_type().is_file())
+    });
+
     // Canonicalize paths, keeping the base paths for symlinks.
     for i in 0..paths.len() {
         if let Ok(canonical_path) = paths[i].canonicalize() {
@@ -56,7 +63,7 @@ pub fn watch(mut paths: Vec<PathBuf>, event_proxy: EventLoopProxy<Event>) {
 
         // Watch all configuration file directories.
         for parent in &parents {
-            if let Err(err) = watcher.watch(&parent, RecursiveMode::NonRecursive) {
+            if let Err(err) = watcher.watch(parent, RecursiveMode::NonRecursive) {
                 debug!("Unable to watch config directory {:?}: {}", parent, err);
             }
         }

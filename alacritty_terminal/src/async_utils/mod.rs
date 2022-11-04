@@ -345,7 +345,7 @@ pub async fn async_coordinator<U>(
             },
         };
     }
-    event!(Level::ERROR, "async_coordinator: Exiting");
+    event!(Level::INFO, "async_coordinator: Exiting");
 }
 /// `fetch_prometheus_response` gets data from prometheus and once data is ready
 /// it sends the results to the coordinator.
