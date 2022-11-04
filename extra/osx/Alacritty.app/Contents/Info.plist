@@ -7,7 +7,7 @@
   <key>CFBundleExecutable</key>
   <string>alacritty</string>
   <key>CFBundleIdentifier</key>
-  <string>io.alacritty</string>
+  <string>org.alacritty</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
@@ -15,7 +15,7 @@
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.11.0-dev</string>
+  <string>0.12.0-dev</string>
   <key>CFBundleSupportedPlatforms</key>
   <array>
     <string>MacOSX</string>

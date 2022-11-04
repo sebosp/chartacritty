@@ -1,16 +1,17 @@
 use std::cmp::max;
+use std::os::raw::c_ulong;
 use std::path::PathBuf;
 
 #[cfg(unix)]
 use clap::Subcommand;
-use clap::{Args, Parser};
+use clap::{Args, Parser, ValueHint};
 use log::{self, error, LevelFilter};
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
 
 use alacritty_terminal::config::{Program, PtyConfig};
 
-use crate::config::window::{Class, Identity, DEFAULT_NAME};
+use crate::config::window::{Class, Identity};
 use crate::config::{serde_utils, UiConfig};
 
 /// CLI options for the main Alacritty executable.
@@ -25,28 +26,28 @@ pub struct Options {
     #[clap(long)]
     pub ref_test: bool,
 
-    /// Defines the X11 window ID (as a decimal integer) to embed Alacritty within.
+    /// X11 window ID to embed Alacritty within (decimal or hexadecimal with "0x" prefix).
     #[clap(long)]
     pub embed: Option<String>,
 
     /// Specify alternative configuration file [default: $XDG_CONFIG_HOME/alacritty/alacritty.yml].
     #[cfg(not(any(target_os = "macos", windows)))]
-    #[clap(long)]
+    #[clap(long, value_hint = ValueHint::FilePath)]
     pub config_file: Option<PathBuf>,
 
     /// Specify alternative configuration file [default: %APPDATA%\alacritty\alacritty.yml].
     #[cfg(windows)]
-    #[clap(long)]
+    #[clap(long, value_hint = ValueHint::FilePath)]
     pub config_file: Option<PathBuf>,
 
     /// Specify alternative configuration file [default: $HOME/.config/alacritty/alacritty.yml].
     #[cfg(target_os = "macos")]
-    #[clap(long)]
+    #[clap(long, value_hint = ValueHint::FilePath)]
     pub config_file: Option<PathBuf>,
 
     /// Path for IPC socket creation.
     #[cfg(unix)]
-    #[clap(long)]
+    #[clap(long, value_hint = ValueHint::FilePath)]
     pub socket: Option<PathBuf>,
 
     /// Reduces the level of verbosity (the min level is -qq).
@@ -80,14 +81,7 @@ impl Options {
         let mut options = Self::parse();
 
         // Convert `--option` flags into serde `Value`.
-        for option in &options.option {
-            match option_as_value(option) {
-                Ok(value) => {
-                    options.config_options = serde_utils::merge(options.config_options, value);
-                },
-                Err(_) => eprintln!("Invalid CLI config option: {:?}", option),
-            }
-        }
+        options.config_options = options_as_value(&options.option);
 
         options
     }
@@ -100,7 +94,7 @@ impl Options {
         }
 
         config.window.dynamic_title &= self.window_options.window_identity.title.is_none();
-        config.window.embed = self.embed.as_ref().and_then(|embed| embed.parse().ok());
+        config.window.embed = self.embed.as_ref().and_then(|embed| parse_hex_or_decimal(embed));
         config.debug.print_events |= self.print_events;
         config.debug.log_level = max(config.debug.log_level, self.log_level());
         config.debug.ref_test |= self.ref_test;
@@ -131,7 +125,18 @@ impl Options {
     }
 }
 
-/// Format an option in the format of `parent.field=value` to a serde Value.
+/// Combine multiple options into a [`serde_yaml::Value`].
+pub fn options_as_value(options: &[String]) -> Value {
+    options.iter().fold(Value::default(), |value, option| match option_as_value(option) {
+        Ok(new_value) => serde_utils::merge(value, new_value),
+        Err(_) => {
+            eprintln!("Ignoring invalid option: {:?}", option);
+            value
+        },
+    })
+}
+
+/// Parse an option in the format of `parent.field=value` as a serde Value.
 fn option_as_value(option: &str) -> Result<Value, serde_yaml::Error> {
     let mut yaml_text = String::with_capacity(option.len());
     let mut closing_brackets = String::new();
@@ -158,26 +163,31 @@ fn option_as_value(option: &str) -> Result<Value, serde_yaml::Error> {
 
 /// Parse the class CLI parameter.
 fn parse_class(input: &str) -> Result<Class, String> {
-    match input.find(',') {
-        Some(position) => {
-            let general = input[position + 1..].to_owned();
-
-            // Warn the user if they've passed too many values.
-            if general.contains(',') {
-                return Err(String::from("Too many parameters"));
-            }
-
-            Ok(Class { instance: input[..position].into(), general })
+    let (general, instance) = match input.split_once(',') {
+        // Warn the user if they've passed too many values.
+        Some((_, instance)) if instance.contains(',') => {
+            return Err(String::from("Too many parameters"))
         },
-        None => Ok(Class { instance: input.into(), general: DEFAULT_NAME.into() }),
-    }
+        Some((general, instance)) => (general, instance),
+        None => (input, input),
+    };
+
+    Ok(Class::new(general, instance))
+}
+
+/// Convert to hex if possible, else decimal
+fn parse_hex_or_decimal(input: &str) -> Option<c_ulong> {
+    input
+        .strip_prefix("0x")
+        .and_then(|value| c_ulong::from_str_radix(value, 16).ok())
+        .or_else(|| input.parse().ok())
 }
 
 /// Terminal specific cli options which can be passed to new windows via IPC.
-#[derive(Serialize, Deserialize, Args, Default, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Args, Default, Debug, Clone, PartialEq, Eq)]
 pub struct TerminalOptions {
     /// Start the shell in the specified working directory.
-    #[clap(long)]
+    #[clap(long, value_hint = ValueHint::FilePath)]
     pub working_directory: Option<PathBuf>,
 
     /// Remain open after child process exit.
@@ -225,19 +235,19 @@ impl From<TerminalOptions> for PtyConfig {
 }
 
 /// Window specific cli options which can be passed to new windows via IPC.
-#[derive(Serialize, Deserialize, Args, Default, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Args, Default, Debug, Clone, PartialEq, Eq)]
 pub struct WindowIdentity {
     /// Defines the window title [default: Alacritty].
     #[clap(short, long)]
     pub title: Option<String>,
 
     /// Defines window class/app_id on X11/Wayland [default: Alacritty].
-    #[clap(long, value_name = "instance> | <instance>,<general", parse(try_from_str = parse_class))]
+    #[clap(long, value_name = "general> | <general>,<instance", parse(try_from_str = parse_class))]
     pub class: Option<Class>,
 }
 
 impl WindowIdentity {
-    /// Override the [`WindowIdentityConfig`]'s fields with the [`WindowOptions`].
+    /// Override the [`WindowIdentity`]'s fields with the [`WindowOptions`].
     pub fn override_identity_config(&self, identity: &mut Identity) {
         if let Some(title) = &self.title {
             identity.title = title.clone();
@@ -260,7 +270,7 @@ pub enum Subcommands {
 #[derive(Args, Debug)]
 pub struct MessageOptions {
     /// IPC socket connection path override.
-    #[clap(long, short)]
+    #[clap(short, long, value_hint = ValueHint::FilePath)]
     pub socket: Option<PathBuf>,
 
     /// Message which should be sent.
@@ -270,14 +280,17 @@ pub struct MessageOptions {
 
 /// Available socket messages.
 #[cfg(unix)]
-#[derive(Subcommand, Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Subcommand, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum SocketMessage {
     /// Create a new window in the same Alacritty process.
     CreateWindow(WindowOptions),
+
+    /// Update the Alacritty configuration.
+    Config(IpcConfig),
 }
 
-/// Subset of options that we pass to a 'create-window' subcommand.
-#[derive(Serialize, Deserialize, Args, Default, Clone, Debug, PartialEq)]
+/// Subset of options that we pass to 'create-window' IPC subcommand.
+#[derive(Serialize, Deserialize, Args, Default, Clone, Debug, PartialEq, Eq)]
 pub struct WindowOptions {
     /// Terminal options which can be passed via IPC.
     #[clap(flatten)]
@@ -286,6 +299,25 @@ pub struct WindowOptions {
     #[clap(flatten)]
     /// Window options which could be passed via IPC.
     pub window_identity: WindowIdentity,
+}
+
+/// Parameters to the `config` IPC subcommand.
+#[cfg(unix)]
+#[derive(Args, Serialize, Deserialize, Default, Debug, Clone, PartialEq, Eq)]
+pub struct IpcConfig {
+    /// Configuration file options [example: cursor.style=Beam].
+    #[clap(required = true, value_name = "CONFIG_OPTIONS")]
+    pub options: Vec<String>,
+
+    /// Window ID for the new config.
+    ///
+    /// Use `-1` to apply this change to all windows.
+    #[clap(short, long, allow_hyphen_values = true, env = "ALACRITTY_WINDOW_ID")]
+    pub window_id: Option<i128>,
+
+    /// Clear all runtime configuration changes.
+    #[clap(short, long, conflicts_with = "options")]
+    pub reset: bool,
 }
 
 #[cfg(test)]
@@ -376,21 +408,39 @@ mod tests {
     #[test]
     fn parse_instance_class() {
         let class = parse_class("one").unwrap();
+        assert_eq!(class.general, "one");
         assert_eq!(class.instance, "one");
-        assert_eq!(class.general, DEFAULT_NAME);
     }
 
     #[test]
     fn parse_general_class() {
         let class = parse_class("one,two").unwrap();
-        assert_eq!(class.instance, "one");
-        assert_eq!(class.general, "two");
+        assert_eq!(class.general, "one");
+        assert_eq!(class.instance, "two");
     }
 
     #[test]
     fn parse_invalid_class() {
         let class = parse_class("one,two,three");
         assert!(class.is_err());
+    }
+
+    #[test]
+    fn valid_decimal() {
+        let value = parse_hex_or_decimal("10485773");
+        assert_eq!(value, Some(10485773));
+    }
+
+    #[test]
+    fn valid_hex_to_decimal() {
+        let value = parse_hex_or_decimal("0xa0000d");
+        assert_eq!(value, Some(10485773));
+    }
+
+    #[test]
+    fn invalid_hex_to_decimal() {
+        let value = parse_hex_or_decimal("0xa0xx0d");
+        assert_eq!(value, None);
     }
 
     #[cfg(target_os = "linux")]

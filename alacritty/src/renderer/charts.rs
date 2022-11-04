@@ -3,6 +3,7 @@ use std::mem;
 use crate::gl;
 use crate::gl::types::*;
 use crate::renderer;
+use crate::renderer::shader::{ShaderError, ShaderProgram, ShaderVersion};
 
 static CHRT_SHADER_F: &str = include_str!("../../res/rect.f.glsl");
 static CHRT_SHADER_V: &str = include_str!("../../res/rect.v.glsl");
@@ -14,15 +15,13 @@ pub struct ChartRenderer {
     pub vbo: GLuint,
 
     program: ChartsShaderProgram,
-
-    vertices: Vec<f32>,
 }
 
 impl ChartRenderer {
-    pub fn new() -> Result<Self, renderer::Error> {
+    pub fn new(shader_version: ShaderVersion) -> Result<Self, renderer::Error> {
         let mut vao: GLuint = 0;
         let mut vbo: GLuint = 0;
-        let program = ChartsShaderProgram::new()?;
+        let program = ChartsShaderProgram::new(shader_version)?;
         unsafe {
             // Allocate buffers.
             gl::GenVertexArrays(1, &mut vao);
@@ -35,7 +34,7 @@ impl ChartRenderer {
 
             let mut attribute_offset = 0;
 
-            // Position
+            // Position.
             gl::VertexAttribPointer(
                 0, // location=0 is the vertex position
                 2, // position has 2 values: X, Y
@@ -46,10 +45,9 @@ impl ChartRenderer {
                 attribute_offset as *const _,
             );
             gl::EnableVertexAttribArray(0);
-
             attribute_offset += mem::size_of::<f32>() * 2;
 
-            // Colors
+            // Color.
             gl::VertexAttribPointer(
                 1, // location=1 is the color
                 4, // Color has 4 items, R, G, B, A
@@ -66,7 +64,7 @@ impl ChartRenderer {
             gl::BindVertexArray(0);
             gl::BindBuffer(gl::ARRAY_BUFFER, 0);
         }
-        Ok(Self { vao, vbo, program, vertices: Vec::new() })
+        Ok(Self { vao, vbo, program })
     }
 
     pub fn draw(&mut self, opengl_data: &[f32], gl_mode: u32) {
@@ -78,7 +76,7 @@ impl ChartRenderer {
             gl::BindBuffer(gl::ARRAY_BUFFER, self.vbo);
 
             // Swap program
-            gl::UseProgram(self.program.id);
+            gl::UseProgram(self.program.id());
 
             // Load vertex data into array buffer
             gl::BufferData(
@@ -92,7 +90,7 @@ impl ChartRenderer {
             // [2(x,y) + 4(r,g,b,a) ] -> 6
             gl::DrawArrays(gl_mode, 0, (opengl_data.len() / 6usize) as i32);
 
-            // Disable program
+            // Disable program.
             gl::UseProgram(0);
 
             // Reset buffer bindings to nothing.
@@ -102,39 +100,22 @@ impl ChartRenderer {
     }
 }
 
-/// Charts Shader Program
-///
-/// Uniforms are prefixed with "u"
+/// Charts drawing program.
 #[derive(Debug)]
 pub struct ChartsShaderProgram {
-    // Program id,
-    id: GLuint,
+    // Shader program
+    program: ShaderProgram,
 }
 
 impl ChartsShaderProgram {
-    pub fn new() -> Result<Self, renderer::ShaderCreationError> {
-        let vertex_shader = renderer::create_shader(gl::VERTEX_SHADER, CHRT_SHADER_V)?;
-        let fragment_shader = renderer::create_shader(gl::FRAGMENT_SHADER, CHRT_SHADER_F)?;
-        let program = renderer::create_program(vertex_shader, fragment_shader)?;
-
-        unsafe {
-            gl::DeleteShader(fragment_shader);
-            gl::DeleteShader(vertex_shader);
-            gl::UseProgram(program);
-        }
-
-        let shader = ChartsShaderProgram { id: program };
-
-        unsafe { gl::UseProgram(0) }
-
-        Ok(shader)
+    pub fn new(shader_version: ShaderVersion) -> Result<Self, ShaderError> {
+        // XXX: This must be in-sync with fragment shader defines.
+        let header: Option<&str> = None;
+        let program = ShaderProgram::new(shader_version, header, CHRT_SHADER_V, CHRT_SHADER_F)?;
+        Ok(Self { program })
     }
-}
 
-impl Drop for ChartsShaderProgram {
-    fn drop(&mut self) {
-        unsafe {
-            gl::DeleteProgram(self.id);
-        }
+    fn id(&self) -> GLuint {
+        self.program.id()
     }
 }

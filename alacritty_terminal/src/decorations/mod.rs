@@ -769,7 +769,7 @@ fn background_fill_hexagon_positions(size: SizeInfo, radius: f32) -> Vec<Value2D
     let mut current_x_position = 0f32;
     let mut half_offset = true; // When true, we will add half radius to Y to make sure the hexagons do not overlap
     let mut res = vec![];
-    while current_x_position <= (size.width() + radius * 2f32) {
+    while current_x_position <= (size.width + radius * 2f32) {
         let current_y_position = 0f32;
         let mut temp_y = current_y_position;
         if half_offset {
@@ -778,7 +778,7 @@ fn background_fill_hexagon_positions(size: SizeInfo, radius: f32) -> Vec<Value2D
             // x   x   x   x
             temp_y -= y_offset;
         }
-        while temp_y <= (size.height() + radius * 2f32) {
+        while temp_y <= (size.height + radius * 2f32) {
             res.push(Value2D { x: current_x_position, y: temp_y });
             temp_y += y_offset * 2f32;
         }

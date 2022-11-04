@@ -15,9 +15,10 @@ use mio::unix::UnixReady;
 use mio::{self, Events, PollOpt, Ready};
 use mio_extras::channel::{self, Receiver, Sender};
 
-use crate::event::{self, Event, EventListener};
+use crate::event::{self, Event, EventListener, WindowSize};
 use crate::sync::FairMutex;
-use crate::term::{SizeInfo, Term, TermChartsHandle};
+use crate::term::Term;
+use crate::term::TermChartsHandle;
 use crate::{ansi, thread, tty};
 
 use crate::async_utils::AsyncTask;
@@ -26,7 +27,7 @@ use crate::async_utils::AsyncTask;
 const READ_BUFFER_SIZE: usize = 0x10_0000;
 
 /// Max bytes to read from the PTY while the terminal is locked.
-const MAX_LOCKED_READ: usize = u16::max_value() as usize;
+const MAX_LOCKED_READ: usize = u16::MAX as usize;
 
 /// Messages that may be sent to the `EventLoop`.
 #[derive(Debug)]
@@ -38,7 +39,7 @@ pub enum Msg {
     Shutdown,
 
     /// Instruction to resize the PTY.
-    Resize(SizeInfo),
+    Resize(WindowSize),
 }
 
 /// The main event!.. loop.
@@ -81,8 +82,8 @@ impl event::Notify for Notifier {
 }
 
 impl event::OnResize for Notifier {
-    fn on_resize(&mut self, size: &SizeInfo) {
-        let _ = self.0.send(Msg::Resize(*size));
+    fn on_resize(&mut self, window_size: WindowSize) {
+        let _ = self.0.send(Msg::Resize(window_size));
     }
 }
 
@@ -190,7 +191,7 @@ where
         while let Ok(msg) = self.rx.try_recv() {
             match msg {
                 Msg::Input(input) => state.write_list.push_back(input),
-                Msg::Resize(size) => self.pty.on_resize(&size),
+                Msg::Resize(window_size) => self.pty.on_resize(window_size),
                 Msg::Shutdown => {
                     if let Some(tokio_setup) = &self.tokio_setup {
                         let tokio_handle = tokio_setup.tokio_handle.clone();

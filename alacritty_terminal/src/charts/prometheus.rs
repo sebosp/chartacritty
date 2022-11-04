@@ -377,7 +377,7 @@ pub async fn get_from_prometheus(
 /// `parse_json` transforms a hyper body chunk into a possible
 /// PrometheusResponse, mostly used for testing
 pub fn parse_json(url: &str, body: &hyper::body::Bytes) -> Option<HTTPResponse> {
-    let prom_res: Result<HTTPResponse, serde_json::Error> = serde_json::from_slice(&body);
+    let prom_res: Result<HTTPResponse, serde_json::Error> = serde_json::from_slice(body);
     match prom_res {
         Ok(v) => {
             debug!("parse_json for '{}': returned JSON={:?}", url, v);
@@ -422,7 +422,7 @@ mod tests {
             String::from("matrix"),
             HashMap::new(),
         );
-        assert_eq!(test0_res.is_ok(), true);
+        assert!(test0_res.is_ok());
         // A json returned by prometheus
         let test0_json = hyper::body::Bytes::from(
             r#"
@@ -434,10 +434,10 @@ mod tests {
             "#,
         );
         let res0_json = parse_json(&String::from("http://test"), &test0_json);
-        assert_eq!(res0_json.is_none(), true);
+        assert!(res0_json.is_none());
         let test1_json = hyper::body::Bytes::from("Internal Server Error");
         let res1_json = parse_json(&String::from("http://test"), &test1_json);
-        assert_eq!(res1_json.is_none(), true);
+        assert!(res1_json.is_none());
     }
 
     #[test]
@@ -448,7 +448,7 @@ mod tests {
             String::from("scalar"),
             HashMap::new(),
         );
-        assert_eq!(test0_res.is_ok(), true);
+        assert!(test0_res.is_ok());
         let mut test0 = test0_res.unwrap();
         // A json returned by prometheus
         let test0_json = hyper::body::Bytes::from(
@@ -461,7 +461,7 @@ mod tests {
             }"#,
         );
         let res0_json = parse_json(&String::from("http://test"), &test0_json);
-        assert_eq!(res0_json.is_some(), true);
+        assert!(res0_json.is_some());
         let res0_load = test0.load_prometheus_response(res0_json.unwrap());
         // 1 items should have been loaded
         assert_eq!(res0_load, Ok(1usize));
@@ -476,7 +476,7 @@ mod tests {
             }"#,
         );
         let res1_json = parse_json(&String::from("http://test"), &test1_json);
-        assert_eq!(res1_json.is_some(), true);
+        assert!(res1_json.is_some());
         let res1_load = test0.load_prometheus_response(res1_json.unwrap());
         // 0 items should have been loaded, because there's no value
         assert_eq!(res1_load, Ok(0usize));
@@ -491,7 +491,7 @@ mod tests {
             String::from("matrix"),
             HashMap::new()
         );
-        assert_eq!(test0_res.is_ok(), true);
+        assert!(test0_res.is_ok());
         let mut test0 = test0_res.unwrap();
         // Let's create space for 15, but we will receive 11 records:
         test0.series = test0.series.with_capacity(15usize);
@@ -520,7 +520,7 @@ mod tests {
             }"#,
         );
         let res0_json = parse_json(&String::from("http://test"), &test0_json);
-        assert_eq!(res0_json.is_some(), true);
+        assert!(res0_json.is_some());
         let res0_load = test0.load_prometheus_response(res0_json.unwrap());
         // 11 items should have been loaded in the node_exporter
         assert_eq!(res0_load, Ok(11usize));
@@ -557,7 +557,7 @@ mod tests {
             }"#,
         );
         let res1_json = parse_json(&String::from("http://test"), &test1_json);
-        assert_eq!(res1_json.is_some(), true);
+        assert!(res1_json.is_some());
         debug!("it_loads_prometheus_matrix NOTVEC: {:?}", test0.series.metrics);
         let loaded_data = test0.series.as_vec();
         debug!("it_loads_prometheus_matrix Data: {:?}", loaded_data);
@@ -599,7 +599,7 @@ mod tests {
             }"#,
         );
         let res2_json = parse_json(&String::from("http://test"), &test2_json);
-        assert_eq!(res2_json.is_some(), true);
+        assert!(res2_json.is_some());
         let res2_load = test0.load_prometheus_response(res2_json.unwrap());
         // 0 items should have been loaded, missing metric after epoch.
         assert_eq!(res2_load, Ok(0usize));
@@ -614,7 +614,7 @@ mod tests {
             String::from("vector"),
             metric_labels,
         );
-        assert_eq!(test0_res.is_ok(), true);
+        assert!(test0_res.is_ok());
         let mut test0 = test0_res.unwrap();
         let test1_json = hyper::body::Bytes::from(
             r#"
@@ -661,49 +661,55 @@ mod tests {
             }"#,
         );
         let res1_json = parse_json(&String::from("http://test"), &test1_json);
-        assert_eq!(res1_json.is_some(), true);
+        assert!(res1_json.is_some());
         let res1_load = test0.load_prometheus_response(res1_json.unwrap());
         // 1 items should have been loaded
         assert_eq!(res1_load, Ok(24usize));
-        assert_eq!(test0.series.as_vec(), vec![
-            (1566918913, Some(4.5)),
-            (1566918914, Some(4.5)),
-            (1566918915, Some(4.5)),
-            (1566918916, Some(4.5)),
-            (1566918917, Some(4.5)),
-            (1566918918, Some(4.5)),
-            (1566918919, Some(4.25)),
-            (1566918920, Some(4.25)),
-            (1566918921, Some(4.25)),
-            (1566918922, Some(4.25)),
-            (1566918923, Some(4.25)),
-            (1566918924, Some(4.25)),
-            (1566918925, Some(4.)),
-            (1566918926, Some(4.)),
-            (1566918927, Some(4.)),
-            (1566918928, Some(4.)),
-            (1566918929, Some(4.)),
-            (1566918930, Some(4.)),
-            (1566918931, Some(4.75)),
-            (1566918932, Some(4.75)),
-            (1566918933, Some(4.75)),
-            (1566918934, Some(4.75)),
-            (1566918935, Some(4.75)),
-            (1566918936, Some(4.75))
-        ]);
+        assert_eq!(
+            test0.series.as_vec(),
+            vec![
+                (1566918913, Some(4.5)),
+                (1566918914, Some(4.5)),
+                (1566918915, Some(4.5)),
+                (1566918916, Some(4.5)),
+                (1566918917, Some(4.5)),
+                (1566918918, Some(4.5)),
+                (1566918919, Some(4.25)),
+                (1566918920, Some(4.25)),
+                (1566918921, Some(4.25)),
+                (1566918922, Some(4.25)),
+                (1566918923, Some(4.25)),
+                (1566918924, Some(4.25)),
+                (1566918925, Some(4.)),
+                (1566918926, Some(4.)),
+                (1566918927, Some(4.)),
+                (1566918928, Some(4.)),
+                (1566918929, Some(4.)),
+                (1566918930, Some(4.)),
+                (1566918931, Some(4.75)),
+                (1566918932, Some(4.75)),
+                (1566918933, Some(4.75)),
+                (1566918934, Some(4.75)),
+                (1566918935, Some(4.75)),
+                (1566918936, Some(4.75))
+            ]
+        );
         test0.series.calculate_stats();
         let test0_sum = 4.5 * 6. + 4.25 * 6. + 4. * 6. + 4.75 * 6.;
-        assert_eq!(test0.series.stats, TimeSeriesStats {
-            first: 4.5,
-            last: 4.75,
-            count: 24,
-            is_dirty: false,
-            max: 4.75,
-            min: 4.,
-            sum: test0_sum,
-            avg: test0_sum / 24.,
-            last_epoch: 1566918936,
-        });
+        assert_eq!(
+            test0.series.stats,
+            TimeSeriesStats {
+                first: 4.5,
+                last: 4.75,
+                count: 24,
+                is_dirty: false,
+                max: 4.75,
+                min: 4.,
+                sum: test0_sum,
+                avg: test0_sum / 24.,
+                last_epoch: 1566918936,
+            }
+        );
     }
 
     #[test]
@@ -716,7 +722,7 @@ mod tests {
             String::from("vector"),
             metric_labels.clone(),
         );
-        assert_eq!(test0_res.is_ok(), true);
+        assert!(test0_res.is_ok());
         let mut test0 = test0_res.unwrap();
         // A json returned by prometheus
         let test0_json = hyper::body::Bytes::from(
@@ -753,15 +759,15 @@ mod tests {
             }"#,
         );
         let res0_json = parse_json(&String::from("http://test"), &test0_json);
-        assert_eq!(res0_json.is_some(), true);
+        assert!(res0_json.is_some());
         let res0_load = test0.load_prometheus_response(res0_json.unwrap());
         // 2 items should have been loaded, one for Prometheus Server and the
         // other for Prometheus Node Exporter
         assert_eq!(res0_load, Ok(2usize));
-        assert_eq!(test0.series.as_vec(), vec![
-            (1557571137u64, Some(1.)),
-            (1557571138u64, Some(1.))
-        ]);
+        assert_eq!(
+            test0.series.as_vec(),
+            vec![(1557571137u64, Some(1.)), (1557571138u64, Some(1.))]
+        );
 
         let test1_json = hyper::body::Bytes::from(
             r#"
@@ -797,7 +803,7 @@ mod tests {
             }"#,
         );
         let res1_json = parse_json(&String::from("http://test"), &test1_json);
-        assert_eq!(res1_json.is_some(), true);
+        assert!(res1_json.is_some());
 
         // Make the labels match only one instance
         metric_labels.insert(String::from("job"), String::from("prometheus"));
@@ -806,11 +812,10 @@ mod tests {
         let res1_load = test0.load_prometheus_response(res1_json.unwrap());
         // Only the prometheus: localhost:9090 should have been loaded with epoch 1557571139
         assert_eq!(res1_load, Ok(1usize));
-        assert_eq!(test0.series.as_vec(), vec![
-            (1557571137u64, Some(1.)),
-            (1557571138u64, Some(1.)),
-            (1557571139u64, Some(1.))
-        ]);
+        assert_eq!(
+            test0.series.as_vec(),
+            vec![(1557571137u64, Some(1.)), (1557571138u64, Some(1.)), (1557571139u64, Some(1.))]
+        );
 
         let test2_json = hyper::body::Bytes::from(
             r#"
@@ -846,17 +851,16 @@ mod tests {
             }"#,
         );
         let res2_json = parse_json(&String::from("http://test"), &test2_json);
-        assert_eq!(res2_json.is_some(), true);
+        assert!(res2_json.is_some());
         // Make the labels not match
         metric_labels.insert(String::from("__name__"), String::from("down"));
         test0.required_labels = metric_labels;
         let res2_load = test0.load_prometheus_response(res2_json.unwrap());
         assert_eq!(res2_load, Ok(0usize));
-        assert_eq!(test0.series.as_vec(), vec![
-            (1557571137u64, Some(1.)),
-            (1557571138u64, Some(1.)),
-            (1557571139u64, Some(1.))
-        ]);
+        assert_eq!(
+            test0.series.as_vec(),
+            vec![(1557571137u64, Some(1.)), (1557571138u64, Some(1.)), (1557571139u64, Some(1.))]
+        );
         // This json is missing the value after the epoch
         let test3_json = hyper::body::Bytes::from(
             r#"
@@ -880,7 +884,7 @@ mod tests {
             }"#,
         );
         let res3_json = parse_json(&String::from("http://test"), &test3_json);
-        assert_eq!(res3_json.is_some(), true);
+        assert!(res3_json.is_some());
         let res3_load = test0.load_prometheus_response(res3_json.unwrap());
         // 0 items should have been loaded, the data is invalid
         assert_eq!(res3_load, Ok(0usize));
@@ -910,11 +914,11 @@ mod tests {
             String::from("vector"),
             test_labels.clone(),
         );
-        assert_eq!(test1_res.is_ok(), true);
+        assert!(test1_res.is_ok());
         let test1 = test1_res.unwrap();
         let res1_get = tokio::try_join!(get_from_prometheus(test1.url.clone(), None));
         println!("get_from_prometheus: {:?}", res1_get);
-        assert_eq!(res1_get.is_ok(), true);
+        assert!(res1_get.is_ok());
         if let Some(prom_response) = parse_json(&String::from("http://test"), &res1_get.unwrap().0)
         {
             // This requires a Prometheus Server running locally
@@ -937,7 +941,7 @@ mod tests {
                     }
                 }
             }
-            assert_eq!(found_prometheus_job_metric, true);
+            assert!(found_prometheus_job_metric);
         }
     }
 
@@ -1017,23 +1021,26 @@ mod tests {
           }"#,
         );
         let res1_json = parse_json(&String::from("http://test"), &test1_json);
-        assert_eq!(res1_json.is_some(), true);
+        assert!(res1_json.is_some());
         let res1_load = test.load_prometheus_response(res1_json.unwrap());
         // 5 items should have been loaded, 5 already existed.
         assert_eq!(res1_load, Ok(5usize));
         assert_eq!(test.series.active_items, 10usize);
-        assert_eq!(test.series.as_vec(), vec![
-            (1571511822, Some(1.8359322)),
-            (1571511823, Some(1.8359323)),
-            (1571511824, Some(1.8359324)),
-            (1571511825, Some(1.8359325)),
-            (1571511826, Some(1.8359326)),
-            (1571511827, Some(1.8359327)),
-            (1571511828, Some(1.8359328)),
-            (1571511829, Some(1.8359329)),
-            (1571511830, Some(1.8359330)),
-            (1571511831, Some(1.8359331))
-        ]);
+        assert_eq!(
+            test.series.as_vec(),
+            vec![
+                (1571511822, Some(1.8359322)),
+                (1571511823, Some(1.8359323)),
+                (1571511824, Some(1.8359324)),
+                (1571511825, Some(1.8359325)),
+                (1571511826, Some(1.8359326)),
+                (1571511827, Some(1.8359327)),
+                (1571511828, Some(1.8359328)),
+                (1571511829, Some(1.8359329)),
+                (1571511830, Some(1.8359330)),
+                (1571511831, Some(1.8359331))
+            ]
+        );
     }
 
     #[test]
@@ -1400,7 +1407,7 @@ mod tests {
           }"#,
         );
         let res1_json = parse_json(&String::from("http://test"), &test1_json);
-        assert_eq!(res1_json.is_some(), true);
+        assert!(res1_json.is_some());
         let res1_load = test.load_prometheus_response(res1_json.unwrap());
         assert_eq!(res1_load, Ok(2usize));
         assert_eq!(test.series.active_items, 3usize);
@@ -1409,10 +1416,13 @@ mod tests {
         assert_eq!(test.series.metrics[298], (1583092652, Some(5.0283203125)));
         assert_eq!(test.series.first_idx, 298usize);
         assert_eq!(test.series.active_items, 3usize);
-        assert_eq!(test.series.as_vec(), vec![
-            (1583092652, Some(5.0283203125)),
-            (1583092653, Some(5.0283203125)),
-            (1583092654, Some(5.0283203125))
-        ]);
+        assert_eq!(
+            test.series.as_vec(),
+            vec![
+                (1583092652, Some(5.0283203125)),
+                (1583092653, Some(5.0283203125)),
+                (1583092654, Some(5.0283203125))
+            ]
+        );
     }
 }

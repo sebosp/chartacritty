@@ -4,7 +4,7 @@ use log::*;
 use serde::Deserialize;
 use std::fs::File;
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 static DEFAULT_CHART_CONFIG: &str =
     include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/charts.yml"));
 /// Top-level config type
@@ -20,7 +20,7 @@ impl Default for Config {
 impl Config {
     /// This method is used from config/mod.rs in Alacritty.
     /// This is a copy for testing
-    pub fn read_config(path: &PathBuf) -> Result<Config, String> {
+    pub fn read_config(path: &Path) -> Result<Config, String> {
         let mut contents = String::new();
         File::open(path).unwrap().read_to_string(&mut contents).unwrap();
 
@@ -44,7 +44,7 @@ impl Config {
             Err(err) => {
                 error!("Unable to load config from file: {:?}: '{}'", config_location, err);
                 Config::default()
-            }
+            },
             Ok(config) => {
                 info!("load_config_file: {:?}", config_location);
                 if let Some(chart_config) = &config.charts {
@@ -57,7 +57,7 @@ impl Config {
                 }
                 debug!("Finished load_config_file");
                 config
-            }
+            },
         }
     }
 }

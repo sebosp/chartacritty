@@ -13,21 +13,22 @@ fn main() {
     println!("cargo:rustc-env=VERSION={}", version);
 
     let dest = env::var("OUT_DIR").unwrap();
-    let mut file = File::create(&Path::new(&dest).join("gl_bindings.rs")).unwrap();
+    let mut file = File::create(Path::new(&dest).join("gl_bindings.rs")).unwrap();
 
     Registry::new(Api::Gl, (3, 3), Profile::Core, Fallbacks::All, ["GL_ARB_blend_func_extended"])
         .write_bindings(GlobalGenerator, &mut file)
         .unwrap();
 
     #[cfg(windows)]
-    embed_resource::compile("./windows/windows.rc");
+    embed_resource::compile("./windows/alacritty.rc");
 }
 
 fn commit_hash() -> Option<String> {
     Command::new("git")
-        .args(&["rev-parse", "--short", "HEAD"])
+        .args(["rev-parse", "--short", "HEAD"])
         .output()
         .ok()
+        .filter(|output| output.status.success())
         .and_then(|output| String::from_utf8(output.stdout).ok())
         .map(|hash| hash.trim().into())
 }

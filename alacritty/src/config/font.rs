@@ -4,7 +4,7 @@ use crossfont::Size as FontSize;
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer};
 
-use alacritty_config_derive::ConfigDeserialize;
+use alacritty_config_derive::{ConfigDeserialize, SerdeReplace};
 
 use crate::config::ui_config::Delta;
 
@@ -14,7 +14,7 @@ use crate::config::ui_config::Delta;
 /// field in this struct. It might be nice in the future to have defaults for
 /// each value independently. Alternatively, maybe erroring when the user
 /// doesn't provide complete config is Ok.
-#[derive(ConfigDeserialize, Default, Debug, Clone, PartialEq, Eq)]
+#[derive(ConfigDeserialize, Debug, Clone, PartialEq, Eq)]
 pub struct Font {
     /// Extra spacing per character.
     pub offset: Delta<i8>,
@@ -22,6 +22,7 @@ pub struct Font {
     /// Glyph offset within character cell.
     pub glyph_offset: Delta<i8>,
 
+    #[config(removed = "set the AppleFontSmoothing user default instead")]
     pub use_thin_strokes: bool,
 
     /// Normal font face.
@@ -38,6 +39,9 @@ pub struct Font {
 
     /// Font size in points.
     size: Size,
+
+    /// Whether to use the built-in font for box drawing characters.
+    pub builtin_box_drawing: bool,
 }
 
 impl Font {
@@ -69,6 +73,22 @@ impl Font {
     /// Get bold italic font description.
     pub fn bold_italic(&self) -> FontDescription {
         self.bold_italic.desc(&self.normal)
+    }
+}
+
+impl Default for Font {
+    fn default() -> Font {
+        Self {
+            builtin_box_drawing: true,
+            glyph_offset: Default::default(),
+            use_thin_strokes: Default::default(),
+            bold_italic: Default::default(),
+            italic: Default::default(),
+            offset: Default::default(),
+            normal: Default::default(),
+            bold: Default::default(),
+            size: Default::default(),
+        }
     }
 }
 
@@ -109,7 +129,7 @@ impl SecondaryFontDescription {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(SerdeReplace, Debug, Clone, PartialEq, Eq)]
 struct Size(FontSize);
 
 impl Default for Size {

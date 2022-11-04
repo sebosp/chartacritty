@@ -345,7 +345,7 @@ pub async fn async_coordinator<U>(
             },
         };
     }
-    event!(Level::ERROR, "async_coordinator: Exiting");
+    event!(Level::INFO, "async_coordinator: Exiting");
 }
 /// `fetch_prometheus_response` gets data from prometheus and once data is ready
 /// it sends the results to the coordinator.
@@ -435,10 +435,8 @@ pub fn spawn_charts_intervals(
     charts_tx: mpsc::Sender<AsyncTask>,
     tokio_handle: tokio::runtime::Handle,
 ) {
-    let mut chart_index = 0usize;
-    for chart in charts {
-        let mut series_index = 0usize;
-        for series in chart.sources {
+    for (chart_index, chart) in charts.into_iter().enumerate() {
+        for (series_index, series) in chart.sources.into_iter().enumerate() {
             if let TimeSeriesSource::PrometheusTimeSeries(ref prom) = series {
                 event!(
                     Level::DEBUG,
@@ -468,9 +466,7 @@ pub fn spawn_charts_intervals(
                     );
                 });
             }
-            series_index += 1;
         }
-        chart_index += 1;
     }
 }
 /// `spawn_datasource_interval_polls` creates intervals for each series requested
@@ -603,7 +599,7 @@ where
 {
     // let decor_config = config.decorations.clone();
     let chart_config = chart_config.clone();
-    let tokio_thread = ::std::thread::Builder::new()
+    ::std::thread::Builder::new()
         .name("async I/O".to_owned())
         .spawn(move || {
             let mut tokio_runtime =
@@ -625,8 +621,7 @@ where
             });
             info!("Tokio runtime finished.");
         })
-        .expect("Unable to start async I/O thread");
-    tokio_thread
+        .expect("Unable to start async I/O thread")
 }
 
 /// `run` is an example use of the crate without drawing the data.
