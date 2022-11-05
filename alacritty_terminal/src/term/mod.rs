@@ -752,7 +752,7 @@ impl<T> Term<T> {
     pub fn increment_counter(&mut self, counter_type: &'static str, increment: f64) {
         let now = std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
         if let Some(tokio_setup) = &self.tokio_setup {
-            let mut charts_tx = tokio_setup.charts_tx.clone();
+            let charts_tx = tokio_setup.charts_tx.clone();
             tokio_setup.tokio_handle.spawn(async move {
                 let send_increment_input_counter = charts_tx.send(if counter_type == "input" {
                     crate::async_utils::AsyncTask::IncrementInputCounter(now, increment)

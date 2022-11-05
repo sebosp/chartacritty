@@ -195,7 +195,7 @@ where
                 Msg::Shutdown => {
                     if let Some(tokio_setup) = &self.tokio_setup {
                         let tokio_handle = tokio_setup.tokio_handle.clone();
-                        let mut charts_tx = tokio_setup.charts_tx.clone();
+                        let charts_tx = tokio_setup.charts_tx.clone();
                         tokio_handle.spawn(async move {
                             charts_tx
                                 .send(AsyncTask::Shutdown)
