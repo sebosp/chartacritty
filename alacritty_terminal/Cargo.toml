@@ -28,17 +28,16 @@ mio = "0.6.20"
 mio-extras = "2"
 log = "0.4"
 unicode-width = "0.1"
-tokio = { version = "0.2", features = ["full"] }
-futures = "0.3.5"
-hyper = "0.13.6"
-hyper-tls = "0.4.1"
+tokio = { version = "1.2", features = ["full"] }
+futures = "0.3.25"
+hyper = { version = "0.14", features = ["full"] }
+hyper-tls = "0.5"
 serde_derive = "1.0"
 serde_json = "1"
 env_logger = "0.7"
 tracing = { version = "0.1", features = ["log", "log-always"] }
 tracing-log = { version = "0.1", features = ["env_logger"]}
 percent-encoding = "1.0.1"
-failure = "0.1.6"
 rand = "0.7.3"
 base64 = "0.13.0"
 regex-automata = "0.1.9"
@@ -61,4 +60,4 @@ windows-sys = { version = "0.36", features = [
 ]}
 
 [dev-dependencies]
-serde_json = "1.0.0"
+serde_json = "1"

@@ -775,7 +775,7 @@ impl Display {
             let (padding_x, padding_y) = (self.size_info.padding_x(), self.size_info.padding_y());
             if let Some(ref tokio_setup) = self.tokio_setup {
                 let tokio_setup = tokio_setup.clone();
-                let mut charts_tx = tokio_setup.charts_tx.clone();
+                let charts_tx = tokio_setup.charts_tx.clone();
                 let tokio_handle = tokio_setup.tokio_handle;
                 tokio_handle.spawn(async move {
                     let send_display_size = charts_tx.send(

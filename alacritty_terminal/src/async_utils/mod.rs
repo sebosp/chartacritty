@@ -351,7 +351,7 @@ pub async fn async_coordinator<U>(
 /// it sends the results to the coordinator.
 async fn fetch_prometheus_response(
     item: MetricRequest,
-    mut tx: mpsc::Sender<AsyncTask>,
+    tx: mpsc::Sender<AsyncTask>,
 ) -> Result<(), ()> {
     event!(
         Level::DEBUG,
@@ -521,7 +521,7 @@ pub async fn spawn_datasource_interval_polls(
 /// with the async coordinator and request the vectors of the metric_data
 /// or the decorations vertices, along with its alpha
 pub fn get_metric_opengl_data(
-    mut charts_tx: mpsc::Sender<AsyncTask>,
+    charts_tx: mpsc::Sender<AsyncTask>,
     chart_idx: usize,
     series_idx: usize,
     request_type: &'static str,
@@ -602,7 +602,7 @@ where
     ::std::thread::Builder::new()
         .name("async I/O".to_owned())
         .spawn(move || {
-            let mut tokio_runtime =
+            let tokio_runtime =
                 tokio::runtime::Runtime::new().expect("Failed to start new tokio Runtime");
             info!("Tokio runtime created.");
 
@@ -645,7 +645,7 @@ where
     };
     // Create the channel that is used to communicate with the
     // charts background task.
-    let (mut charts_tx, charts_rx) = mpsc::channel(4_096usize);
+    let (charts_tx, charts_rx) = mpsc::channel(4_096usize);
     // Create a channel to receive a handle from Tokio
     //
     let (handle_tx, handle_rx) = std::sync::mpsc::channel();
