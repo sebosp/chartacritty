@@ -6,6 +6,11 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
 use std::time::UNIX_EPOCH;
+use nannou::draw;
+use nannou::glam::Vec2;
+use nannou::prelude::*;
+use nannou::draw::renderer::{RenderPrimitive, GlyphCache};
+use lyon::tessellation::{FillTessellator, StrokeTessellator};
 
 // TODO: Use const init that calculates these magic numbers at compile time
 const COS_60: f32 = 0.49999997f32;
@@ -428,17 +433,17 @@ impl HexagonTriangleBackground {
         let mut center = vec![
             0f32, // x
             0f32, // y
-            f32::from(self.center_color.r) / 255.,
-            f32::from(self.center_color.g) / 255.,
-            f32::from(self.center_color.b) / 255.,
+            <f32 as From<_>>::from(self.center_color.r) / 255.,
+            <f32 as From<_>>::from(self.center_color.g) / 255.,
+            <f32 as From<_>>::from(self.center_color.b) / 255.,
             0.0f32,
         ];
         let sides = vec![
             0f32, // x
             0f32, // y
-            f32::from(self.vertex_color.r) / 255.,
-            f32::from(self.vertex_color.g) / 255.,
-            f32::from(self.vertex_color.b) / 255.,
+            <f32 as From<_>>::from(self.vertex_color.r) / 255.,
+            <f32 as From<_>>::from(self.vertex_color.g) / 255.,
+            <f32 as From<_>>::from(self.vertex_color.b) / 255.,
             self.alpha,
         ];
         let mut east = sides.clone();
@@ -498,6 +503,28 @@ impl HexagonTriangleBackground {
         self.vecs = res;
     }
 }
+
+// TODO: Move this somewhere sensical...
+fn new_glyph_cache() -> GlyphCache {
+    let size = nannou::draw::Renderer::DEFAULT_GLYPH_CACHE_SIZE;
+    let scale_tolerance = nannou::draw::Renderer::DEFAULT_GLYPH_CACHE_SCALE_TOLERANCE;
+    let position_tolerance = nannou::draw::Renderer::DEFAULT_GLYPH_CACHE_POSITION_TOLERANCE;
+    let [w, h] = size;
+    let cache = nannou::text::GlyphCache::builder()
+        .dimensions(w, h)
+        .scale_tolerance(scale_tolerance)
+        .position_tolerance(position_tolerance)
+        .build()
+        .into();
+    let pixel_buffer = vec![0u8; w as usize * h as usize];
+    let requires_upload = false;
+    GlyphCache {
+        cache,
+        pixel_buffer,
+        requires_upload,
+    }
+}
+
 impl TreeSilhoutteLineBackground {
     pub fn new(color: Rgb, alpha: f32, size_info: SizeInfo, radius: f32) -> Self {
         Self { color, alpha, size_info, radius, vecs: vec![] }
@@ -516,6 +543,73 @@ impl TreeSilhoutteLineBackground {
     pub fn gen_tree_vertices(&self, x: f32, y: f32) -> Vec<f32> {
         let x_60_degrees_offset = COS_60 * self.radius;
         let y_60_degrees_offset = SIN_60 * self.radius;
+        let mut draw = draw::Draw::default();
+        let mut mesh = draw::Mesh::default();
+        draw.tri()
+            .points(
+                [
+            // Bottom Right
+            self.size_info.scale_x(x + x_60_degrees_offset),
+            self.size_info.scale_y(y - y_60_degrees_offset),
+                ],
+                [
+            // Lower bottom Right trunk
+            self.size_info.scale_x(x + x_60_degrees_offset - (x_60_degrees_offset / 6f32)),
+            self.size_info.scale_y(y - y_60_degrees_offset + (y_60_degrees_offset / 4f32)),
+                ],
+                [
+            // Mid-Lower bottom Right trunk
+            self.size_info.scale_x(x + x_60_degrees_offset - (x_60_degrees_offset / 4f32)),
+            self.size_info.scale_y(y - y_60_degrees_offset + (y_60_degrees_offset / 2f32)),
+                ]
+            )
+            .rotate(30f32)
+            .color(VIOLET);
+        draw.finish_remaining_drawings();
+        // Trying to adapt nannou crate nannou/src/draw/renderer/mod.rs `fill()` function
+        // Construct the glyph cache.
+        let mut glyph_cache = new_glyph_cache();
+
+        let mut fill_tessellator = FillTessellator::new();
+        let mut stroke_tessellator = StrokeTessellator::new();
+        // Keep track of context changes.
+        let curr_ctxt = draw::Context::default();
+        let draw_cmds: Vec<_> = draw.drain_commands().collect();
+        let scale_factor = 1.;
+        for cmd in draw_cmds {
+            match cmd {
+                draw::DrawCommand::Primitive(prim) => {
+                    // Info required during rendering.
+                    let ctxt = draw::renderer::RenderContext {
+                        intermediary_mesh: &Default::default(),
+                        path_event_buffer: &[],
+                        path_points_colored_buffer: &[],
+                        path_points_textured_buffer: &[],
+                        text_buffer: Default::default(),
+                        theme: &Default::default(),
+                        transform: &curr_ctxt.transform,
+                        fill_tessellator: &mut fill_tessellator,
+                        stroke_tessellator: &mut stroke_tessellator,
+                        glyph_cache: &mut glyph_cache,
+                        output_attachment_size: Vec2::new(2., 2.),
+                        output_attachment_scale_factor: scale_factor,
+                    };
+
+                    // Render the primitive.
+                    let _render = prim.render_primitive(ctxt, &mut mesh);
+                    let mut res = vec![];
+                    for vx in mesh.vertices() {
+                        res.push(vx.x);
+                        res.push(vx.y);
+                    }
+                    tracing::warn!("nannou output: {:?}", res);
+                    return res;
+                }
+                unhandled @ _ => {
+                    tracing::warn!("Unknown DrawCommand: {:?}", unhandled);
+                }
+            }
+        }
         // Order of vertices:
         //    3-------2
         //   /         \
