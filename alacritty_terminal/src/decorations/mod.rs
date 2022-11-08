@@ -545,26 +545,27 @@ impl TreeSilhoutteLineBackground {
         let y_60_degrees_offset = SIN_60 * self.radius;
         let mut draw = draw::Draw::default();
         let mut mesh = draw::Mesh::default();
-        draw.tri()
+        draw.ellipse()
+            .x_y(0., 0.)
+        .radius(self.radius)
+        .color(RED);
+        /*draw.tri()
             .points(
                 [
-            // Bottom Right
+            self.size_info.scale_x(x),
+            self.size_info.scale_y(y),
+                ],
+                [
             self.size_info.scale_x(x + x_60_degrees_offset),
-            self.size_info.scale_y(y - y_60_degrees_offset),
+            self.size_info.scale_y(y + y_60_degrees_offset),
                 ],
                 [
-            // Lower bottom Right trunk
-            self.size_info.scale_x(x + x_60_degrees_offset - (x_60_degrees_offset / 6f32)),
-            self.size_info.scale_y(y - y_60_degrees_offset + (y_60_degrees_offset / 4f32)),
-                ],
-                [
-            // Mid-Lower bottom Right trunk
-            self.size_info.scale_x(x + x_60_degrees_offset - (x_60_degrees_offset / 4f32)),
-            self.size_info.scale_y(y - y_60_degrees_offset + (y_60_degrees_offset / 2f32)),
+            self.size_info.scale_x(x + x_60_degrees_offset),
+            self.size_info.scale_y(y),
                 ]
             )
             .rotate(30f32)
-            .color(VIOLET);
+            .color(VIOLET);*/
         draw.finish_remaining_drawings();
         // Trying to adapt nannou crate nannou/src/draw/renderer/mod.rs `fill()` function
         // Construct the glyph cache.
@@ -599,8 +600,8 @@ impl TreeSilhoutteLineBackground {
                     let _render = prim.render_primitive(ctxt, &mut mesh);
                     let mut res = vec![];
                     for vx in mesh.vertices() {
-                        res.push(vx.x);
-                        res.push(vx.y);
+                        res.push(self.size_info.scale_x(vx.x));
+                        res.push(self.size_info.scale_y(vx.y));
                     }
                     tracing::warn!("nannou output: {:?}", res);
                     return res;
