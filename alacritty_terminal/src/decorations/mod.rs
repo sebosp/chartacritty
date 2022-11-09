@@ -141,7 +141,6 @@ impl DecorationTypes {
 #[serde(tag = "type", content = "props")]
 pub enum DecorationLines {
     Hexagon(HexagonLineBackground),
-    TreeSilhoutte(TreeSilhoutteLineBackground),
 }
 
 impl DecorationLines {
@@ -150,10 +149,6 @@ impl DecorationLines {
             DecorationLines::Hexagon(ref mut hex_lines) => {
                 hex_lines.size_info = size_info;
                 hex_lines.update_opengl_vecs();
-            },
-            DecorationLines::TreeSilhoutte(ref mut tree_lines) => {
-                tree_lines.size_info = size_info;
-                tree_lines.update_opengl_vecs();
             },
         }
     }
@@ -200,6 +195,7 @@ impl DecorationPoints {
 #[serde(tag = "type", content = "props")]
 pub enum DecorationTriangles {
     Hexagon(HexagonTriangleBackground),
+    Nannou(NannouTriangles),
 }
 
 impl DecorationTriangles {
@@ -209,6 +205,10 @@ impl DecorationTriangles {
             DecorationTriangles::Hexagon(ref mut hex_triangles) => {
                 hex_triangles.size_info = size_info;
                 hex_triangles.update_opengl_vecs();
+            },
+            DecorationTriangles::Nannou(ref mut nannou_triangles) => {
+                nannou_triangles.size_info = size_info;
+                nannou_triangles.update_opengl_vecs();
             },
         }
     }
@@ -357,7 +357,7 @@ impl Default for HexagonPointBackground {
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
-pub struct TreeSilhoutteLineBackground {
+pub struct NannouTriangles {
     pub color: Rgb,
     pub alpha: f32,
     #[serde(default)]
@@ -525,7 +525,7 @@ fn new_glyph_cache() -> GlyphCache {
     }
 }
 
-impl TreeSilhoutteLineBackground {
+impl NannouTriangles {
     pub fn new(color: Rgb, alpha: f32, size_info: SizeInfo, radius: f32) -> Self {
         Self { color, alpha, size_info, radius, vecs: vec![] }
     }
@@ -541,12 +541,13 @@ impl TreeSilhoutteLineBackground {
     /// `gen_tree_vertices` Returns the vertices for an tree created at center x,y with a
     /// specific radius
     pub fn gen_tree_vertices(&self, x: f32, y: f32) -> Vec<f32> {
+        tracing::warn!("NannouTriangles::gen_tree_vertices(size_info) {:?}", self.size_info);
         let x_60_degrees_offset = COS_60 * self.radius;
         let y_60_degrees_offset = SIN_60 * self.radius;
-        let mut draw = draw::Draw::default();
+        let draw = draw::Draw::default();
         let mut mesh = draw::Mesh::default();
         draw.ellipse()
-            .x_y(0., 0.)
+            .x_y(self.size_info.width / 2., self.size_info.height / 2.)
         .radius(self.radius)
         .color(RED);
         /*draw.tri()
@@ -602,8 +603,11 @@ impl TreeSilhoutteLineBackground {
                     for vx in mesh.vertices() {
                         res.push(self.size_info.scale_x(vx.x));
                         res.push(self.size_info.scale_y(vx.y));
+                        res.push(vx.color.red);
+                        res.push(vx.color.green);
+                        res.push(vx.color.blue);
+                        res.push(vx.color.alpha);
                     }
-                    tracing::warn!("nannou output: {:?}", res);
                     return res;
                 }
                 unhandled @ _ => {
