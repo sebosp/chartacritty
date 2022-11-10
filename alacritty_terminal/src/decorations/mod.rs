@@ -535,21 +535,23 @@ impl NannouTriangles {
         // We need to find the center hexagon. Which should be in the middle of the array
         let center_idx: usize = coords.len() / 2;
         let coord = coords[center_idx];
+        tracing::info!("NannouTriangles::update_opengl_vecs(size_info) {:?}, center_idx: {}, x: {}, y:{}, radius: {}, coords: {:?}", self.size_info, center_idx, coord.x, coord.y, self.radius, coords);
         self.vecs = self.gen_tree_vertices(coord.x, coord.y);
     }
 
     /// `gen_tree_vertices` Returns the vertices for an tree created at center x,y with a
     /// specific radius
     pub fn gen_tree_vertices(&self, x: f32, y: f32) -> Vec<f32> {
-        tracing::warn!("NannouTriangles::gen_tree_vertices(size_info) {:?}", self.size_info);
+        //tracing::warn!("NannouTriangles::gen_tree_vertices(size_info) {:?}", self.size_info);
         let x_60_degrees_offset = COS_60 * self.radius;
         let y_60_degrees_offset = SIN_60 * self.radius;
         let draw = draw::Draw::default();
         let mut mesh = draw::Mesh::default();
+        let ellipse_color = LIGHTSKYBLUE.into_format::<f32>();
         draw.ellipse()
-            .x_y(self.size_info.width / 2., self.size_info.height / 2.)
-        .radius(self.radius)
-        .color(RED);
+            .x_y(x, y)
+        .radius(self.radius * 0.8)
+        .rgba(ellipse_color.red, ellipse_color.green, ellipse_color.blue, self.alpha);
         /*draw.tri()
             .points(
                 [
@@ -611,7 +613,7 @@ impl NannouTriangles {
                     return res;
                 }
                 unhandled @ _ => {
-                    tracing::warn!("Unknown DrawCommand: {:?}", unhandled);
+                    tracing::info!("Unknown DrawCommand: {:?}", unhandled);
                 }
             }
         }
