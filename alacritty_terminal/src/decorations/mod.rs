@@ -530,14 +530,17 @@ impl NannouTriangles {
         let coords = background_fill_hexagon_positions(self.size_info, self.radius);
         // We need to find the center hexagon.
         let hex_height = SIN_60 * self.radius * 2.;
-        let total_height = self.size_info.height + 2. * self.radius;
-        // total number of hexagons vertically, in the grid, the number of them in Y
-        let y_hex_n = (total_height / hex_height) as usize;
+        let hex_width = COS_60 * self.radius * 2.;
+        let total_height = self.size_info.height + hex_height / 2.;
+        // total number of hexagons vertically, in the grid, the number of them in Y, ceil because
+        // hexagons may not be shown partially depending on the terminal size
+        let y_hex_n = (total_height / hex_height).ceil() as usize;
         // total number of hexagons horizontally, in the grid, the number of them in X
         let x_hex_n = (coords.len() / y_hex_n) as usize;
-        let center_idx = y_hex_n * (x_hex_n as f32 / 2.).floor() as usize
+        let mut center_idx = y_hex_n * (x_hex_n as f32 / 2.).floor() as usize
             + (y_hex_n as f32 / 2.).ceil() as usize;
-        tracing::info!("NannouTriangles::update_opengl_vecs(size_info) total_height: {total_height}, hex_height: {hex_height}, y_hex_n: {y_hex_n}, x_hex_n: {x_hex_n}, center_idx: {center_idx}, coords: {coords:?}");
+        center_idx = (center_idx - 1) % coords.len();
+        // tracing::info!("NannouTriangles::update_opengl_vecs(size_info) size_info.height: {}, total_height: {total_height}, hex_height: {hex_height}, hex_width: {hex_width}, y_hex_n: {y_hex_n}, x_hex_n: {x_hex_n}, coords.len(): {}, center_idx: {center_idx}, coords: {coords:?}", self.size_info.height, coords.len());
         let coord = coords[center_idx];
         // tracing::info!("NannouTriangles::update_opengl_vecs(size_info) {:?}, center_idx: {}, x: {}, y:{}, radius: {}, coords: {:?}", self.size_info, center_idx, coord.x, coord.y, self.radius, coords);
         self.vecs = self.gen_tree_vertices(coord.x, coord.y);
@@ -876,20 +879,25 @@ fn background_fill_hexagon_positions(size: SizeInfo, radius: f32) -> Vec<Value2D
     let mut current_x_position = 0f32;
     let mut half_offset = true; // When true, we will add half radius to Y to make sure the hexagons do not overlap
     let mut res = vec![];
-    while current_x_position < (size.width + radius) {
+    while current_x_position <= (size.width + x_offset) {
         let current_y_position = 0f32;
         let mut temp_y = current_y_position;
-        if half_offset {
-            // shift the y position in alternate fashion that the positions look like:
-            //   x   x   x
-            // x   x   x   x
-            temp_y -= y_offset;
-        }
-        while temp_y < (size.height + radius) {
-            res.push(Value2D { x: current_x_position, y: temp_y });
+        while temp_y <= (size.height + y_offset) {
+            res.push(Value2D {
+                x: current_x_position,
+                // shift the y position in alternate fashion that the positions look like:
+                // x   x   x   x
+                //   x   x   x
+                y: match half_offset {
+                    true => temp_y + y_offset,
+                    false => temp_y,
+                }
+            });
             temp_y += y_offset * 2f32;
         }
         half_offset = !half_offset;
+        // Advance by the diameter (2 * radius) + 1 radius so that we find the next center of the
+        // adjacent hexagon.
         current_x_position += x_offset * 3f32;
     }
     res
