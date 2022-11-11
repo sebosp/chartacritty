@@ -2,15 +2,15 @@ use crate::charts::Value2D;
 use crate::term::color::Rgb;
 use crate::term::SizeInfo;
 use log::*;
+use lyon::tessellation::{FillTessellator, StrokeTessellator};
+use nannou::draw;
+use nannou::draw::renderer::{GlyphCache, RenderPrimitive};
+use nannou::glam::Vec2;
+use nannou::prelude::*;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
 use std::time::UNIX_EPOCH;
-use nannou::draw;
-use nannou::glam::Vec2;
-use nannou::prelude::*;
-use nannou::draw::renderer::{RenderPrimitive, GlyphCache};
-use lyon::tessellation::{FillTessellator, StrokeTessellator};
 
 // TODO: Use const init that calculates these magic numbers at compile time
 const COS_60: f32 = 0.49999997f32;
@@ -41,9 +41,9 @@ impl DecorationsConfig {
     /// `set_size_info` iterates over the enabled decorations and calls the resize method for any
     /// registered decorators
     pub fn set_size_info(&mut self, size_info: SizeInfo) {
-        info!("DecorationsConfig::set_size_info()");
+        debug!("DecorationsConfig::set_size_info()");
         for decor in self.decorators.iter_mut() {
-            info!("DecorationsConfig:: iter_mut: {:?}", decor);
+            debug!("DecorationsConfig:: iter_mut: {:?}", decor);
             decor.set_size_info(size_info);
         }
     }
@@ -518,11 +518,7 @@ fn new_glyph_cache() -> GlyphCache {
         .into();
     let pixel_buffer = vec![0u8; w as usize * h as usize];
     let requires_upload = false;
-    GlyphCache {
-        cache,
-        pixel_buffer,
-        requires_upload,
-    }
+    GlyphCache { cache, pixel_buffer, requires_upload }
 }
 
 impl NannouTriangles {
@@ -532,10 +528,18 @@ impl NannouTriangles {
 
     pub fn update_opengl_vecs(&mut self) {
         let coords = background_fill_hexagon_positions(self.size_info, self.radius);
-        // We need to find the center hexagon. Which should be in the middle of the array
-        let center_idx: usize = coords.len() / 2;
+        // We need to find the center hexagon.
+        let hex_height = SIN_60 * self.radius * 2.;
+        let total_height = self.size_info.height + 2. * self.radius;
+        // total number of hexagons vertically, in the grid, the number of them in Y
+        let y_hex_n = (total_height / hex_height) as usize;
+        // total number of hexagons horizontally, in the grid, the number of them in X
+        let x_hex_n = (coords.len() / y_hex_n) as usize;
+        let center_idx = y_hex_n * (x_hex_n as f32 / 2.).floor() as usize
+            + (y_hex_n as f32 / 2.).ceil() as usize;
+        tracing::info!("NannouTriangles::update_opengl_vecs(size_info) total_height: {total_height}, hex_height: {hex_height}, y_hex_n: {y_hex_n}, x_hex_n: {x_hex_n}, center_idx: {center_idx}, coords: {coords:?}");
         let coord = coords[center_idx];
-        tracing::info!("NannouTriangles::update_opengl_vecs(size_info) {:?}, center_idx: {}, x: {}, y:{}, radius: {}, coords: {:?}", self.size_info, center_idx, coord.x, coord.y, self.radius, coords);
+        // tracing::info!("NannouTriangles::update_opengl_vecs(size_info) {:?}, center_idx: {}, x: {}, y:{}, radius: {}, coords: {:?}", self.size_info, center_idx, coord.x, coord.y, self.radius, coords);
         self.vecs = self.gen_tree_vertices(coord.x, coord.y);
     }
 
@@ -548,27 +552,29 @@ impl NannouTriangles {
         let draw = draw::Draw::default();
         let mut mesh = draw::Mesh::default();
         let ellipse_color = LIGHTSKYBLUE.into_format::<f32>();
-        draw.ellipse()
-            .x_y(x, y)
-        .radius(self.radius * 0.8)
-        .rgba(ellipse_color.red, ellipse_color.green, ellipse_color.blue, self.alpha);
+        draw.ellipse().x_y(x, y).radius(self.radius * 0.8).rgba(
+            ellipse_color.red,
+            ellipse_color.green,
+            ellipse_color.blue,
+            self.alpha,
+        );
         /*draw.tri()
-            .points(
-                [
-            self.size_info.scale_x(x),
-            self.size_info.scale_y(y),
-                ],
-                [
-            self.size_info.scale_x(x + x_60_degrees_offset),
-            self.size_info.scale_y(y + y_60_degrees_offset),
-                ],
-                [
-            self.size_info.scale_x(x + x_60_degrees_offset),
-            self.size_info.scale_y(y),
-                ]
-            )
-            .rotate(30f32)
-            .color(VIOLET);*/
+        .points(
+            [
+        self.size_info.scale_x(x),
+        self.size_info.scale_y(y),
+            ],
+            [
+        self.size_info.scale_x(x + x_60_degrees_offset),
+        self.size_info.scale_y(y + y_60_degrees_offset),
+            ],
+            [
+        self.size_info.scale_x(x + x_60_degrees_offset),
+        self.size_info.scale_y(y),
+            ]
+        )
+        .rotate(30f32)
+        .color(VIOLET);*/
         draw.finish_remaining_drawings();
         // Trying to adapt nannou crate nannou/src/draw/renderer/mod.rs `fill()` function
         // Construct the glyph cache.
@@ -611,10 +617,10 @@ impl NannouTriangles {
                         res.push(vx.color.alpha);
                     }
                     return res;
-                }
+                },
                 unhandled @ _ => {
                     tracing::info!("Unknown DrawCommand: {:?}", unhandled);
-                }
+                },
             }
         }
         // Order of vertices:
@@ -870,7 +876,7 @@ fn background_fill_hexagon_positions(size: SizeInfo, radius: f32) -> Vec<Value2D
     let mut current_x_position = 0f32;
     let mut half_offset = true; // When true, we will add half radius to Y to make sure the hexagons do not overlap
     let mut res = vec![];
-    while current_x_position <= (size.width + radius * 2f32) {
+    while current_x_position < (size.width + radius) {
         let current_y_position = 0f32;
         let mut temp_y = current_y_position;
         if half_offset {
@@ -879,7 +885,7 @@ fn background_fill_hexagon_positions(size: SizeInfo, radius: f32) -> Vec<Value2D
             // x   x   x   x
             temp_y -= y_offset;
         }
-        while temp_y <= (size.height + radius * 2f32) {
+        while temp_y < (size.height + radius) {
             res.push(Value2D { x: current_x_position, y: temp_y });
             temp_y += y_offset * 2f32;
         }
