@@ -1258,10 +1258,12 @@ impl Display {
                         self.renderer.draw_hex_bg(size_info, &hex_tris.vecs);
                     },
                     DecorationTriangles::Nannou(nannou_tris) => {
-                        self.renderer.draw_hex_bg(
-                            size_info,
-                            &nannou_tris.vecs
-                        );
+                        for draw_cmds in &nannou_tris.vecs {
+                            self.renderer.draw_hex_bg(
+                                size_info,
+                                &draw_cmds
+                            );
+                        }
                     },
                 },
                 DecorationTypes::Points(point_decor) => match point_decor {

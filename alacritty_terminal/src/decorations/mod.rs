@@ -364,7 +364,7 @@ pub struct NannouTriangles {
     size_info: SizeInfo,
     radius: f32,
     #[serde(default)]
-    pub vecs: Vec<f32>,
+    pub vecs: Vec<Vec<f32>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -419,7 +419,7 @@ impl HexagonTriangleBackground {
         // To avoid colliding with the HexagonLines, the inner triangles ocupy a radius a bit
         // smaller
         let inner_hexagon_radius_percent = 0.92f32; // XXX: Maybe this can be a field?
-        let coords = background_fill_hexagon_positions(self.size_info, self.radius);
+        let coords = gen_hex_grid_positions(self.size_info, self.radius);
         // TODO: The alpha should be calculated inside the shaders
         //          N
         //      3-------2
@@ -527,35 +527,29 @@ impl NannouTriangles {
     }
 
     pub fn update_opengl_vecs(&mut self) {
-        let coords = background_fill_hexagon_positions(self.size_info, self.radius);
-        // We need to find the center hexagon.
-        let hex_height = SIN_60 * self.radius * 2.;
-        let hex_width = COS_60 * self.radius * 2.;
-        let total_height = self.size_info.height + hex_height / 2.;
-        // total number of hexagons vertically, in the grid, the number of them in Y, ceil because
-        // hexagons may not be shown partially depending on the terminal size
-        let y_hex_n = (total_height / hex_height).ceil() as usize;
-        // total number of hexagons horizontally, in the grid, the number of them in X
-        let x_hex_n = (coords.len() / y_hex_n) as usize;
-        let mut center_idx = y_hex_n * (x_hex_n as f32 / 2.).floor() as usize
-            + (y_hex_n as f32 / 2.).ceil() as usize;
-        center_idx = (center_idx - 1) % coords.len();
-        // tracing::info!("NannouTriangles::update_opengl_vecs(size_info) size_info.height: {}, total_height: {total_height}, hex_height: {hex_height}, hex_width: {hex_width}, y_hex_n: {y_hex_n}, x_hex_n: {x_hex_n}, coords.len(): {}, center_idx: {center_idx}, coords: {coords:?}", self.size_info.height, coords.len());
+        let coords = gen_hex_grid_positions(self.size_info, self.radius);
+        let center_idx = find_hexagon_grid_center_idx(&coords, self.size_info, self.radius);
         let coord = coords[center_idx];
         // tracing::info!("NannouTriangles::update_opengl_vecs(size_info) {:?}, center_idx: {}, x: {}, y:{}, radius: {}, coords: {:?}", self.size_info, center_idx, coord.x, coord.y, self.radius, coords);
-        self.vecs = self.gen_tree_vertices(coord.x, coord.y);
+        self.vecs = self.gen_vertices(coord.x, coord.y);
     }
 
-    /// `gen_tree_vertices` Returns the vertices for an tree created at center x,y with a
+    /// `gen_vertices` Returns the vertices for an tree created at center x,y with a
     /// specific radius
-    pub fn gen_tree_vertices(&self, x: f32, y: f32) -> Vec<f32> {
-        //tracing::warn!("NannouTriangles::gen_tree_vertices(size_info) {:?}", self.size_info);
+    pub fn gen_vertices(&self, x: f32, y: f32) -> Vec<Vec<f32>> {
+        //tracing::warn!("NannouTriangles::gen_vertices(size_info) {:?}", self.size_info);
         let x_60_degrees_offset = COS_60 * self.radius;
         let y_60_degrees_offset = SIN_60 * self.radius;
         let draw = draw::Draw::default();
         let mut mesh = draw::Mesh::default();
         let ellipse_color = LIGHTSKYBLUE.into_format::<f32>();
         draw.ellipse().x_y(x, y).radius(self.radius * 0.8).rgba(
+            ellipse_color.red,
+            ellipse_color.green,
+            ellipse_color.blue,
+            self.alpha,
+        );
+        draw.ellipse().x_y(x + x_60_degrees_offset, y + y_60_degrees_offset).radius(self.radius * 0.5).rgba(
             ellipse_color.red,
             ellipse_color.green,
             ellipse_color.blue,
@@ -589,6 +583,7 @@ impl NannouTriangles {
         let curr_ctxt = draw::Context::default();
         let draw_cmds: Vec<_> = draw.drain_commands().collect();
         let scale_factor = 1.;
+        let mut all_recs = vec![];
         for cmd in draw_cmds {
             match cmd {
                 draw::DrawCommand::Primitive(prim) => {
@@ -619,49 +614,14 @@ impl NannouTriangles {
                         res.push(vx.color.blue);
                         res.push(vx.color.alpha);
                     }
-                    return res;
+                    all_recs.push(res);
                 },
                 unhandled @ _ => {
                     tracing::info!("Unknown DrawCommand: {:?}", unhandled);
                 },
             }
         }
-        // Order of vertices:
-        //    3-------2
-        //   /         \
-        //  /           \
-        // 4      .      1
-        //  \           /
-        //   \         /
-        //    5-------6
-        // |     width   |
-        // Mid right - mid left
-        vec![
-            // Bottom Right
-            self.size_info.scale_x(x + x_60_degrees_offset),
-            self.size_info.scale_y(y - y_60_degrees_offset),
-            // Lower bottom Right trunk
-            self.size_info.scale_x(x + x_60_degrees_offset - (x_60_degrees_offset / 6f32)),
-            self.size_info.scale_y(y - y_60_degrees_offset + (y_60_degrees_offset / 4f32)),
-            // Mid-Lower bottom Right trunk
-            self.size_info.scale_x(x + x_60_degrees_offset - (x_60_degrees_offset / 4f32)),
-            self.size_info.scale_y(y - y_60_degrees_offset + (y_60_degrees_offset / 2f32)),
-            /* Mid right:
-            size_info.scale_x(x + self.radius),
-            size_info.scale_y(y),
-            // Top right:
-            size_info.scale_x(x + x_60_degrees_offset),
-            size_info.scale_y(y + y_60_degrees_offset),
-            // Top left
-            size_info.scale_x(x - x_60_degrees_offset),
-            size_info.scale_y(y + y_60_degrees_offset),
-            // Mid left:
-            size_info.scale_x(x - self.radius),
-            size_info.scale_y(y),
-            // Bottom left
-            size_info.scale_x(x - x_60_degrees_offset),
-            size_info.scale_y(y - y_60_degrees_offset),*/
-        ]
+        all_recs
     }
 }
 
@@ -689,7 +649,7 @@ impl HexagonLineBackground {
 
     pub fn update_opengl_vecs(&mut self) {
         let mut hexagons = vec![];
-        let coords = background_fill_hexagon_positions(self.size_info, self.radius);
+        let coords = gen_hex_grid_positions(self.size_info, self.radius);
         for coord in coords {
             hexagons.append(&mut gen_hexagon_vertices(
                 self.size_info,
@@ -707,7 +667,7 @@ impl Decoration for HexagonLineBackground {
         let mut hexagons: Vec<f32> = vec![];
         // Let's create an adjusted version of the values that is slightly less than the actual
         // position
-        let coords = background_fill_hexagon_positions(self.size_info, self.radius);
+        let coords = gen_hex_grid_positions(self.size_info, self.radius);
         for coord in coords {
             hexagons.append(&mut gen_hexagon_vertices(
                 self.size_info,
@@ -792,7 +752,7 @@ impl HexagonPointBackground {
 
     pub fn update_opengl_vecs(&mut self) {
         let mut hexagons = vec![];
-        let coords = background_fill_hexagon_positions(self.size_info, self.radius);
+        let coords = gen_hex_grid_positions(self.size_info, self.radius);
         for coord in coords {
             hexagons.append(&mut gen_hexagon_vertices(
                 self.size_info,
@@ -866,7 +826,7 @@ impl HexagonPointBackground {
 }
 
 /// Creates a vector with x,y coordinates in which new hexagons can be drawn
-fn background_fill_hexagon_positions(size: SizeInfo, radius: f32) -> Vec<Value2D> {
+fn gen_hex_grid_positions(size: SizeInfo, radius: f32) -> Vec<Value2D> {
     // We only care for the 60 degrees X,Y, the rest we can calculate from this distance.
     // For the degrees at 0, X is the radius, and Y is 0.
     // let angle = 60.0f32; // Hexagon degrees
@@ -879,7 +839,7 @@ fn background_fill_hexagon_positions(size: SizeInfo, radius: f32) -> Vec<Value2D
     let mut current_x_position = 0f32;
     let mut half_offset = true; // When true, we will add half radius to Y to make sure the hexagons do not overlap
     let mut res = vec![];
-    while current_x_position <= (size.width + x_offset) {
+    while current_x_position < (size.width + x_offset) {
         let current_y_position = 0f32;
         let mut temp_y = current_y_position;
         while temp_y <= (size.height + y_offset) {
@@ -901,4 +861,52 @@ fn background_fill_hexagon_positions(size: SizeInfo, radius: f32) -> Vec<Value2D
         current_x_position += x_offset * 3f32;
     }
     res
+}
+
+fn find_hexagon_grid_center_idx(coords: &[Value2D], size_info: SizeInfo, radius: f32) -> usize {
+    // We need to find the center hexagon.
+    let hex_height = SIN_60 * radius * 2.;
+    // We'll draw half a hexagon more than needed so that we can interleave them while having the
+    // same number of vertical hexagons and let us calculate centers/etc easily.
+    let total_height = size_info.height + hex_height / 2.;
+    // total number of hexagons vertically, in the grid, the number of them in Y, ceil because
+    // hexagons may not be shown partially depending on the terminal size
+    let y_hex_n = (total_height / hex_height).ceil() as usize;
+    // total number of hexagons horizontally, in the grid, the number of them in X
+    let x_hex_n = (coords.len() / y_hex_n) as usize;
+    let mut center_idx = y_hex_n * (x_hex_n as f32 / 2.).floor() as usize
+       + (y_hex_n as f32 / 2.).floor() as usize;
+   center_idx = (center_idx - 1) % coords.len();
+   // tracing::info!("NannouTriangles::update_opengl_vecs(size_info) size_info.height: {}, total_height: {total_height}, hex_height: {hex_height}, y_hex_n: {y_hex_n}, x_hex_n: {x_hex_n}, coords.len(): {}, center_idx: {center_idx}, coords: {coords:?}", size_info.height, coords.len());
+   // ((x_hex_n as f32 / 2.).floor() * y_hex_n as f32 + (y_hex_n as f32 / 2.).floor()) as usize
+   center_idx
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn it_finds_center_idx(){
+        let mut size= SizeInfo::default();
+        size.width = 100.;
+        size.height = 100.;
+        let radius = 10.;
+        let hex_radius_y = SIN_60 * radius;
+        let hex_radius_x = COS_60 * radius;
+        let hex_diameter_y = hex_radius_y * 2.;
+        let hex_diameter_x = hex_radius_x * 2.;
+        let total_height = size.height + hex_radius_y;
+        let total_width = size.width + hex_radius_x;
+        // The hexagons are laid vertically by their
+        let y_hex_n = (total_height / hex_diameter_y).ceil() as usize;
+        // The X position is interleaved by 3 x the radius (x axis) and half a y + radius
+        let x_hex_n = ((total_width + hex_radius_x) / (hex_radius_x * 3.)).ceil() as usize;
+        let hex_coords = gen_hex_grid_positions(size, radius);
+        // Hexagons are laid vertically by increments of (sin(60) * diameter) along the Y axis.
+        assert_eq!(y_hex_n, 7);
+        assert_eq!(x_hex_n, 8);
+        assert_eq!(hex_coords.len(), 56);
+
+    }
 }
