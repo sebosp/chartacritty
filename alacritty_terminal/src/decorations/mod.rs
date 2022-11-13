@@ -4,6 +4,7 @@ use crate::term::SizeInfo;
 use log::*;
 use lyon::tessellation::{FillTessellator, StrokeTessellator};
 use nannou::draw;
+pub use nannou::draw::primitive::Primitive;
 use nannou::draw::renderer::{GlyphCache, RenderPrimitive};
 use nannou::glam::Vec2;
 use nannou::prelude::*;
@@ -11,6 +12,8 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
 use std::time::UNIX_EPOCH;
+use nannou::geom::path::Builder;
+use nannou::lyon;
 
 // TODO: Use const init that calculates these magic numbers at compile time
 const COS_60: f32 = 0.49999997f32;
@@ -195,7 +198,7 @@ impl DecorationPoints {
 #[serde(tag = "type", content = "props")]
 pub enum DecorationTriangles {
     Hexagon(HexagonTriangleBackground),
-    Nannou(NannouTriangles),
+    Nannou(NannouDecoration),
 }
 
 impl DecorationTriangles {
@@ -356,15 +359,55 @@ impl Default for HexagonPointBackground {
     }
 }
 
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+pub enum NannouDrawArrayMode {
+    Points,
+    LineStrip,
+    LineLoop,
+    GlTriangles,
+}
+
+impl Default for NannouDrawArrayMode {
+    fn default() -> Self {
+        Self::LineStrip
+    }
+}
+
+impl From<nannou::draw::primitive::Primitive> for NannouDrawArrayMode {
+    fn from(src: nannou::draw::primitive::Primitive) -> Self {
+        match src {
+            nannou::draw::primitive::Primitive::Mesh(_) => NannouDrawArrayMode::GlTriangles,
+            nannou::draw::primitive::Primitive::Tri(_) => NannouDrawArrayMode::GlTriangles,
+            nannou::draw::primitive::Primitive::Polygon(_) => NannouDrawArrayMode::GlTriangles,
+            nannou::draw::primitive::Primitive::Ellipse(_) => NannouDrawArrayMode::GlTriangles,
+            nannou::draw::primitive::Primitive::Quad(_) => NannouDrawArrayMode::GlTriangles,
+            nannou::draw::primitive::Primitive::Rect(_) => NannouDrawArrayMode::GlTriangles,
+            nannou::draw::primitive::Primitive::Line(_) => NannouDrawArrayMode::LineStrip,
+            nannou::draw::primitive::Primitive::Text(_) => NannouDrawArrayMode::GlTriangles,
+            nannou::draw::primitive::Primitive::Texture(_) => NannouDrawArrayMode::GlTriangles,
+            nannou::draw::primitive::Primitive::Path(_) => NannouDrawArrayMode::LineStrip,
+            _ => NannouDrawArrayMode::LineStrip,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default)]
+pub struct NannouVertices {
+    #[serde(default)]
+    pub draw_array_mode: NannouDrawArrayMode,
+    #[serde(default)]
+    pub vecs: Vec<f32>,
+}
+
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
-pub struct NannouTriangles {
+pub struct NannouDecoration {
     pub color: Rgb,
     pub alpha: f32,
     #[serde(default)]
     size_info: SizeInfo,
     radius: f32,
     #[serde(default)]
-    pub vecs: Vec<Vec<f32>>,
+    pub vertices: Vec<NannouVertices>,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -521,26 +564,26 @@ fn new_glyph_cache() -> GlyphCache {
     GlyphCache { cache, pixel_buffer, requires_upload }
 }
 
-impl NannouTriangles {
+impl NannouDecoration {
     pub fn new(color: Rgb, alpha: f32, size_info: SizeInfo, radius: f32) -> Self {
-        Self { color, alpha, size_info, radius, vecs: vec![] }
+        Self { color, alpha, size_info, radius, vertices: Default::default() }
     }
 
     pub fn update_opengl_vecs(&mut self) {
         let coords = gen_hex_grid_positions(self.size_info, self.radius);
         let center_idx = find_hexagon_grid_center_idx(&coords, self.size_info, self.radius);
         let coord = coords[center_idx];
-        // tracing::info!("NannouTriangles::update_opengl_vecs(size_info) {:?}, center_idx: {}, x: {}, y:{}, radius: {}, coords: {:?}", self.size_info, center_idx, coord.x, coord.y, self.radius, coords);
-        self.vecs = self.gen_vertices(coord.x, coord.y);
+        // tracing::info!("NannouDecoration::update_opengl_vecs(size_info) {:?}, center_idx: {}, x: {}, y:{}, radius: {}, coords: {:?}", self.size_info, center_idx, coord.x, coord.y, self.radius, coords);
+        self.vertices = self.gen_vertices(coord.x, coord.y);
     }
 
     /// `gen_vertices` Returns the vertices for an tree created at center x,y with a
     /// specific radius
-    pub fn gen_vertices(&self, x: f32, y: f32) -> Vec<Vec<f32>> {
-        //tracing::warn!("NannouTriangles::gen_vertices(size_info) {:?}", self.size_info);
+    pub fn gen_vertices(&self, x: f32, y: f32) -> Vec<NannouVertices> {
+        //tracing::warn!("NannouDecoration::gen_vertices(size_info) {:?}", self.size_info);
         let x_60_degrees_offset = COS_60 * self.radius;
         let y_60_degrees_offset = SIN_60 * self.radius;
-        let draw = draw::Draw::default();
+        let draw = draw::Draw::default().triangle_mode();
         let mut mesh = draw::Mesh::default();
         let ellipse_color = LIGHTSKYBLUE.into_format::<f32>();
         draw.ellipse().x_y(x, y).radius(self.radius * 0.8).rgba(
@@ -555,6 +598,20 @@ impl NannouTriangles {
             ellipse_color.blue,
             self.alpha,
         );
+        let arc_color = RED.into_format::<f32>();
+        let mut builder = Builder::new().with_svg();
+        builder.move_to(lyon::math::point(x - self.radius, y));
+        builder.arc(
+          lyon::math::point(x, y),
+          lyon::math::vector(self.radius, self.radius),
+          -lyon::math::Angle::pi(),
+          lyon::math::Angle::radians(0.0),
+        );
+        let arc_path = builder.build();
+        draw.path()
+            .fill()
+            .rgba(arc_color.red, arc_color.green, arc_color.blue, self.alpha)
+            .events(arc_path.iter());
         /*draw.tri()
         .points(
             [
@@ -580,21 +637,26 @@ impl NannouTriangles {
         let mut fill_tessellator = FillTessellator::new();
         let mut stroke_tessellator = StrokeTessellator::new();
         // Keep track of context changes.
-        let curr_ctxt = draw::Context::default();
+        pub use nannou::draw::State;
+        let mut curr_ctxt = draw::Context::default();
         let draw_cmds: Vec<_> = draw.drain_commands().collect();
+        let draw_state = draw.state();
+        let intermediary_state = draw_state.intermediary_state();
         let scale_factor = 1.;
         let mut all_recs = vec![];
         for cmd in draw_cmds {
             match cmd {
+                draw::DrawCommand::Context(ctxt) => curr_ctxt = ctxt,
                 draw::DrawCommand::Primitive(prim) => {
                     // Info required during rendering.
                     let ctxt = draw::renderer::RenderContext {
-                        intermediary_mesh: &Default::default(),
-                        path_event_buffer: &[],
-                        path_points_colored_buffer: &[],
-                        path_points_textured_buffer: &[],
-                        text_buffer: Default::default(),
-                        theme: &Default::default(),
+                        intermediary_mesh: &intermediary_state.intermediary_mesh(),
+                        path_event_buffer: &intermediary_state.path_event_buffer(),
+                        path_points_colored_buffer: &intermediary_state.path_points_colored_buffer(),
+                        path_points_textured_buffer: &intermediary_state
+                            .path_points_textured_buffer(),
+                        text_buffer: &intermediary_state.text_buffer(),
+                        theme: &draw_state.theme(),
                         transform: &curr_ctxt.transform,
                         fill_tessellator: &mut fill_tessellator,
                         stroke_tessellator: &mut stroke_tessellator,
@@ -603,6 +665,7 @@ impl NannouTriangles {
                         output_attachment_scale_factor: scale_factor,
                     };
 
+                    let draw_array_mode = prim.clone().into();
                     // Render the primitive.
                     let _render = prim.render_primitive(ctxt, &mut mesh);
                     let mut res = vec![];
@@ -614,10 +677,11 @@ impl NannouTriangles {
                         res.push(vx.color.blue);
                         res.push(vx.color.alpha);
                     }
-                    all_recs.push(res);
-                },
-                unhandled @ _ => {
-                    tracing::info!("Unknown DrawCommand: {:?}", unhandled);
+                    tracing::info!("mesh draw_array_mode: {:?}, res: {:?}", draw_array_mode, res);
+                    all_recs.push(NannouVertices {
+                        draw_array_mode,
+                        vecs: res
+                    });
                 },
             }
         }
@@ -877,7 +941,7 @@ fn find_hexagon_grid_center_idx(coords: &[Value2D], size_info: SizeInfo, radius:
     let mut center_idx = y_hex_n * (x_hex_n as f32 / 2.).floor() as usize
        + (y_hex_n as f32 / 2.).floor() as usize;
    center_idx = (center_idx - 1) % coords.len();
-   // tracing::info!("NannouTriangles::update_opengl_vecs(size_info) size_info.height: {}, total_height: {total_height}, hex_height: {hex_height}, y_hex_n: {y_hex_n}, x_hex_n: {x_hex_n}, coords.len(): {}, center_idx: {center_idx}, coords: {coords:?}", size_info.height, coords.len());
+   // tracing::info!("NannouDecoration::update_opengl_vecs(size_info) size_info.height: {}, total_height: {total_height}, hex_height: {hex_height}, y_hex_n: {y_hex_n}, x_hex_n: {x_hex_n}, coords.len(): {}, center_idx: {center_idx}, coords: {coords:?}", size_info.height, coords.len());
    // ((x_hex_n as f32 / 2.).floor() * y_hex_n as f32 + (y_hex_n as f32 / 2.).floor()) as usize
    center_idx
 }

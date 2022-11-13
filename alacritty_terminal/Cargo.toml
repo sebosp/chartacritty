@@ -17,6 +17,10 @@ version = "0.2.1-dev"
 path = "../alacritty_config"
 version = "0.1.1-dev"
 
+[dependencies.nannou]
+git = "https://github.com/sebosp/nannou"
+version = "0.18"
+
 [dependencies]
 libc = "0.2"
 bitflags = "1"
@@ -42,7 +46,6 @@ rand = "0.7.3"
 base64 = "0.13.0"
 regex-automata = "0.1.9"
 dirs = "4.0.0"
-nannou = "0.18"
 lyon = "0.17"
 
 [target.'cfg(unix)'.dependencies]

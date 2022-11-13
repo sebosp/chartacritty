@@ -67,7 +67,7 @@ impl HexBgRenderer {
         Ok(Self { vao, vbo, program })
     }
 
-    pub fn draw(&mut self, opengl_data: &[f32]) {
+    pub fn draw(&mut self, opengl_data: &[f32], gl_mode: u32) {
         unsafe {
             // Bind VAO to enable vertex attribute slots.
             gl::BindVertexArray(self.vao);
@@ -93,7 +93,7 @@ impl HexBgRenderer {
 
             // Draw the incoming array, opengl_data contains:
             // [2(x,y) + 4(r,g,b,a) ] -> 6
-            gl::DrawArrays(gl::TRIANGLES, 0, (opengl_data.len() / 6usize) as i32);
+            gl::DrawArrays(gl_mode, 0, (opengl_data.len() / 6usize) as i32);
 
             // Disable program.
             gl::UseProgram(0);

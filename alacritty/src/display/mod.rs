@@ -1255,13 +1255,18 @@ impl Display {
                 },
                 DecorationTypes::Triangles(tri_decor) => match tri_decor {
                     DecorationTriangles::Hexagon(hex_tris) => {
-                        self.renderer.draw_hex_bg(size_info, &hex_tris.vecs);
+                        self.renderer.draw_xyrgba_vertices(
+                            size_info,
+                            &hex_tris.vecs,
+                            renderer::DrawArrayMode::GlTriangles
+                        );
                     },
                     DecorationTriangles::Nannou(nannou_tris) => {
-                        for draw_cmds in &nannou_tris.vecs {
-                            self.renderer.draw_hex_bg(
+                        for decor_vertex in &nannou_tris.vertices {
+                            self.renderer.draw_xyrgba_vertices(
                                 size_info,
-                                &draw_cmds
+                                &decor_vertex.vecs,
+                                decor_vertex.draw_array_mode.clone().into(),
                             );
                         }
                     },
