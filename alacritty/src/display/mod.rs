@@ -1258,7 +1258,7 @@ impl Display {
                         self.renderer.draw_xyrgba_vertices(
                             size_info,
                             &hex_tris.vecs,
-                            renderer::DrawArrayMode::GlTriangles
+                            renderer::DrawArrayMode::GlTriangles,
                         );
                     },
                     DecorationTriangles::Nannou(nannou_tris) => {
@@ -1266,7 +1266,10 @@ impl Display {
                             self.renderer.draw_xyrgba_vertices(
                                 size_info,
                                 &decor_vertex.vecs,
-                                decor_vertex.draw_array_mode.clone().into(),
+                                // decor_vertex.draw_array_mode.clone().into(), It seems we cannot
+                                // use mixed types of draw array modes, maybe they overwrite each
+                                // other or we end up seeing lines where there were none?
+                                renderer::DrawArrayMode::GlTriangles,
                             );
                         }
                     },

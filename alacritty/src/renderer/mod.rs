@@ -6,10 +6,10 @@ use crossfont::Metrics;
 use log::info;
 use once_cell::sync::OnceCell;
 
+use alacritty_terminal::decorations::NannouDrawArrayMode;
 use alacritty_terminal::index::Point;
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::color::Rgb;
-use alacritty_terminal::decorations::NannouDrawArrayMode;
 
 use crate::display::content::RenderableCell;
 use crate::display::SizeInfo;
@@ -280,7 +280,7 @@ impl Renderer {
         size_info: &SizeInfo,
         opengl_data: &[f32],
         mode: DrawArrayMode,
-        ) {
+    ) {
         // This function expects a vector that contains 6 data points per vertex:
         // 2 are x,y position and the other 4 are the r,g,b,a
         // let opengl_data = vec![
