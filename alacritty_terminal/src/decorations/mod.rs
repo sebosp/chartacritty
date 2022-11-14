@@ -6,14 +6,14 @@ use lyon::tessellation::{FillTessellator, StrokeTessellator};
 use nannou::draw;
 pub use nannou::draw::primitive::Primitive;
 use nannou::draw::renderer::{GlyphCache, RenderPrimitive};
+use nannou::geom::path::Builder;
 use nannou::glam::Vec2;
+use nannou::lyon;
 use nannou::prelude::*;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
 use std::time::UNIX_EPOCH;
-use nannou::geom::path::Builder;
-use nannou::lyon;
 
 // TODO: Use const init that calculates these magic numbers at compile time
 const COS_60: f32 = 0.49999997f32;
@@ -586,31 +586,34 @@ impl NannouDecoration {
         let draw = draw::Draw::default().triangle_mode();
         let mut mesh = draw::Mesh::default();
         let ellipse_color = LIGHTSKYBLUE.into_format::<f32>();
-        draw.ellipse().x_y(x, y).radius(self.radius * 0.8).rgba(
+        let ellipse_stroke_color =
+            rgba(ellipse_color.red, ellipse_color.green, ellipse_color.blue, 0.01f32);
+        draw.ellipse().x_y(x, y).radius(self.radius * 0.8).stroke(ellipse_stroke_color).rgba(
             ellipse_color.red,
             ellipse_color.green,
             ellipse_color.blue,
             self.alpha,
         );
-        draw.ellipse().x_y(x + x_60_degrees_offset, y + y_60_degrees_offset).radius(self.radius * 0.5).rgba(
-            ellipse_color.red,
-            ellipse_color.green,
-            ellipse_color.blue,
-            self.alpha,
-        );
+        draw.ellipse()
+            .x_y(x + x_60_degrees_offset, y + y_60_degrees_offset)
+            .radius(self.radius * 0.5)
+            .stroke(ellipse_stroke_color)
+            .rgba(ellipse_color.red, ellipse_color.green, ellipse_color.blue, self.alpha);
         let arc_color = RED.into_format::<f32>();
         let mut builder = Builder::new().with_svg();
         builder.move_to(lyon::math::point(x - self.radius, y));
         builder.arc(
-          lyon::math::point(x, y),
-          lyon::math::vector(self.radius, self.radius),
-          -lyon::math::Angle::pi(),
-          lyon::math::Angle::radians(0.0),
+            lyon::math::point(x, y),
+            lyon::math::vector(self.radius, self.radius),
+            -lyon::math::Angle::pi(),
+            lyon::math::Angle::radians(0.0),
         );
         let arc_path = builder.build();
         draw.path()
-            .fill()
+            .stroke()
+            .stroke_weight(20.)
             .rgba(arc_color.red, arc_color.green, arc_color.blue, self.alpha)
+            .caps_round()
             .events(arc_path.iter());
         /*draw.tri()
         .points(
@@ -630,14 +633,13 @@ impl NannouDecoration {
         .rotate(30f32)
         .color(VIOLET);*/
         draw.finish_remaining_drawings();
+        pub use nannou::draw::State;
         // Trying to adapt nannou crate nannou/src/draw/renderer/mod.rs `fill()` function
         // Construct the glyph cache.
         let mut glyph_cache = new_glyph_cache();
-
         let mut fill_tessellator = FillTessellator::new();
         let mut stroke_tessellator = StrokeTessellator::new();
         // Keep track of context changes.
-        pub use nannou::draw::State;
         let mut curr_ctxt = draw::Context::default();
         let draw_cmds: Vec<_> = draw.drain_commands().collect();
         let draw_state = draw.state();
@@ -649,10 +651,12 @@ impl NannouDecoration {
                 draw::DrawCommand::Context(ctxt) => curr_ctxt = ctxt,
                 draw::DrawCommand::Primitive(prim) => {
                     // Info required during rendering.
+                    tracing::info!("mesh prim: {:?}", prim);
                     let ctxt = draw::renderer::RenderContext {
                         intermediary_mesh: &intermediary_state.intermediary_mesh(),
                         path_event_buffer: &intermediary_state.path_event_buffer(),
-                        path_points_colored_buffer: &intermediary_state.path_points_colored_buffer(),
+                        path_points_colored_buffer: &intermediary_state
+                            .path_points_colored_buffer(),
                         path_points_textured_buffer: &intermediary_state
                             .path_points_textured_buffer(),
                         text_buffer: &intermediary_state.text_buffer(),
@@ -677,11 +681,8 @@ impl NannouDecoration {
                         res.push(vx.color.blue);
                         res.push(vx.color.alpha);
                     }
-                    tracing::info!("mesh draw_array_mode: {:?}, res: {:?}", draw_array_mode, res);
-                    all_recs.push(NannouVertices {
-                        draw_array_mode,
-                        vecs: res
-                    });
+                    //tracing::info!("mesh draw_array_mode: {:?}, res: {:?}", draw_array_mode, res);
+                    all_recs.push(NannouVertices { draw_array_mode, vecs: res });
                 },
             }
         }
@@ -915,7 +916,7 @@ fn gen_hex_grid_positions(size: SizeInfo, radius: f32) -> Vec<Value2D> {
                 y: match half_offset {
                     true => temp_y + y_offset,
                     false => temp_y,
-                }
+                },
             });
             temp_y += y_offset * 2f32;
         }
@@ -938,12 +939,12 @@ fn find_hexagon_grid_center_idx(coords: &[Value2D], size_info: SizeInfo, radius:
     let y_hex_n = (total_height / hex_height).ceil() as usize;
     // total number of hexagons horizontally, in the grid, the number of them in X
     let x_hex_n = (coords.len() / y_hex_n) as usize;
-    let mut center_idx = y_hex_n * (x_hex_n as f32 / 2.).floor() as usize
-       + (y_hex_n as f32 / 2.).floor() as usize;
-   center_idx = (center_idx - 1) % coords.len();
-   // tracing::info!("NannouDecoration::update_opengl_vecs(size_info) size_info.height: {}, total_height: {total_height}, hex_height: {hex_height}, y_hex_n: {y_hex_n}, x_hex_n: {x_hex_n}, coords.len(): {}, center_idx: {center_idx}, coords: {coords:?}", size_info.height, coords.len());
-   // ((x_hex_n as f32 / 2.).floor() * y_hex_n as f32 + (y_hex_n as f32 / 2.).floor()) as usize
-   center_idx
+    let mut center_idx =
+        y_hex_n * (x_hex_n as f32 / 2.).floor() as usize + (y_hex_n as f32 / 2.).floor() as usize;
+    center_idx = (center_idx - 1) % coords.len();
+    // tracing::info!("NannouDecoration::update_opengl_vecs(size_info) size_info.height: {}, total_height: {total_height}, hex_height: {hex_height}, y_hex_n: {y_hex_n}, x_hex_n: {x_hex_n}, coords.len(): {}, center_idx: {center_idx}, coords: {coords:?}", size_info.height, coords.len());
+    // ((x_hex_n as f32 / 2.).floor() * y_hex_n as f32 + (y_hex_n as f32 / 2.).floor()) as usize
+    center_idx
 }
 
 #[cfg(test)]
@@ -951,8 +952,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_finds_center_idx(){
-        let mut size= SizeInfo::default();
+    fn it_finds_center_idx() {
+        let mut size = SizeInfo::default();
         size.width = 100.;
         size.height = 100.;
         let radius = 10.;
@@ -971,6 +972,5 @@ mod tests {
         assert_eq!(y_hex_n, 7);
         assert_eq!(x_hex_n, 8);
         assert_eq!(hex_coords.len(), 56);
-
     }
 }
