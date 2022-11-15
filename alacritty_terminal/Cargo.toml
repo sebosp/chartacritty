@@ -47,6 +47,7 @@ base64 = "0.13.0"
 regex-automata = "0.1.9"
 dirs = "4.0.0"
 lyon = "0.17"
+chrono = { version = "0.4", features = [ "serde" ] }
 
 [target.'cfg(unix)'.dependencies]
 nix = "0.24.1"
