@@ -1,6 +1,8 @@
 use crate::charts::Value2D;
 use crate::term::color::Rgb;
 use crate::term::SizeInfo;
+use chrono::prelude::*;
+use chrono::NaiveDate;
 use log::*;
 use lyon::tessellation::{FillTessellator, StrokeTessellator};
 use nannou::draw;
@@ -126,8 +128,10 @@ impl DecorationTypes {
 
     /// `tick` is called every time there is a draw request for the terminal
     pub fn tick(&mut self, time: f32) {
-        if let DecorationTypes::Points(ref mut hexagon_points) = self {
-            hexagon_points.tick(time);
+        match self {
+            DecorationTypes::Points(ref mut hexagon_points) => hexagon_points.tick(time),
+            DecorationTypes::Triangles(ref mut tris) => tris.tick(time),
+            _ => {},
         }
     }
 
@@ -213,6 +217,15 @@ impl DecorationTriangles {
                 nannou_triangles.size_info = size_info;
                 nannou_triangles.update_opengl_vecs();
             },
+        }
+    }
+
+    pub fn tick(&mut self, time: f32) {
+        match self {
+            DecorationTriangles::Nannou(ref mut nannou) => {
+                nannou.tick(time);
+            },
+            _ => {},
         }
     }
 }
@@ -408,6 +421,19 @@ pub struct NannouDecoration {
     radius: f32,
     #[serde(default)]
     pub vertices: Vec<NannouVertices>,
+    #[serde(default = "local_now")]
+    pub now: DateTime<Local>,
+    #[serde(default)]
+    pub coord_x: f32,
+    #[serde(default)]
+    pub coord_y: f32,
+    /// The last time the decoration was drawn.
+    #[serde(default)]
+    pub last_drawn_msecs: f32,
+}
+
+fn local_now() -> DateTime<Local> {
+    Local::now()
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -564,22 +590,57 @@ fn new_glyph_cache() -> GlyphCache {
     GlyphCache { cache, pixel_buffer, requires_upload }
 }
 
+fn build_time_arc(x: f32, y: f32, radius: f32, arc_angles: f32) -> nannou::geom::Path {
+    let mut builder = Builder::new().with_svg();
+    builder.move_to(lyon::math::point(x + radius, y));
+    builder.arc(
+        lyon::math::point(x, y),
+        lyon::math::vector(radius, radius),
+        lyon::math::Angle::degrees(arc_angles),
+        lyon::math::Angle::radians(0.0),
+    );
+    builder.build()
+}
 impl NannouDecoration {
     pub fn new(color: Rgb, alpha: f32, size_info: SizeInfo, radius: f32) -> Self {
-        Self { color, alpha, size_info, radius, vertices: Default::default() }
+        Self {
+            color,
+            alpha,
+            size_info,
+            radius,
+            vertices: Default::default(),
+            now: Local::now(),
+            last_drawn_msecs: 0f32,
+            coord_x: 0f32,
+            coord_y: 0f32,
+        }
+    }
+
+    pub fn tick(&mut self, time: f32) {
+        if time.floor() != self.last_drawn_msecs.floor() {
+            self.now = Local::now();
+            self.vertices = self.gen_vertices();
+        }
     }
 
     pub fn update_opengl_vecs(&mut self) {
         let coords = gen_hex_grid_positions(self.size_info, self.radius);
         let center_idx = find_hexagon_grid_center_idx(&coords, self.size_info, self.radius);
         let coord = coords[center_idx];
+        self.now = Local::now();
+        // self.alpha = 0.7f32;
+        // Store the center hexagon position for re-use later.
+        self.coord_x = coord.x;
+        self.coord_y = coord.y;
         // tracing::info!("NannouDecoration::update_opengl_vecs(size_info) {:?}, center_idx: {}, x: {}, y:{}, radius: {}, coords: {:?}", self.size_info, center_idx, coord.x, coord.y, self.radius, coords);
-        self.vertices = self.gen_vertices(coord.x, coord.y);
+        self.vertices = self.gen_vertices();
     }
 
     /// `gen_vertices` Returns the vertices for an tree created at center x,y with a
     /// specific radius
-    pub fn gen_vertices(&self, x: f32, y: f32) -> Vec<NannouVertices> {
+    pub fn gen_vertices(&self) -> Vec<NannouVertices> {
+        let x = self.coord_x;
+        let y = self.coord_y;
         //tracing::warn!("NannouDecoration::gen_vertices(size_info) {:?}", self.size_info);
         let x_60_degrees_offset = COS_60 * self.radius;
         let y_60_degrees_offset = SIN_60 * self.radius;
@@ -588,33 +649,118 @@ impl NannouDecoration {
         let ellipse_color = LIGHTSKYBLUE.into_format::<f32>();
         let ellipse_stroke_color =
             rgba(ellipse_color.red, ellipse_color.green, ellipse_color.blue, 0.01f32);
-        draw.ellipse().x_y(x, y).radius(self.radius * 0.8).stroke(ellipse_stroke_color).rgba(
+        /*draw.ellipse().x_y(x, y).radius(self.radius * 0.8).stroke(ellipse_stroke_color).rgba(
             ellipse_color.red,
             ellipse_color.green,
             ellipse_color.blue,
             self.alpha,
-        );
+        );*/
         draw.ellipse()
             .x_y(x + x_60_degrees_offset, y + y_60_degrees_offset)
-            .radius(self.radius * 0.5)
+            .radius(self.radius * 0.4)
             .stroke(ellipse_stroke_color)
-            .rgba(ellipse_color.red, ellipse_color.green, ellipse_color.blue, self.alpha);
-        let arc_color = RED.into_format::<f32>();
-        let mut builder = Builder::new().with_svg();
-        builder.move_to(lyon::math::point(x - self.radius, y));
-        builder.arc(
-            lyon::math::point(x, y),
-            lyon::math::vector(self.radius, self.radius),
-            -lyon::math::Angle::pi(),
-            lyon::math::Angle::radians(0.0),
-        );
-        let arc_path = builder.build();
+            .rgba(ellipse_color.red, ellipse_color.green, ellipse_color.blue, self.alpha * 0.10);
+        let first_day_of_year = NaiveDate::from_ymd_opt(self.now.year(), 1, 1).unwrap();
+        let first_day_of_next_year = NaiveDate::from_ymd_opt(self.now.year() + 1, 1, 1).unwrap();
+        let first_day_of_month =
+            NaiveDate::from_ymd_opt(self.now.year(), self.now.month(), 1).unwrap();
+        let first_day_of_next_month = if self.now.month() == 12 {
+            first_day_of_next_year
+        } else {
+            NaiveDate::from_ymd_opt(self.now.year(), self.now.month() + 1, 1).unwrap()
+        };
+
+        let days_in_year =
+            first_day_of_year.signed_duration_since(first_day_of_next_year).num_days();
+        let day_in_year_angle = 360f32 * self.now.ordinal() as f32 / days_in_year as f32;
+
+        let year_arc_color = GRAY.into_format::<f32>();
         draw.path()
             .stroke()
-            .stroke_weight(20.)
-            .rgba(arc_color.red, arc_color.green, arc_color.blue, self.alpha)
+            .stroke_weight(12.)
+            .rgba(year_arc_color.red, year_arc_color.green, year_arc_color.blue, self.alpha * 0.25)
             .caps_round()
-            .events(arc_path.iter());
+            .events(build_time_arc(x, y, self.radius * 1.05f32, day_in_year_angle).iter());
+
+        let month_in_year_angle = 360f32 * self.now.month() as f32 / 12f32;
+        let month_arc_color = LIGHTBLUE.into_format::<f32>();
+        draw.path()
+            .stroke()
+            .stroke_weight(8.)
+            .rgba(
+                month_arc_color.red,
+                month_arc_color.green,
+                month_arc_color.blue,
+                self.alpha * 0.35f32,
+            )
+            .caps_round()
+            .events(build_time_arc(x, y, self.radius * 0.95, month_in_year_angle).iter());
+
+        let days_in_month =
+            first_day_of_next_month.signed_duration_since(first_day_of_month).num_days();
+        let day_in_month_angle = 360f32 * self.now.day() as f32 / days_in_month as f32;
+        let day_in_month_arc_color = GRAY.into_format::<f32>();
+        draw.path()
+            .stroke()
+            .stroke_weight(8.)
+            .rgba(
+                day_in_month_arc_color.red,
+                day_in_month_arc_color.green,
+                day_in_month_arc_color.blue,
+                self.alpha * 0.45f32,
+            )
+            .caps_round()
+            .events(build_time_arc(x, y, self.radius * 0.85, day_in_month_angle).iter());
+
+        let hour_in_day_angle = 360f32 * self.now.hour() as f32 / 24f32;
+        let hour_in_day_color = if self.now.hour() > 9 && self.now.hour() < 17 {
+            LIGHTBLUE.into_format::<f32>()
+        } else {
+            DARKRED.into_format::<f32>()
+        };
+        draw.path()
+            .stroke()
+            .stroke_weight(8.)
+            .rgba(
+                hour_in_day_color.red,
+                hour_in_day_color.green,
+                hour_in_day_color.blue,
+                self.alpha * 0.65f32,
+            )
+            .caps_round()
+            .events(build_time_arc(x, y, self.radius * 0.75, hour_in_day_angle).iter());
+
+        let minute_in_hour_angle = 360f32 * self.now.minute() as f32 / 60f32;
+        let minute_in_hour_color = GRAY.into_format::<f32>();
+        draw.path()
+            .stroke()
+            .stroke_weight(8.)
+            .rgba(
+                minute_in_hour_color.red,
+                minute_in_hour_color.green,
+                minute_in_hour_color.blue,
+                self.alpha * 0.75f32,
+            )
+            .caps_round()
+            .events(build_time_arc(x, y, self.radius * 0.65, minute_in_hour_angle).iter());
+
+        let second_in_minute_angle = 360f32
+            * (self.now.second() as f32 * 1000f32
+                + (self.now.nanosecond() as f32 / 1_000_000f32).floor())
+            / 60_000f32;
+        let second_in_minute_color = AQUA.into_format::<f32>();
+        draw.path()
+            .stroke()
+            .stroke_weight(8.)
+            .rgba(
+                second_in_minute_color.red,
+                second_in_minute_color.green,
+                second_in_minute_color.blue,
+                self.alpha * 0.85f32,
+            )
+            .caps_round()
+            .events(build_time_arc(x, y, self.radius * 0.55, second_in_minute_angle).iter());
+
         /*draw.tri()
         .points(
             [
@@ -632,6 +778,7 @@ impl NannouDecoration {
         )
         .rotate(30f32)
         .color(VIOLET);*/
+
         draw.finish_remaining_drawings();
         pub use nannou::draw::State;
         // Trying to adapt nannou crate nannou/src/draw/renderer/mod.rs `fill()` function

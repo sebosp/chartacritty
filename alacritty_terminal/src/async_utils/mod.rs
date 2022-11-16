@@ -12,7 +12,7 @@ use log::*;
 use std::thread;
 use std::time::{Duration, Instant, UNIX_EPOCH};
 use tokio::sync::{mpsc, oneshot};
-use tokio::time::interval_at;
+use tokio::time::{self, interval_at};
 use tracing::{event, span, Level};
 
 /// `MetricRequest` defines remote data sources that should be loaded regularly
@@ -36,7 +36,6 @@ pub enum AsyncTask {
     IncrementInputCounter(u64, f64),
     IncrementOutputCounter(u64, f64),
     DecorUpdate(usize, f32),
-    DecorTimeSync(Instant),
     Shutdown,
     // Maybe add CloudWatch/etc
 }
@@ -279,7 +278,6 @@ pub async fn async_coordinator<U>(
     event!(Level::DEBUG, "async_coordinator: Starting, terminal size info: {:?}", size_info,);
     // This Instant is synchronized with the decorations thread, mainly used so that decorations
     // are ran under specific circumstances
-    let mut curr_decor_time = Instant::now();
     chart_config.setup_chart_spacing();
     for chart in &mut chart_config.charts {
         // Calculate the spacing between charts
@@ -326,19 +324,8 @@ pub async fn async_coordinator<U>(
             AsyncTask::IncrementOutputCounter(epoch, value) => {
                 increment_internal_counter(&mut chart_config.charts, "output", epoch, value, size);
             },
-            AsyncTask::DecorTimeSync(time_instant) => {
-                curr_decor_time = time_instant;
-            },
-            AsyncTask::DecorUpdate(idx, epoch_ms) => {
-                event!(Level::DEBUG, "DecorUpdate:(Idx:{})", idx);
-                let elapsed = curr_decor_time.elapsed();
-                let time_ms = elapsed.as_secs_f32() + elapsed.subsec_millis() as f32 / 1000f32;
-                // Let's say that if an event is 200 ms old we won't act on it.
-                if (epoch_ms - time_ms).abs() < 0.2 {
-                    // XXX: Unharcode the 0.2 seconds
-                    // XXX: Maybe send over the decoration max time instead of the 0.2 seconds
-                    event_proxy.send_event(Event::DecorEvent);
-                }
+            AsyncTask::DecorUpdate(idx, _epoch_ms) => {
+                event_proxy.send_event(Event::DecorEvent);
             },
             AsyncTask::Shutdown => {
                 break;
@@ -425,6 +412,23 @@ async fn fetch_prometheus_response(
             Ok(())
         },
     }
+}
+
+/// `spawn_decoration_intervals` iterates over the charts and sources
+pub fn spawn_decoration_intervals(
+    charts_tx: mpsc::Sender<AsyncTask>,
+    tokio_handle: tokio::runtime::Handle,
+) {
+    tokio_handle.spawn(async move {
+        let mut interval = time::interval(Duration::from_millis(200));
+        loop {
+            interval.tick().await;
+            match charts_tx.send(AsyncTask::DecorUpdate(0usize, 0f32)).await {
+                Ok(()) => {},
+                Err(err) => error!("Unable to send DecorUpdate: {:?}", err),
+            };
+        }
+    });
 }
 
 /// `spawn_charts_intervals` iterates over the charts and sources
@@ -613,8 +617,13 @@ where
             let chart_array = chart_config.charts.clone();
             let async_chart_config = chart_config.clone();
             let tokio_handle = tokio_runtime.handle().clone();
+            let charts_tx_cp = charts_tx.clone();
             tokio_runtime.spawn(async {
-                spawn_charts_intervals(chart_array, charts_tx, tokio_handle);
+                spawn_charts_intervals(chart_array, charts_tx_cp, tokio_handle);
+            });
+            let tokio_handle = tokio_runtime.handle().clone();
+            tokio_runtime.spawn(async {
+                spawn_decoration_intervals(charts_tx, tokio_handle);
             });
             tokio_runtime.block_on(async {
                 async_coordinator(charts_rx, async_chart_config, size_info, event_proxy).await
