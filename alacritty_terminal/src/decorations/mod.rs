@@ -8,6 +8,7 @@ use lyon::tessellation::{FillTessellator, StrokeTessellator};
 use nannou::draw;
 pub use nannou::draw::primitive::Primitive;
 use nannou::draw::renderer::{GlyphCache, RenderPrimitive};
+pub use nannou::draw::State;
 use nannou::geom::path::Builder;
 use nannou::glam::Vec2;
 use nannou::lyon;
@@ -601,8 +602,12 @@ fn build_time_arc(x: f32, y: f32, radius: f32, arc_angles: f32) -> nannou::geom:
     );
     builder.build()
 }
+
 impl NannouDecoration {
     pub fn new(color: Rgb, alpha: f32, size_info: SizeInfo, radius: f32) -> Self {
+        // TODO: There are static components and there are components that change often.
+        // We should only re-draw components when the time unit changes, i.e. not draw the year
+        // every 200 ms since it won't change...
         Self {
             color,
             alpha,
@@ -655,6 +660,18 @@ impl NannouDecoration {
             ellipse_color.blue,
             self.alpha,
         );*/
+        draw.tri()
+            .points(
+                [self.size_info.scale_x(x), self.size_info.scale_y(y)],
+                [
+                    self.size_info.scale_x(x + x_60_degrees_offset),
+                    self.size_info.scale_y(y + y_60_degrees_offset),
+                ],
+                [self.size_info.scale_x(x + x_60_degrees_offset), self.size_info.scale_y(y)],
+            )
+            .rotate(30f32)
+            .color(VIOLET);
+
         draw.ellipse()
             .x_y(x + x_60_degrees_offset, y + y_60_degrees_offset)
             .radius(self.radius * 0.4)
@@ -713,7 +730,7 @@ impl NannouDecoration {
             .events(build_time_arc(x, y, self.radius * 0.85, day_in_month_angle).iter());
 
         let hour_in_day_angle = 360f32 * self.now.hour() as f32 / 24f32;
-        let hour_in_day_color = if self.now.hour() > 9 && self.now.hour() < 17 {
+        let hour_in_day_color = if self.now.hour() >= 9 && self.now.hour() < 17 {
             LIGHTBLUE.into_format::<f32>()
         } else {
             DARKRED.into_format::<f32>()
@@ -761,26 +778,7 @@ impl NannouDecoration {
             .caps_round()
             .events(build_time_arc(x, y, self.radius * 0.55, second_in_minute_angle).iter());
 
-        /*draw.tri()
-        .points(
-            [
-        self.size_info.scale_x(x),
-        self.size_info.scale_y(y),
-            ],
-            [
-        self.size_info.scale_x(x + x_60_degrees_offset),
-        self.size_info.scale_y(y + y_60_degrees_offset),
-            ],
-            [
-        self.size_info.scale_x(x + x_60_degrees_offset),
-        self.size_info.scale_y(y),
-            ]
-        )
-        .rotate(30f32)
-        .color(VIOLET);*/
-
         draw.finish_remaining_drawings();
-        pub use nannou::draw::State;
         // Trying to adapt nannou crate nannou/src/draw/renderer/mod.rs `fill()` function
         // Construct the glyph cache.
         let mut glyph_cache = new_glyph_cache();
@@ -798,7 +796,6 @@ impl NannouDecoration {
                 draw::DrawCommand::Context(ctxt) => curr_ctxt = ctxt,
                 draw::DrawCommand::Primitive(prim) => {
                     // Info required during rendering.
-                    tracing::info!("mesh prim: {:?}", prim);
                     let ctxt = draw::renderer::RenderContext {
                         intermediary_mesh: &intermediary_state.intermediary_mesh(),
                         path_event_buffer: &intermediary_state.path_event_buffer(),

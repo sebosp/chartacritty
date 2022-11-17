@@ -10,7 +10,7 @@ use crate::event::{Event, EventListener};
 use crate::term::SizeInfo;
 use log::*;
 use std::thread;
-use std::time::{Duration, Instant, UNIX_EPOCH};
+use std::time::{Duration, UNIX_EPOCH};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{self, interval_at};
 use tracing::{event, span, Level};
@@ -324,7 +324,7 @@ pub async fn async_coordinator<U>(
             AsyncTask::IncrementOutputCounter(epoch, value) => {
                 increment_internal_counter(&mut chart_config.charts, "output", epoch, value, size);
             },
-            AsyncTask::DecorUpdate(idx, _epoch_ms) => {
+            AsyncTask::DecorUpdate(_idx, _epoch_ms) => {
                 event_proxy.send_event(Event::DecorEvent);
             },
             AsyncTask::Shutdown => {
