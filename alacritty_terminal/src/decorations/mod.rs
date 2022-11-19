@@ -730,10 +730,11 @@ impl NannouDecoration {
             .events(build_time_arc(x, y, self.radius * 0.85, day_in_month_angle).iter());
 
         let hour_in_day_angle = 360f32 * self.now.hour() as f32 / 24f32;
-        let hour_in_day_color = if self.now.hour() >= 9 && self.now.hour() < 17 {
-            LIGHTBLUE.into_format::<f32>()
+        let (hour_in_day_color, hour_in_day_alpha) = if self.now.hour() >= 9 && self.now.hour() < 17
+        {
+            (LIGHTBLUE.into_format::<f32>(), self.alpha * 0.65f32)
         } else {
-            DARKRED.into_format::<f32>()
+            (DARKRED.into_format::<f32>(), self.alpha * 1.25f32)
         };
         draw.path()
             .stroke()
@@ -742,7 +743,7 @@ impl NannouDecoration {
                 hour_in_day_color.red,
                 hour_in_day_color.green,
                 hour_in_day_color.blue,
-                self.alpha * 0.65f32,
+                hour_in_day_alpha,
             )
             .caps_round()
             .events(build_time_arc(x, y, self.radius * 0.75, hour_in_day_angle).iter());
