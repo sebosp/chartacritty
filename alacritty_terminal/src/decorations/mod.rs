@@ -10,6 +10,7 @@ pub use hexagon_point_background::HexagonPointBackground;
 pub use hexagon_line_background::HexagonLineBackground;
 pub use hexagon_triangle_background::HexagonTriangleBackground;
 pub use self::nannou::NannouDecoration;
+pub use self::nannou::NannouDrawArrayMode;
 
 pub mod polar_clock;
 pub mod hexagon_point_background;

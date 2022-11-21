@@ -1,7 +1,7 @@
 //! Nannou-based decorations for Alacritty
 
+use crate::term::color::Rgb;
 use chrono::prelude::*;
-use chrono::NaiveDate;
 use lyon::tessellation::{FillTessellator, StrokeTessellator};
 use nannou::draw;
 use crate::term::SizeInfo;
@@ -10,7 +10,6 @@ pub use nannou::draw::primitive::Primitive;
 use nannou::draw::renderer::{GlyphCache, RenderPrimitive};
 pub use nannou::draw::State;
 use nannou::glam::Vec2;
-use nannou::prelude::*;
 use super::PolarClockState;
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
@@ -60,6 +59,7 @@ pub struct NannouDecoration {
     #[serde(default)]
     pub size_info: SizeInfo,
     pub radius: f32,
+    #[serde(default)]
     pub polar_clock: PolarClockState,
     #[serde(default)]
     pub vertices: Vec<NannouVertices>,
@@ -97,7 +97,14 @@ fn new_glyph_cache() -> GlyphCache {
 
 impl NannouDecoration {
     pub fn new(color: Rgb, alpha: f32, size_info: SizeInfo, radius: f32) -> Self {
-        let polar_clock = PolarClockState::new();
+        let coords = super::gen_hex_grid_positions(size_info, radius);
+        let center_idx = super::find_hexagon_grid_center_idx(&coords, size_info, radius);
+        let coord = coords[center_idx];
+        // self.alpha = 0.7f32;
+        // Store the center hexagon position for re-use later.
+        let now = Local::now();
+        // TODO: Read the config and if props are provided give them below as param
+        let polar_clock = PolarClockState::new(None);
         Self {
             color,
             alpha,
@@ -105,107 +112,32 @@ impl NannouDecoration {
             radius,
             polar_clock,
             vertices: Default::default(),
-            now: Local::now(),
+            now,
             last_drawn_msecs: 0f32,
-            coord_x: 0f32,
-            coord_y: 0f32,
+            coord_x: coord.x,
+            coord_y: coord.y,
         }
     }
 
+    /// This is called regularly to potentially update the decoration vertices.
     pub fn tick(&mut self, time: f32) {
+        self.now = Local::now();
+        self.polar_clock.tick(&self.now, self.coord_x, self.coord_y, self.radius, self.size_info);
         if time.floor() != self.last_drawn_msecs.floor() {
-            self.now = Local::now();
-            self.vertices = self.gen_vertices();
+            self.last_drawn_msecs = time;
+            self.update_opengl_vecs();
         }
     }
 
+    /// Called after instantiation of the NannouDecoration, it will initialize the vertices for the
+    /// decorations.
     pub fn update_opengl_vecs(&mut self) {
-        let coords = super::gen_hex_grid_positions(self.size_info, self.radius);
-        let center_idx = super::find_hexagon_grid_center_idx(&coords, self.size_info, self.radius);
-        let coord = coords[center_idx];
-        self.now = Local::now();
-        // self.alpha = 0.7f32;
-        // Store the center hexagon position for re-use later.
-        self.coord_x = coord.x;
-        self.coord_y = coord.y;
         // tracing::info!("NannouDecoration::update_opengl_vecs(size_info) {:?}, center_idx: {}, x: {}, y:{}, radius: {}, coords: {:?}", self.size_info, center_idx, coord.x, coord.y, self.radius, coords);
         self.vertices = self.gen_vertices();
     }
 
-    fn draw_arc_path(&self, draw: &draw::Draw, arc_radius: f32, end_angle: f32, arc_color: Rgba<f32>, stroke_weight: f32) {
-        draw.path()
-            .stroke()
-            .stroke_weight(stroke_weight)
-            .color(arc_color)
-            .caps_round()
-            .events(build_time_arc(self.coord_x, self.coord_y, arc_radius, end_angle).iter());
-    }
-
-    fn draw_month_of_year_arc_vertices(&self) -> Vec<NannouVertices> {
-        let draw = draw::Draw::default().triangle_mode();
-        let month_in_year_angle = 360f32 * self.now.month() as f32 / 12f32;
-        let month_in_year_rgb = LIGHTBLUE.into_format::<f32>();
-        let month_in_year_rgba = rgba(month_in_year_rgb.red, month_in_year_rgb.green, month_in_year_rgb.blue, self.alpha * POLAR_CLOCK_MONTH_OF_YEAR_ALPHA_MULTIPLIER);
-        self.draw_arc_path(&draw, self.radius * POLAR_CLOCK_MONTH_OF_YEAR_RADIUS_MULTIPLIER, month_in_year_angle ,month_in_year_rgba, 8.);
-        self.gen_vertices_from_nannou_draw(draw)
-    }
-
-    fn draw_day_of_month_arc_vertices(&self) -> Vec<NannouVertices> {
-        let draw = draw::Draw::default().triangle_mode();
-        let first_day_of_next_year = NaiveDate::from_ymd_opt(self.now.year() + 1, 1, 1).unwrap();
-        let first_day_of_next_month = if self.now.month() == 12 {
-            first_day_of_next_year
-        } else {
-            NaiveDate::from_ymd_opt(self.now.year(), self.now.month() + 1, 1).unwrap()
-        };
-        let first_day_of_month =
-            NaiveDate::from_ymd_opt(self.now.year(), self.now.month(), 1).unwrap();
-        let days_in_month =
-            first_day_of_next_month.signed_duration_since(first_day_of_month).num_days();
-        let day_in_month_angle = 360f32 * self.now.day() as f32 / days_in_month as f32;
-        let day_in_month_rgb = GRAY.into_format::<f32>();
-        let day_in_month_rgba = rgba(day_in_month_rgb.red, day_in_month_rgb.green, day_in_month_rgb.blue, self.alpha * POLAR_CLOCK_DAY_OF_MONTH_ALPHA_MULTIPLIER);
-        self.draw_arc_path(&draw, self.radius * POLAR_CLOCK_DAY_OF_MONTH_RADIUS_MULTIPLIER, day_in_month_angle, day_in_month_rgba, 8.);
-        self.gen_vertices_from_nannou_draw(draw)
-    }
-
-    fn draw_hour_of_day_arc_vertices(&self) -> Vec<NannouVertices> {
-        let draw = draw::Draw::default().triangle_mode();
-        let hour_in_day_angle = 360f32 * self.now.hour() as f32 / 24f32;
-        let (hour_in_day_rgb, hour_in_day_alpha) = if self.now.hour() >= 9 && self.now.hour() < 17
-        {
-            (LIGHTBLUE.into_format::<f32>(), self.alpha * POLAR_CLOCK_WORKHOUR_OF_DAY_ALPHA_MULTIPLIER)
-        } else {
-            (DARKRED.into_format::<f32>(), self.alpha * POLAR_CLOCK_NONWORKHOUR_OF_DAY_ALPHA_MULTIPLIER)
-        };
-        let hour_in_day_rgba = rgba(hour_in_day_rgb.red, hour_in_day_rgb.green, hour_in_day_rgb.blue, hour_in_day_alpha);
-        self.draw_arc_path(&draw, self.radius * POLAR_CLOCK_HOUR_OF_DAY_RADIUS_MULTIPLIER, hour_in_day_angle, hour_in_day_rgba, 8.);
-        self.gen_vertices_from_nannou_draw(draw)
-    }
-
-    fn draw_minute_of_hour_arc_vertices(&self) -> Vec<NannouVertices> {
-        let draw = draw::Draw::default().triangle_mode();
-        let minute_in_hour_angle = 360f32 * self.now.minute() as f32 / 60f32;
-        let minute_in_hour_rgb = GRAY.into_format::<f32>();
-        let minute_in_hour_rgba = rgba(minute_in_hour_rgb.red, minute_in_hour_rgb.green, minute_in_hour_rgb.blue, self.alpha * POLAR_CLOCK_MINUTE_OF_HOUR_ALPHA_MULTIPLIER);
-        self.draw_arc_path(&draw, self.radius * POLAR_CLOCK_MINUTE_OF_HOUR_RADIUS_MULTIPLIER, minute_in_hour_angle, minute_in_hour_rgba, 8.);
-        self.gen_vertices_from_nannou_draw(draw)
-    }
-
-    fn draw_second_of_minute_arc_vertices(&self) -> Vec<NannouVertices> {
-        let draw = draw::Draw::default().triangle_mode();
-        let second_in_minute_angle = 360f32
-            * (self.now.second() as f32 * 1000f32
-                + (self.now.nanosecond() as f32 / 1_000_000f32).floor())
-            / 60_000f32;
-        let second_in_minute_rgb = AQUA.into_format::<f32>();
-        let second_in_minute_rgba = rgba(second_in_minute_rgb.red, second_in_minute_rgb.green, second_in_minute_rgb.blue, self.alpha * POLAR_CLOCK_SECOND_OF_MINUTE_ALPHA_MULTIPLIER);
-        self.draw_arc_path(&draw, self.radius * POLAR_CLOCK_SECOND_OF_MINUTE_RADIUS_MULTIPLIER, second_in_minute_angle, second_in_minute_rgba, 8.);
-        self.gen_vertices_from_nannou_draw(draw)
-    }
-
     // Transforms nannou::draw::Draw into xyrgba vertices we can draw through our renderer
-    fn gen_vertices_from_nannou_draw(draw: draw::Draw, size_info: SizeInfo) -> Vec<NannouVertices> {
+    pub fn gen_vertices_from_nannou_draw(draw: draw::Draw, size_info: SizeInfo) -> Vec<NannouVertices> {
         let mut res = vec![];
         draw.finish_remaining_drawings();
         // Trying to adapt nannou crate nannou/src/draw/renderer/mod.rs `fill()` function
@@ -296,12 +228,12 @@ impl NannouDecoration {
             .rgba(ellipse_color.red, ellipse_color.green, ellipse_color.blue, self.alpha * 0.10);
         */
         let mut all_recs = vec![];
-        all_recs.append(&mut self.draw_day_of_year_arc_vertices());
-        all_recs.append(&mut self.draw_month_of_year_arc_vertices());
-        all_recs.append(&mut self.draw_day_of_month_arc_vertices());
-        all_recs.append(&mut self.draw_hour_of_day_arc_vertices());
-        all_recs.append(&mut self.draw_minute_of_hour_arc_vertices());
-        all_recs.append(&mut self.draw_second_of_minute_arc_vertices());
+        all_recs.append(&mut self.polar_clock.day_of_year.vecs.clone());
+        all_recs.append(&mut self.polar_clock.month_of_year.vecs.clone());
+        all_recs.append(&mut self.polar_clock.day_of_month.vecs.clone());
+        all_recs.append(&mut self.polar_clock.hour_of_day.vecs.clone());
+        all_recs.append(&mut self.polar_clock.minute_of_hour.vecs.clone());
+        all_recs.append(&mut self.polar_clock.seconds_with_millis_of_minute.vecs.clone());
         all_recs
     }
 }

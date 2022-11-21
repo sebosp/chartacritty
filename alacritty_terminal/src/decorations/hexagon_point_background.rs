@@ -3,6 +3,8 @@
 use crate::term::SizeInfo;
 use crate::term::color::Rgb;
 use log::*;
+use std::time::Instant;
+use std::time::UNIX_EPOCH;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -14,7 +16,7 @@ pub struct HexagonPointBackground {
     pub alpha: f32,
 
     #[serde(default)]
-    size_info: SizeInfo,
+    pub size_info: SizeInfo,
 
     radius: f32,
 
@@ -148,9 +150,9 @@ impl HexagonPointBackground {
 
     pub fn update_opengl_vecs(&mut self) {
         let mut hexagons = vec![];
-        let coords = gen_hex_grid_positions(self.size_info, self.radius);
+        let coords = super::gen_hex_grid_positions(self.size_info, self.radius);
         for coord in coords {
-            hexagons.append(&mut gen_hexagon_vertices(
+            hexagons.append(&mut super::gen_hexagon_vertices(
                 self.size_info,
                 coord.x,
                 coord.y,
