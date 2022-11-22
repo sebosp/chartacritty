@@ -1,22 +1,22 @@
 //! Decorations for the Alacritty Terminal.
 //!
-use crate::charts::Value2D;
-use crate::term::SizeInfo;
-use log::*;
-use serde::{Deserialize, Serialize};
-use std::time::Instant;
-pub use polar_clock::PolarClockState;
-pub use hexagon_point_background::HexagonPointBackground;
-pub use hexagon_line_background::HexagonLineBackground;
-pub use hexagon_triangle_background::HexagonTriangleBackground;
 pub use self::nannou::NannouDecoration;
 pub use self::nannou::NannouDrawArrayMode;
+use crate::charts::Value2D;
+use crate::term::SizeInfo;
+pub use hexagon_line_background::HexagonLineBackground;
+pub use hexagon_point_background::HexagonPointBackground;
+pub use hexagon_triangle_background::HexagonTriangleBackground;
+use log::*;
+pub use polar_clock::PolarClockState;
+use serde::{Deserialize, Serialize};
+use std::time::Instant;
 
-pub mod polar_clock;
-pub mod hexagon_point_background;
 pub mod hexagon_line_background;
+pub mod hexagon_point_background;
 pub mod hexagon_triangle_background;
 pub mod nannou;
+pub mod polar_clock;
 
 // TODO: Use const init that calculates these magic numbers at compile time
 const COS_60: f32 = 0.49999997f32;
@@ -215,8 +215,7 @@ impl DecorationTriangles {
                 hex_triangles.update_opengl_vecs();
             },
             DecorationTriangles::Nannou(ref mut nannou_triangles) => {
-                nannou_triangles.size_info = size_info;
-                nannou_triangles.update_opengl_vecs();
+                nannou_triangles.set_size_info(size_info);
             },
         }
     }

@@ -1,16 +1,16 @@
 //! Nannou-based decorations for Alacritty
 
+use super::PolarClockState;
 use crate::term::color::Rgb;
+use crate::term::SizeInfo;
 use chrono::prelude::*;
 use lyon::tessellation::{FillTessellator, StrokeTessellator};
 use nannou::draw;
-use crate::term::SizeInfo;
-use serde::{Deserialize, Serialize};
 pub use nannou::draw::primitive::Primitive;
 use nannou::draw::renderer::{GlyphCache, RenderPrimitive};
 pub use nannou::draw::State;
 use nannou::glam::Vec2;
-use super::PolarClockState;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub enum NannouDrawArrayMode {
@@ -66,9 +66,9 @@ pub struct NannouDecoration {
     #[serde(default = "local_now")]
     pub now: DateTime<Local>,
     #[serde(default)]
-    pub coord_x: f32,
+    pub x: f32,
     #[serde(default)]
-    pub coord_y: f32,
+    pub y: f32,
     /// The last time the decoration was drawn.
     #[serde(default)]
     pub last_drawn_msecs: f32,
@@ -114,15 +114,28 @@ impl NannouDecoration {
             vertices: Default::default(),
             now,
             last_drawn_msecs: 0f32,
-            coord_x: coord.x,
-            coord_y: coord.y,
+            x: coord.x,
+            y: coord.y,
         }
+    }
+
+    pub fn set_size_info(&mut self, size_info: SizeInfo) {
+        let coords = super::gen_hex_grid_positions(size_info, self.radius);
+        let center_idx = super::find_hexagon_grid_center_idx(&coords, size_info, self.radius);
+        let coord = coords[center_idx];
+        self.x = coord.x;
+        self.y = coord.y;
+        self.size_info = size_info;
+        let now = Local::now();
+        self.polar_clock.mark_as_dirty();
+        self.polar_clock.tick(&now, self.x, self.y, self.radius, size_info, self.alpha);
+        self.update_opengl_vecs();
     }
 
     /// This is called regularly to potentially update the decoration vertices.
     pub fn tick(&mut self, time: f32) {
         self.now = Local::now();
-        self.polar_clock.tick(&self.now, self.coord_x, self.coord_y, self.radius, self.size_info);
+        self.polar_clock.tick(&self.now, self.x, self.y, self.radius, self.size_info, self.alpha);
         if time.floor() != self.last_drawn_msecs.floor() {
             self.last_drawn_msecs = time;
             self.update_opengl_vecs();
@@ -137,7 +150,10 @@ impl NannouDecoration {
     }
 
     // Transforms nannou::draw::Draw into xyrgba vertices we can draw through our renderer
-    pub fn gen_vertices_from_nannou_draw(draw: draw::Draw, size_info: SizeInfo) -> Vec<NannouVertices> {
+    pub fn gen_vertices_from_nannou_draw(
+        draw: draw::Draw,
+        size_info: SizeInfo,
+    ) -> Vec<NannouVertices> {
         let mut res = vec![];
         draw.finish_remaining_drawings();
         // Trying to adapt nannou crate nannou/src/draw/renderer/mod.rs `fill()` function
@@ -196,8 +212,8 @@ impl NannouDecoration {
     /// `gen_vertices` Returns the vertices for an tree created at center x,y with a
     /// specific radius
     pub fn gen_vertices(&self) -> Vec<NannouVertices> {
-        /*let x = self.coord_x;
-        let y = self.coord_y;
+        /*let x = self.x;
+        let y = self.y;
         let x_60_degrees_offset = COS_60 * self.radius;
         let y_60_degrees_offset = SIN_60 * self.radius;
         let ellipse_color = LIGHTSKYBLUE.into_format::<f32>();
@@ -246,4 +262,3 @@ pub fn parse_svg_path() -> Vec<f32> {
                  L 3 1 L 3 2 L 2 2 L 1 3 L 2 3 L 3 3 L 3 4 L 3 4 L 4 5 L 5 6 L 4 7 L 3 8";
     res
 }
-
