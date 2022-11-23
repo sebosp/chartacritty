@@ -13,15 +13,15 @@ use serde::{Deserialize, Serialize};
 // Create a Polar clock that has increasingly more and more opacity, so that the more granular time
 // is more easily visible, these can become default and we can read them from the config yaml file
 // for other hours, multipliers, etc.
-const DAY_OF_YEAR_ALPHA_MULTIPLIER: f32 = 0.35;
-const MONTH_OF_YEAR_ALPHA_MULTIPLIER: f32 = 0.40;
+const DAY_OF_YEAR_ALPHA_MULTIPLIER: f32 = 0.40;
+const MONTH_OF_YEAR_ALPHA_MULTIPLIER: f32 = 0.45;
 const DAY_OF_MONTH_ALPHA_MULTIPLIER: f32 = 0.50;
 // For work hours, 9 to 5, show light line
 const WORKHOUR_OF_DAY_ALPHA_MULTIPLIER: f32 = 0.55;
 // For after-work-hours, show line more visible
 const NONWORKHOUR_OF_DAY_ALPHA_MULTIPLIER: f32 = 1.25;
 const MINUTE_OF_HOUR_ALPHA_MULTIPLIER: f32 = 0.60;
-const SECONDS_WITH_MILLIS_OF_MINUTE_ALPHA_MULTIPLIER: f32 = 0.65;
+const SECONDS_WITH_MILLIS_OF_MINUTE_ALPHA_MULTIPLIER: f32 = 0.55;
 
 // The polar clock radius multipliers, similar to teh alpha multiplier, these make the arcs not
 // collide. TODO: Right now they depend on the arc stroke_weight to avoid overlap.
@@ -41,7 +41,7 @@ const WORKHOUR_OF_DAY_RGB: Srgb<u8> = LIGHTBLUE;
 // For after-work-hours, show line more visible
 const NONWORKHOUR_OF_DAY_RGB: Srgb<u8> = DARKRED;
 const MINUTE_OF_HOUR_RGB: Srgb<u8> = GRAY;
-const SECONDS_WITH_MILLIS_OF_MINUTE_RGB: Srgb<u8> = AQUA;
+const SECONDS_WITH_MILLIS_OF_MINUTE_RGB: Srgb<u8> = LIGHTBLUE;
 
 const DAY_OF_YEAR_STROKE_WEIGHT: f32 = 12.;
 const MONTH_OF_YEAR_STROKE_WEIGHT: f32 = 8.;
@@ -52,11 +52,11 @@ const SECONDS_WITH_MILLIS_OF_MINUTE_STROKE_WEIGHT: f32 = 8.;
 
 fn build_time_arc(x: f32, y: f32, radius: f32, arc_angles: f32) -> nannou::geom::Path {
     let mut builder = Builder::new().with_svg();
-    builder.move_to(lyon::math::point(x + radius, y));
+    builder.move_to(lyon::math::point(x, y + radius));
     builder.arc(
         lyon::math::point(x, y),
         lyon::math::vector(radius, radius),
-        lyon::math::Angle::degrees(arc_angles),
+        lyon::math::Angle::degrees((arc_angles + 90.) % 360.),
         lyon::math::Angle::radians(0.0),
     );
     builder.build()
@@ -284,7 +284,7 @@ impl PolarClockUnitState {
     ) {
         let current_tick_unit = self.unit.get_time_unit_value(tick_time);
         if let PolarClockUnit::HourOfDay = &self.unit {
-            let (hour_color, hour_alpha) = if current_tick_unit >= 9 && current_tick_unit < 5 {
+            let (hour_color, hour_alpha) = if current_tick_unit >= 9 && current_tick_unit < 17 {
                 (WORKHOUR_OF_DAY_RGB.into_format::<f32>(), WORKHOUR_OF_DAY_ALPHA_MULTIPLIER)
             } else {
                 (NONWORKHOUR_OF_DAY_RGB.into_format::<f32>(), NONWORKHOUR_OF_DAY_ALPHA_MULTIPLIER)
@@ -394,5 +394,21 @@ impl PolarClockState {
         self.hour_of_day.tick(tick_time, x, y, radius, size_info, alpha);
         self.minute_of_hour.tick(tick_time, x, y, radius, size_info, alpha);
         self.seconds_with_millis_of_minute.tick(tick_time, x, y, radius, size_info, alpha);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::NaiveDate;
+
+    #[test]
+    fn returns_seconds_with_millis() {
+        let seconds_with_millis = PolarClockUnit::SecondsWithMillisOfMinute;
+        let timezone_west = FixedOffset::west_opt(7 * 60 * 60).unwrap();
+        let naivedatetime_west = NaiveDate::from_ymd_opt(2000, 1, 11).unwrap()
+            .and_hms_milli_opt(12, 34, 56, 789).unwrap();
+        let dt = DateTime::<Local>::from_local(naivedatetime_west, timezone_west);
+        assert_eq!(seconds_with_millis.get_time_unit_value(&dt), 56_789);
     }
 }

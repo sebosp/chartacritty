@@ -134,12 +134,13 @@ impl NannouDecoration {
 
     /// This is called regularly to potentially update the decoration vertices.
     pub fn tick(&mut self, time: f32) {
+        tracing::info!("NannouDecoration::tick()");
         self.now = Local::now();
         self.polar_clock.tick(&self.now, self.x, self.y, self.radius, self.size_info, self.alpha);
-        if time.floor() != self.last_drawn_msecs.floor() {
+//        if time.floor() != self.last_drawn_msecs.floor() {
             self.last_drawn_msecs = time;
             self.update_opengl_vecs();
-        }
+//        }
     }
 
     /// Called after instantiation of the NannouDecoration, it will initialize the vertices for the

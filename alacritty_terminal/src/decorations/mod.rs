@@ -277,7 +277,8 @@ fn gen_hex_grid_positions(size: SizeInfo, radius: f32) -> Vec<Value2D> {
     let x_offset = COS_60 * radius;
     let y_offset = SIN_60 * radius;
     let mut current_x_position = 0f32;
-    let mut half_offset = true; // When true, we will add half radius to Y to make sure the hexagons do not overlap
+    // When true, we will add half radius to Y to make sure the hexagons do not overlap
+    let mut half_offset = true;
     let mut res = vec![];
     while current_x_position < (size.width + x_offset) {
         let current_y_position = 0f32;
@@ -319,7 +320,12 @@ fn find_hexagon_grid_center_idx(coords: &[Value2D], size_info: SizeInfo, radius:
     let x_hex_n = (coords.len() / y_hex_n) as usize;
     let mut center_idx =
         y_hex_n * (x_hex_n as f32 / 2.).floor() as usize + (y_hex_n as f32 / 2.).floor() as usize;
-    center_idx = (center_idx - 1) % coords.len();
+    if (x_hex_n as f32 / 2.) as usize % 2usize == 0usize {
+        // When we are in an even-numbered column, we'll choose a hexagon that is one unit below
+        // the pre-calculated. This is because the y-position of the hexagons varies depending on
+        // the odd/even column
+        center_idx = (center_idx - 1) % coords.len();
+    }
     // tracing::info!("NannouDecoration::update_opengl_vecs(size_info) size_info.height: {}, total_height: {total_height}, hex_height: {hex_height}, y_hex_n: {y_hex_n}, x_hex_n: {x_hex_n}, coords.len(): {}, center_idx: {center_idx}, coords: {coords:?}", size_info.height, coords.len());
     // ((x_hex_n as f32 / 2.).floor() * y_hex_n as f32 + (y_hex_n as f32 / 2.).floor()) as usize
     center_idx
@@ -338,7 +344,6 @@ mod tests {
         let hex_radius_y = SIN_60 * radius;
         let hex_radius_x = COS_60 * radius;
         let hex_diameter_y = hex_radius_y * 2.;
-        let hex_diameter_x = hex_radius_x * 2.;
         let total_height = size.height + hex_radius_y;
         let total_width = size.width + hex_radius_x;
         // The hexagons are laid vertically by their
