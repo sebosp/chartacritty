@@ -1027,3 +1027,20 @@ key_bindings:
 
   # Highlight window damage information.
   #highlight_damage: false
+decorations:
+  decorators:
+    - type: Triangles
+      props:
+        type: Hexagon
+        props:
+          vertex_color: "0x1958a7"
+          center_color: "0x000000"
+          alpha: 0.05
+          radius: 100
+    - type: Triangles
+      props:
+        type: Nannou
+        props:
+          color: "0x1958a7"
+          alpha: 0.2
+          radius: 100 # This needs to be the same as the above radius or the hexs won't match
