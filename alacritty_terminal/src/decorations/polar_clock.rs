@@ -13,15 +13,15 @@ use serde::{Deserialize, Serialize};
 // Create a Polar clock that has increasingly more and more opacity, so that the more granular time
 // is more easily visible, these can become default and we can read them from the config yaml file
 // for other hours, multipliers, etc.
-const DAY_OF_YEAR_ALPHA_MULTIPLIER: f32 = 0.40;
-const MONTH_OF_YEAR_ALPHA_MULTIPLIER: f32 = 0.45;
-const DAY_OF_MONTH_ALPHA_MULTIPLIER: f32 = 0.50;
+const DAY_OF_YEAR_ALPHA_MULTIPLIER: f32 = 0.30;
+const MONTH_OF_YEAR_ALPHA_MULTIPLIER: f32 = 0.05;
+const DAY_OF_MONTH_ALPHA_MULTIPLIER: f32 = 0.30;
 // For work hours, 9 to 5, show light line
-const WORKHOUR_OF_DAY_ALPHA_MULTIPLIER: f32 = 0.55;
+const WORKHOUR_OF_DAY_ALPHA_MULTIPLIER: f32 = 0.20;
 // For after-work-hours, show line more visible
-const NONWORKHOUR_OF_DAY_ALPHA_MULTIPLIER: f32 = 1.25;
-const MINUTE_OF_HOUR_ALPHA_MULTIPLIER: f32 = 0.60;
-const SECONDS_WITH_MILLIS_OF_MINUTE_ALPHA_MULTIPLIER: f32 = 0.55;
+const NONWORKHOUR_OF_DAY_ALPHA_MULTIPLIER: f32 = 0.25;
+const MINUTE_OF_HOUR_ALPHA_MULTIPLIER: f32 = 0.25;
+const SECONDS_WITH_MILLIS_OF_MINUTE_ALPHA_MULTIPLIER: f32 = 0.15;
 
 // The polar clock radius multipliers, similar to teh alpha multiplier, these make the arcs not
 // collide. TODO: Right now they depend on the arc stroke_weight to avoid overlap.
@@ -33,31 +33,45 @@ const MINUTE_OF_HOUR_RADIUS_MULTIPLIER: f32 = 0.65;
 const SECONDS_WITH_MILLIS_OF_MINUTE_RADIUS_MULTIPLIER: f32 = 0.55;
 
 /// Set the default colors for the polar clock
-const DAY_OF_YEAR_RGB: Srgb<u8> = GRAY;
-const MONTH_OF_YEAR_RGB: Srgb<u8> = LIGHTBLUE;
-const DAY_OF_MONTH_RGB: Srgb<u8> = GRAY;
+const DAY_OF_YEAR_RGB: Srgb<u8> = PALETURQUOISE;
+const MONTH_OF_YEAR_RGB: Srgb<u8> = PALEGOLDENROD;
+const DAY_OF_MONTH_RGB: Srgb<u8> = PALETURQUOISE;
 // For work hours, 9 to 5, show light line
-const WORKHOUR_OF_DAY_RGB: Srgb<u8> = LIGHTBLUE;
+const WORKHOUR_OF_DAY_RGB: Srgb<u8> = PALEGOLDENROD;
 // For after-work-hours, show line more visible
 const NONWORKHOUR_OF_DAY_RGB: Srgb<u8> = DARKRED;
-const MINUTE_OF_HOUR_RGB: Srgb<u8> = GRAY;
-const SECONDS_WITH_MILLIS_OF_MINUTE_RGB: Srgb<u8> = LIGHTBLUE;
+const MINUTE_OF_HOUR_RGB: Srgb<u8> = PALETURQUOISE;
+const SECONDS_WITH_MILLIS_OF_MINUTE_RGB: Srgb<u8> = PALEGOLDENROD;
 
-const DAY_OF_YEAR_STROKE_WEIGHT: f32 = 12.;
-const MONTH_OF_YEAR_STROKE_WEIGHT: f32 = 8.;
-const DAY_OF_MONTH_STROKE_WEIGHT: f32 = 8.;
-const HOUR_OF_DAY_STROKE_WEIGHT: f32 = 8.;
-const MINUTE_OF_HOUR_STROKE_WEIGHT: f32 = 8.;
-const SECONDS_WITH_MILLIS_OF_MINUTE_STROKE_WEIGHT: f32 = 8.;
+const DAY_OF_YEAR_STROKE_WEIGHT: f32 = 8.;
+const MONTH_OF_YEAR_STROKE_WEIGHT: f32 = 6.;
+const DAY_OF_MONTH_STROKE_WEIGHT: f32 = 6.;
+const HOUR_OF_DAY_STROKE_WEIGHT: f32 = 6.;
+const MINUTE_OF_HOUR_STROKE_WEIGHT: f32 = 6.;
+const SECONDS_WITH_MILLIS_OF_MINUTE_STROKE_WEIGHT: f32 = 6.;
 
-fn build_time_arc(x: f32, y: f32, radius: f32, arc_angles: f32) -> nannou::geom::Path {
+/// Draws the progression arc for a time unit along its domain.
+fn build_time_arc_progress(x: f32, y: f32, radius: f32, arc_angles: f32) -> nannou::geom::Path {
     let mut builder = Builder::new().with_svg();
     builder.move_to(lyon::math::point(x, y + radius));
     builder.arc(
         lyon::math::point(x, y),
         lyon::math::vector(radius, radius),
-        lyon::math::Angle::degrees((arc_angles + 90.) % 360.),
-        lyon::math::Angle::radians(0.0),
+        lyon::math::Angle::degrees(arc_angles),
+        lyon::math::Angle::degrees(90.)
+    );
+    builder.build()
+}
+
+/// Draws the whiskers showing time unit significant separators
+fn build_time_arc_whisker(x: f32, y: f32, radius: f32, arc_angles: f32) -> nannou::geom::Path {
+    let mut builder = Builder::new().with_svg();
+    builder.move_to(lyon::math::point(arc_angles.to_radians().cos() * radius + x, arc_angles.to_radians().sin() * radius + y));
+    builder.arc(
+        lyon::math::point(x, y),
+        lyon::math::vector(radius, radius * 1.1),
+        lyon::math::Angle::degrees(2f32), // Draw a 2 degrees arc.
+        lyon::math::Angle::degrees(arc_angles),
     );
     builder.build()
 }
@@ -176,6 +190,20 @@ impl PolarClockUnit {
         }
     }
 
+    /// Returns the whiskers that are useful to understand clearly the time progression across
+    /// its domain, i.e. for the month, one tick per month, for hour, one tick every 3 hours, etc.
+    pub fn get_unit_whiskers(&self, _input_time: &DateTime<Local>) -> Vec<u32> {
+        // TODO: use input_time to return special days of like weekends
+        match self {
+            Self::DayOfYear => vec![0],
+            Self::MonthOfYear => (0..12).collect(),
+            Self::DayOfMonth => vec![0, 15],
+            Self::HourOfDay => (0..8).map(|x| x * 3).collect(),
+            Self::MinuteOfHour => (0..4).map(|x| x * 15).collect(),
+            Self::SecondsWithMillisOfMinute => vec![0, 30_000],
+        }
+    }
+
     /// Gets the current time unit value
     pub fn get_time_unit_value(&self, input_time: &DateTime<Local>) -> u32 {
         match self {
@@ -209,7 +237,7 @@ impl PolarClockUnit {
     pub fn day_of_year_max_value(input_time: &DateTime<Local>) -> u32 {
         let first_day_of_year = NaiveDate::from_ymd_opt(input_time.year(), 1, 1).unwrap();
         let first_day_of_next_year = NaiveDate::from_ymd_opt(input_time.year() + 1, 1, 1).unwrap();
-        first_day_of_year.signed_duration_since(first_day_of_next_year).num_days() as u32
+        first_day_of_next_year.signed_duration_since(first_day_of_year).num_days() as u32
     }
 
     /// Find the number of days in the current month by getting the first day of the current month
@@ -319,8 +347,40 @@ impl PolarClockUnitState {
             .color(color)
             .caps_round()
             .events(
-                build_time_arc(x, y, radius * self.props.radius_multiplier, progress_angle).iter(),
+                build_time_arc_progress(x, y, radius * self.props.radius_multiplier, progress_angle).iter(),
             );
+        let color = rgba(GOLD.into_format::<f32>().red, GOLD.into_format::<f32>().green, GOLD.into_format::<f32>().blue, alpha * 0.4);
+        for whisker in self.unit.get_unit_whiskers(tick_time) {
+            let mut whisker_angle = 360f32 * (whisker % self.unit.get_time_unit_max_value(tick_time)) as f32
+                / self.unit.get_time_unit_max_value(tick_time) as f32;
+            whisker_angle = (whisker_angle + 90f32)% 360f32;
+            if let PolarClockUnit::MonthOfYear = self.unit {
+                log::info!("Drawing month whisker: {whisker} at angle: {whisker_angle}");
+            }
+            draw.path()
+                .stroke()
+                .stroke_weight(2.)
+                .color(color)
+                .events(
+                    build_time_arc_whisker(x, y, radius * self.props.radius_multiplier, whisker_angle).iter(),
+                );
+        }
+        /*draw.tri()
+            .points(
+                Point2::new(
+                    (radius * self.props.radius_multiplier * 0.95) * 90_f32.to_radians().cos() + x,
+                    (radius * self.props.radius_multiplier * 0.95) * 90_f32.to_radians().sin() + y
+                ),
+                Point2::new(
+                    ((radius + self.props.stroke_weight) * self.props.radius_multiplier) * 85_f32.to_radians().cos() + x,
+                    ((radius + self.props.stroke_weight) * self.props.radius_multiplier) * 85_f32.to_radians().sin() + y
+                ),
+                Point2::new(
+                    ((radius + self.props.stroke_weight) * self.props.radius_multiplier) * 95_f32.to_radians().cos() + x,
+                    ((radius + self.props.stroke_weight) * self.props.radius_multiplier) * 95_f32.to_radians().sin() + y
+                )
+            )
+            .color(color);*/
         super::NannouDecoration::gen_vertices_from_nannou_draw(draw, size_info)
     }
 }
@@ -410,5 +470,8 @@ mod tests {
             .and_hms_milli_opt(12, 34, 56, 789).unwrap();
         let dt = DateTime::<Local>::from_local(naivedatetime_west, timezone_west);
         assert_eq!(seconds_with_millis.get_time_unit_value(&dt), 56_789);
+        let day_of_year = PolarClockUnit::DayOfYear;
+        assert_eq!(day_of_year.get_time_unit_value(&dt), 11);
+        assert_eq!(day_of_year.get_time_unit_max_value(&dt), 366);
     }
 }

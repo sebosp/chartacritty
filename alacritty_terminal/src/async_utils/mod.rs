@@ -420,7 +420,7 @@ pub fn spawn_decoration_intervals(
     tokio_handle: tokio::runtime::Handle,
 ) {
     tokio_handle.spawn(async move {
-        let mut interval = time::interval(Duration::from_millis(200));
+        let mut interval = time::interval(Duration::from_millis(100));
         loop {
             interval.tick().await;
             match charts_tx.send(AsyncTask::DecorUpdate(0usize, 0f32)).await {

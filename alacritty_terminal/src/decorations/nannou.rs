@@ -134,13 +134,10 @@ impl NannouDecoration {
 
     /// This is called regularly to potentially update the decoration vertices.
     pub fn tick(&mut self, time: f32) {
-        tracing::info!("NannouDecoration::tick()");
         self.now = Local::now();
         self.polar_clock.tick(&self.now, self.x, self.y, self.radius, self.size_info, self.alpha);
-//        if time.floor() != self.last_drawn_msecs.floor() {
-            self.last_drawn_msecs = time;
-            self.update_opengl_vecs();
-//        }
+        self.last_drawn_msecs = time;
+        self.update_opengl_vecs();
     }
 
     /// Called after instantiation of the NannouDecoration, it will initialize the vertices for the
@@ -244,8 +241,7 @@ impl NannouDecoration {
             .stroke(ellipse_stroke_color)
             .rgba(ellipse_color.red, ellipse_color.green, ellipse_color.blue, self.alpha * 0.10);
         */
-        let mut all_recs = vec![];
-        all_recs.append(&mut self.polar_clock.day_of_year.vecs.clone());
+        let mut all_recs = self.polar_clock.day_of_year.vecs.clone();
         all_recs.append(&mut self.polar_clock.month_of_year.vecs.clone());
         all_recs.append(&mut self.polar_clock.day_of_month.vecs.clone());
         all_recs.append(&mut self.polar_clock.hour_of_day.vecs.clone());
