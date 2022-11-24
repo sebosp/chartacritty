@@ -420,6 +420,7 @@ pub fn spawn_decoration_intervals(
     tokio_handle: tokio::runtime::Handle,
 ) {
     tokio_handle.spawn(async move {
+        // 10 FPS for decorations
         let mut interval = time::interval(Duration::from_millis(100));
         loop {
             interval.tick().await;
