@@ -6,8 +6,6 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct HexagonTriangleBackground {
-    // shader_vertex_path: String,
-    // shader_fragment_path: String,
     pub vertex_color: Rgb,
     pub center_color: Rgb,
     pub alpha: f32,
@@ -27,8 +25,6 @@ impl HexagonTriangleBackground {
         radius: f32,
     ) -> Self {
         HexagonTriangleBackground {
-            // shader_fragment_path: String::from("Unimplemented"),
-            // shader_vertex_path: String::from("Unimplemented"),
             vertex_color,
             center_color,
             alpha,
@@ -57,6 +53,7 @@ impl HexagonTriangleBackground {
         let mut center = vec![
             0f32, // x
             0f32, // y
+            0f32, // z
             <f32 as From<_>>::from(self.center_color.r) / 255.,
             <f32 as From<_>>::from(self.center_color.g) / 255.,
             <f32 as From<_>>::from(self.center_color.b) / 255.,
@@ -65,6 +62,7 @@ impl HexagonTriangleBackground {
         let sides = vec![
             0f32, // x
             0f32, // y
+            0f32, // z
             <f32 as From<_>>::from(self.vertex_color.r) / 255.,
             <f32 as From<_>>::from(self.vertex_color.g) / 255.,
             <f32 as From<_>>::from(self.vertex_color.b) / 255.,
@@ -80,7 +78,7 @@ impl HexagonTriangleBackground {
             // The first pair of coordinates are the center of the hexagon
             center[0] = self.size_info.scale_x(coord.x);
             center[1] = self.size_info.scale_y(coord.y);
-            let hexagon_vertices = super::gen_hexagon_vertices(
+            let hexagon_vertices = super::gen_2d_hexagon_vertices(
                 self.size_info,
                 coord.x,
                 coord.y,

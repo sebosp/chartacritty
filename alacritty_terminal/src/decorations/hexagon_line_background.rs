@@ -34,7 +34,7 @@ impl HexagonLineBackground {
         let mut hexagons = vec![];
         let coords = super::gen_hex_grid_positions(self.size_info, self.radius);
         for coord in coords {
-            hexagons.append(&mut super::gen_hexagon_vertices(
+            hexagons.append(&mut super::gen_2d_hexagon_vertices(
                 self.size_info,
                 coord.x,
                 coord.y,
@@ -53,7 +53,7 @@ impl Decoration for HexagonLineBackground {
         // position
         let coords = super::gen_hex_grid_positions(self.size_info, self.radius);
         for coord in coords {
-            hexagons.append(&mut super::gen_hexagon_vertices(
+            hexagons.append(&mut super::gen_2d_hexagon_vertices(
                 self.size_info,
                 coord.x,
                 coord.y,

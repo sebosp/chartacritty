@@ -274,21 +274,21 @@ impl Renderer {
         self.activate_regular_state(size_info);
     }
 
-    /// `draw_xyrgba_array` draws an array of triangles with properties (x,y,r,g,b,a)
-    pub fn draw_xyrgba_vertices(
+    /// `draw_xyzrgba_array` draws an array of triangles with properties (x,y,z,r,g,b,a)
+    pub fn draw_xyzrgba_vertices(
         &mut self,
         size_info: &SizeInfo,
         opengl_data: &[f32],
         mode: DrawArrayMode,
     ) {
-        // This function expects a vector that contains 6 data points per vertex:
-        // 2 are x,y position and the other 4 are the r,g,b,a
+        // This function expects a vector that contains 7 data points per vertex:
+        // 3 are x,y,z position and the other 4 are the r,g,b,a
         // let opengl_data = vec![
-        // 0.5f32, 0.5f32, // x, y
+        // 0.5f32, 0.5f32, 0.0f32 // x, y, z
         // 1.0f32, 0.0f32, 0.0f32, 1.0f32, // RGBA
-        // 0.8f32, 0.8f32, // x, y
+        // 0.8f32, 0.8f32, 0.0f32 // x, y, z
         // 0.0f32, 1.0f32, 0.0f32, 1.0f32, // RGBA
-        // 0.7f32, 0.3f32, // x, y
+        // 0.7f32, 0.3f32, 0.0f32 // x, y, z
         // 0.0f32, 0.0f32, 1.0f32, 1.0f32, // RGBA
         // ];
         Self::prepare_rect_rendering_state(size_info);

@@ -354,9 +354,6 @@ impl PolarClockUnitState {
             let mut whisker_angle = 360f32 * (whisker % self.unit.get_time_unit_max_value(tick_time)) as f32
                 / self.unit.get_time_unit_max_value(tick_time) as f32;
             whisker_angle = (whisker_angle + 90f32)% 360f32;
-            if let PolarClockUnit::MonthOfYear = self.unit {
-                log::info!("Drawing month whisker: {whisker} at angle: {whisker_angle}");
-            }
             draw.path()
                 .stroke()
                 .stroke_weight(2.)

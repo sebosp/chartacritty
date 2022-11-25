@@ -37,15 +37,15 @@ impl HexBgRenderer {
             // Position.
             gl::VertexAttribPointer(
                 0, // location=0 is the vertex position
-                2, // position has 2 values: X, Y
+                3, // position has 3 values: X, Y, Z
                 gl::FLOAT,
                 gl::FALSE,
-                // [2(x,y) + 4(r,g,b,a) ] -> 6
-                (mem::size_of::<f32>() * 6) as i32,
+                // [3(x,y,z) + 4(r,g,b,a) ] -> 7
+                (mem::size_of::<f32>() * 7) as i32,
                 attribute_offset as *const _,
             );
             gl::EnableVertexAttribArray(0);
-            attribute_offset += mem::size_of::<f32>() * 2;
+            attribute_offset += mem::size_of::<f32>() * 3;
 
             // Color.
             gl::VertexAttribPointer(
@@ -53,8 +53,8 @@ impl HexBgRenderer {
                 4, // Color has 4 items, R, G, B, A
                 gl::FLOAT,
                 gl::FALSE,
-                // [2(x,y) + 4(r,g,b,a) ] -> 6
-                (mem::size_of::<f32>() * 6) as i32,
+                // [3(x,y,z) + 4(r,g,b,a) ] -> 7
+                (mem::size_of::<f32>() * 7) as i32,
                 // The colors are offset by 2 (x,y) points
                 attribute_offset as *const _,
             );
@@ -92,8 +92,8 @@ impl HexBgRenderer {
             );
 
             // Draw the incoming array, opengl_data contains:
-            // [2(x,y) + 4(r,g,b,a) ] -> 6
-            gl::DrawArrays(gl_mode, 0, (opengl_data.len() / 6usize) as i32);
+            // [3(x,y,z) + 4(r,g,b,a) ] -> 7
+            gl::DrawArrays(gl_mode, 0, (opengl_data.len() / 7usize) as i32);
 
             // Disable program.
             gl::UseProgram(0);

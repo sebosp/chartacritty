@@ -1255,7 +1255,7 @@ impl Display {
                 },
                 DecorationTypes::Triangles(tri_decor) => match tri_decor {
                     DecorationTriangles::Hexagon(hex_tris) => {
-                        self.renderer.draw_xyrgba_vertices(
+                        self.renderer.draw_xyzrgba_vertices(
                             size_info,
                             &hex_tris.vecs,
                             renderer::DrawArrayMode::GlTriangles,
@@ -1263,7 +1263,7 @@ impl Display {
                     },
                     DecorationTriangles::Nannou(nannou_tris) => {
                         for decor_vertex in &nannou_tris.vertices {
-                            self.renderer.draw_xyrgba_vertices(
+                            self.renderer.draw_xyzrgba_vertices(
                                 size_info,
                                 &decor_vertex.vecs,
                                 // decor_vertex.draw_array_mode.clone().into(), It seems we cannot

@@ -195,6 +195,7 @@ impl NannouDecoration {
                     for vx in mesh.vertices() {
                         primitive_render_vecs.push(size_info.scale_x(vx.x));
                         primitive_render_vecs.push(size_info.scale_y(vx.y));
+                        primitive_render_vecs.push(0.9);
                         primitive_render_vecs.push(vx.color.red);
                         primitive_render_vecs.push(vx.color.green);
                         primitive_render_vecs.push(vx.color.blue);

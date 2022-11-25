@@ -2,7 +2,6 @@
 //!
 pub use self::nannou::NannouDecoration;
 pub use self::nannou::NannouDrawArrayMode;
-use crate::charts::Value2D;
 use crate::term::SizeInfo;
 pub use hexagon_line_background::HexagonLineBackground;
 pub use hexagon_point_background::HexagonPointBackground;
@@ -11,6 +10,8 @@ use log::*;
 pub use polar_clock::PolarClockState;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
+use ::nannou::geom::point::pt3;
+use ::nannou::prelude::Point3;
 
 pub mod hexagon_line_background;
 pub mod hexagon_point_background;
@@ -198,7 +199,7 @@ impl DecorationPoints {
     }
 }
 
-/// DecorationTriangles represents sets of triangle of x,y,r,g,b,a properties
+/// DecorationTriangles represents sets of triangle of x,y,z,r,g,b,a properties
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 #[serde(tag = "type", content = "props")]
 pub enum DecorationTriangles {
@@ -230,16 +231,16 @@ impl DecorationTriangles {
     }
 }
 
-/// `gen_hexagon_vertices` Returns the vertices for an hexagon created at center x,y with a
+/// `gen_2d_hexagon_vertices` Returns the vertices for an hexagon created at center x,y with a
 /// specific radius
-pub fn gen_hexagon_vertices(size_info: SizeInfo, x: f32, y: f32, radius: f32) -> Vec<f32> {
+pub fn gen_2d_hexagon_vertices(size_info: SizeInfo, x: f32, y: f32, radius: f32) -> Vec<f32> {
     let x_60_degrees_offset = COS_60 * radius;
     let y_60_degrees_offset = SIN_60 * radius;
     // Order of vertices:
     //    3-------2
     //   /         \
     //  /           \
-    // 4             1
+    // 4      0      1
     //  \           /
     //   \         /
     //    5-------6
@@ -265,9 +266,9 @@ pub fn gen_hexagon_vertices(size_info: SizeInfo, x: f32, y: f32, radius: f32) ->
     ]
 }
 
-/// Creates a vector with x,y coordinates in which new hexagons can be drawn
-fn gen_hex_grid_positions(size: SizeInfo, radius: f32) -> Vec<Value2D> {
-    // We only care for the 60 degrees X,Y, the rest we can calculate from this distance.
+/// Creates a vector with x,y,z coordinates in which new hexagons can be drawn
+fn gen_hex_grid_positions(size: SizeInfo, radius: f32) -> Vec<Point3> {
+    // We only care for the 60 degrees X,Y,Z, the rest we can calculate from this distance.
     // For the degrees at 0, X is the radius, and Y is 0.
     // let angle = 60.0f32; // Hexagon degrees
     // let cos_60 =  angle.to_radians().cos();
@@ -284,16 +285,17 @@ fn gen_hex_grid_positions(size: SizeInfo, radius: f32) -> Vec<Value2D> {
         let current_y_position = 0f32;
         let mut temp_y = current_y_position;
         while temp_y <= (size.height + y_offset) {
-            res.push(Value2D {
-                x: current_x_position,
+            res.push(pt3(
+                current_x_position,
                 // shift the y position in alternate fashion that the positions look like:
                 // x   x   x   x
                 //   x   x   x
-                y: match half_offset {
+                match half_offset {
                     true => temp_y + y_offset,
                     false => temp_y,
                 },
-            });
+                0.0f32,
+            ));
             temp_y += y_offset * 2f32;
         }
         half_offset = !half_offset;
@@ -307,7 +309,7 @@ fn gen_hex_grid_positions(size: SizeInfo, radius: f32) -> Vec<Value2D> {
 /// There is a background of hexagons, a sort of grid, this function finds the center-most in the
 /// array of hexagons, they are organized top to bottom, then interleaved a bit to avoid vertex
 /// overlapping.
-fn find_hexagon_grid_center_idx(coords: &[Value2D], size_info: SizeInfo, radius: f32) -> usize {
+fn find_hexagon_grid_center_idx(coords: &[Point3], size_info: SizeInfo, radius: f32) -> usize {
     // We need to find the center hexagon.
     let hex_height = SIN_60 * radius * 2.;
     // We'll draw half a hexagon more than needed so that we can interleave them while having the

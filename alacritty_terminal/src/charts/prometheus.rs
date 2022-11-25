@@ -349,7 +349,7 @@ pub async fn get_from_prometheus(
     url: hyper::Uri,
     connect_timeout: Option<Duration>,
 ) -> Result<hyper::body::Bytes, (hyper::Uri, hyper::Error)> {
-    info!("get_from_prometheus: Loading Prometheus URL: {}", url);
+    debug!("get_from_prometheus: Loading Prometheus URL: {}", url);
     let request = if url.scheme() == Some(&hyper::http::uri::Scheme::HTTP) {
         Client::builder()
             .pool_idle_timeout(connect_timeout) // Is this the same as connect_timeout in Client?
