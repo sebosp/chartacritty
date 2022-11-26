@@ -99,7 +99,7 @@ impl DecorationsConfig {
 #[serde(tag = "type", content = "props")]
 pub enum DecorationTypes {
     Lines(DecorationLines),
-    Triangles(DecorationTriangles),
+    Triangles(Box<DecorationTriangles>),
     Points(DecorationPoints),
     None,
 }
@@ -204,7 +204,7 @@ impl DecorationPoints {
 #[serde(tag = "type", content = "props")]
 pub enum DecorationTriangles {
     Hexagon(HexagonTriangleBackground),
-    Nannou(NannouDecoration),
+    Nannou(Box<NannouDecoration>),
 }
 
 impl DecorationTriangles {
@@ -212,8 +212,7 @@ impl DecorationTriangles {
     pub fn set_size_info(&mut self, size_info: SizeInfo) {
         match self {
             DecorationTriangles::Hexagon(ref mut hex_triangles) => {
-                hex_triangles.size_info = size_info;
-                hex_triangles.update_opengl_vecs();
+                hex_triangles.set_size_info(size_info);
             },
             DecorationTriangles::Nannou(ref mut nannou_triangles) => {
                 nannou_triangles.set_size_info(size_info);
@@ -223,10 +222,12 @@ impl DecorationTriangles {
 
     pub fn tick(&mut self, time: f32) {
         match self {
+            DecorationTriangles::Hexagon(ref mut hex_triangles) => {
+                hex_triangles.tick(time);
+            }
             DecorationTriangles::Nannou(ref mut nannou) => {
                 nannou.tick(time);
             },
-            _ => {},
         }
     }
 }
@@ -339,9 +340,7 @@ mod tests {
 
     #[test]
     fn it_finds_center_idx() {
-        let mut size = SizeInfo::default();
-        size.width = 100.;
-        size.height = 100.;
+        let mut size = SizeInfo { width: 100., height: 100., ..Default::default() };
         let radius = 10.;
         let hex_radius_y = SIN_60 * radius;
         let hex_radius_x = COS_60 * radius;

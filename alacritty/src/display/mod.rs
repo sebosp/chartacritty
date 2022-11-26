@@ -1253,7 +1253,7 @@ impl Display {
                         }
                     },
                 },
-                DecorationTypes::Triangles(tri_decor) => match tri_decor {
+                DecorationTypes::Triangles(tri_decor) => match &**tri_decor {
                     DecorationTriangles::Hexagon(hex_tris) => {
                         self.renderer.draw_xyzrgba_vertices(
                             size_info,

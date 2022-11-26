@@ -312,7 +312,7 @@ impl PolarClockUnitState {
     ) {
         let current_tick_unit = self.unit.get_time_unit_value(tick_time);
         if let PolarClockUnit::HourOfDay = &self.unit {
-            let (hour_color, hour_alpha) = if current_tick_unit >= 9 && current_tick_unit < 17 {
+            let (hour_color, hour_alpha) = if (9..17).contains(&current_tick_unit) {
                 (WORKHOUR_OF_DAY_RGB.into_format::<f32>(), WORKHOUR_OF_DAY_ALPHA_MULTIPLIER)
             } else {
                 (NONWORKHOUR_OF_DAY_RGB.into_format::<f32>(), NONWORKHOUR_OF_DAY_ALPHA_MULTIPLIER)
@@ -420,7 +420,7 @@ impl PolarClockState {
             minute_of_hour: PolarClockUnitState::new(PolarClockUnit::MinuteOfHour, props.clone()),
             seconds_with_millis_of_minute: PolarClockUnitState::new(
                 PolarClockUnit::SecondsWithMillisOfMinute,
-                props.clone(),
+                props,
             ),
         }
     }

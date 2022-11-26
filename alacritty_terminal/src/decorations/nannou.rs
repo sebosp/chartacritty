@@ -88,8 +88,7 @@ fn new_glyph_cache() -> GlyphCache {
         .dimensions(w, h)
         .scale_tolerance(scale_tolerance)
         .position_tolerance(position_tolerance)
-        .build()
-        .into();
+        .build();
     let pixel_buffer = vec![0u8; w as usize * h as usize];
     let requires_upload = false;
     GlyphCache { cache, pixel_buffer, requires_upload }
@@ -172,14 +171,14 @@ impl NannouDecoration {
                 draw::DrawCommand::Primitive(prim) => {
                     // Info required during rendering.
                     let ctxt = draw::renderer::RenderContext {
-                        intermediary_mesh: &intermediary_state.intermediary_mesh(),
-                        path_event_buffer: &intermediary_state.path_event_buffer(),
-                        path_points_colored_buffer: &intermediary_state
+                        intermediary_mesh: intermediary_state.intermediary_mesh(),
+                        path_event_buffer: intermediary_state.path_event_buffer(),
+                        path_points_colored_buffer: intermediary_state
                             .path_points_colored_buffer(),
-                        path_points_textured_buffer: &intermediary_state
+                        path_points_textured_buffer: intermediary_state
                             .path_points_textured_buffer(),
-                        text_buffer: &intermediary_state.text_buffer(),
-                        theme: &draw_state.theme(),
+                        text_buffer: intermediary_state.text_buffer(),
+                        theme: draw_state.theme(),
                         transform: &curr_ctxt.transform,
                         fill_tessellator: &mut fill_tessellator,
                         stroke_tessellator: &mut stroke_tessellator,

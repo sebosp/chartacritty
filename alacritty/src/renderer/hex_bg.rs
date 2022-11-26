@@ -23,6 +23,10 @@ impl HexBgRenderer {
         let mut vbo: GLuint = 0;
         let program = HexagonShaderProgram::new(shader_version)?;
         unsafe {
+            gl::Enable(gl::BLEND);
+            gl::BlendFunc(gl::SRC1_COLOR, gl::ONE_MINUS_SRC1_COLOR);
+            gl::Enable(gl::MULTISAMPLE);
+
             // Allocate buffers.
             gl::GenVertexArrays(1, &mut vao);
             gl::GenBuffers(1, &mut vbo);
