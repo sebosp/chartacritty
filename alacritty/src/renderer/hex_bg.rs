@@ -2,8 +2,9 @@ use std::mem;
 
 use crate::gl;
 use crate::gl::types::*;
-use crate::renderer;
+use crate::renderer::{self, cstr};
 use crate::renderer::shader::{ShaderError, ShaderProgram, ShaderVersion};
+use crate::display::SizeInfo;
 
 static HXBG_SHADER_F: &str = include_str!("../../res/hex_bg.f.glsl");
 static HXBG_SHADER_V: &str = include_str!("../../res/hex_bg.v.glsl");
@@ -71,7 +72,8 @@ impl HexBgRenderer {
         Ok(Self { vao, vbo, program })
     }
 
-    pub fn draw(&mut self, opengl_data: &[f32], gl_mode: u32) {
+    pub fn draw(&mut self, opengl_data: &[f32], gl_mode: u32, size_info: &SizeInfo, time_secs_with_ms: f32) {
+        let max_dimension = size_info.width().max(size_info.height());
         unsafe {
             // Bind VAO to enable vertex attribute slots.
             gl::BindVertexArray(self.vao);
@@ -81,12 +83,8 @@ impl HexBgRenderer {
 
             // Swap program
             gl::UseProgram(self.program.id());
-        }
+            self.program.update_uniforms(max_dimension * 4. - (time_secs_with_ms * 200. % (max_dimension * 8.)));
 
-        // TODO: put this somewhere before DrawArrays
-        // self.hex_bg_program.set_epoch_millis(0.0f32);
-
-        unsafe {
             // Load vertex data into array buffer
             gl::BufferData(
                 gl::ARRAY_BUFFER,
@@ -115,7 +113,7 @@ pub struct HexagonShaderProgram {
     // Program id,
     program: ShaderProgram,
     // The time uniform to be used to change opacity of different regions
-    // u_epoch_millis: GLint,
+    u_active_x_shine_offset: Option<GLint>,
 }
 
 impl HexagonShaderProgram {
@@ -128,7 +126,18 @@ impl HexagonShaderProgram {
         // let u_epoch_millis =
         //     unsafe { gl::GetUniformLocation(program, b"epoch_millis\0".as_ptr() as *const _) };
 
-        Ok(HexagonShaderProgram { program })
+        Ok(HexagonShaderProgram {
+            u_active_x_shine_offset: program.get_uniform_location(cstr!("activeXShineOffset")).ok(),
+            program,
+        })
+    }
+
+    pub fn update_uniforms(&self, time_secs_with_ms: f32) {
+        unsafe {
+            if let Some(u_active_x_shine_offset) = self.u_active_x_shine_offset {
+                gl::Uniform1f(u_active_x_shine_offset, time_secs_with_ms);
+            }
+        }
     }
 
     // fn set_epoch_millis(&self, epoch_millis: f32) {

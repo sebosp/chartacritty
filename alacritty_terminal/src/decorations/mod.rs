@@ -70,16 +70,21 @@ impl DecorationsConfig {
         }
     }
 
+    pub fn get_elapsed_secs_with_millis(&self) -> f32 {
+        let mut res = 0.0f32;
+        if let Some(val) = self.init_start {
+            let elapsed = val.elapsed();
+            res = elapsed.as_secs_f32();
+        }
+        res
+    }
+
     /// `tick` calls the underlying decorators to update decorations that depend on time
     /// such as animations
     pub fn tick(&mut self) {
-        let mut time_ms = 0.0f32;
-        if let Some(val) = self.init_start {
-            let elapsed = val.elapsed();
-            time_ms = elapsed.as_secs_f32() + elapsed.subsec_millis() as f32 / 1000f32;
-        }
+        let elapsed_secs_with_millis = self.get_elapsed_secs_with_millis();
         for decor in self.decorators.iter_mut() {
-            decor.tick(time_ms);
+            decor.tick(elapsed_secs_with_millis);
         }
     }
 
@@ -111,7 +116,7 @@ impl Default for DecorationTypes {
 
 impl DecorationTypes {
     pub fn set_size_info(&mut self, size_info: SizeInfo) {
-        info!("Updating Triangle decorations");
+        debug!("Updating Triangle decorations");
         match self {
             DecorationTypes::Triangles(ref mut hexagon_triangles) => {
                 hexagon_triangles.set_size_info(size_info);
@@ -340,7 +345,7 @@ mod tests {
 
     #[test]
     fn it_finds_center_idx() {
-        let mut size = SizeInfo { width: 100., height: 100., ..Default::default() };
+        let size = SizeInfo { width: 100., height: 100., ..Default::default() };
         let radius = 10.;
         let hex_radius_y = SIN_60 * radius;
         let hex_radius_x = COS_60 * radius;

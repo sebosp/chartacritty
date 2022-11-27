@@ -16,6 +16,7 @@ flat in color_t color;
 
 #endif
 
+uniform float_t activeXShineOffset;
 uniform float_t cellWidth;
 uniform float_t cellHeight;
 uniform float_t paddingY;
@@ -128,6 +129,12 @@ void main() {
 #elif defined(DRAW_DASHED)
   FRAG_COLOR = draw_dashed(x);
 #else
-  FRAG_COLOR = color;
+  float_t dst = abs(gl_FragCoord.x - gl_FragCoord.y - activeXShineOffset);
+  if (activeXShineOffset != 0. && dst < 50.){
+    float_t alpha = color.a + (50. - dst) * 0.00075;
+    FRAG_COLOR = vec4(color.rgb, alpha);
+  } else {
+    FRAG_COLOR = color;
+  }
 #endif
 }

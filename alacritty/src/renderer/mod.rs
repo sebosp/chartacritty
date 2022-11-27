@@ -280,6 +280,7 @@ impl Renderer {
         size_info: &SizeInfo,
         opengl_data: &[f32],
         mode: DrawArrayMode,
+        time_secs_with_ms: f32,
     ) {
         // This function expects a vector that contains 7 data points per vertex:
         // 3 are x,y,z position and the other 4 are the r,g,b,a
@@ -293,7 +294,7 @@ impl Renderer {
         // ];
         Self::prepare_rect_rendering_state(size_info);
 
-        self.hex_bg_renderer.draw(opengl_data, mode.clone().into());
+        self.hex_bg_renderer.draw(opengl_data, mode.clone().into(), size_info, time_secs_with_ms);
 
         self.activate_regular_state(size_info);
     }

@@ -3,8 +3,9 @@
 use crate::term::color::Rgb;
 use crate::term::SizeInfo;
 use serde::{Deserialize, Serialize};
+use ::nannou::noise::*;
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct HexagonTriangleBackground {
     pub vertex_color: Rgb,
     pub center_color: Rgb,
@@ -14,6 +15,19 @@ pub struct HexagonTriangleBackground {
     radius: f32,
     #[serde(default)]
     pub vecs: Vec<f32>,
+    #[serde(skip)]
+    pub noise: Perlin,
+}
+
+impl PartialEq for HexagonTriangleBackground {
+    fn eq(&self, rhs: &Self) -> bool {
+        self.vertex_color == rhs.vertex_color &&
+        self.center_color == rhs.center_color &&
+        self.alpha ==  rhs.alpha &&
+        self.size_info == rhs.size_info &&
+        self.radius == rhs.radius &&
+        self.vecs ==  rhs.vecs
+    }
 }
 
 impl HexagonTriangleBackground {
@@ -24,6 +38,7 @@ impl HexagonTriangleBackground {
         size_info: SizeInfo,
         radius: f32,
     ) -> Self {
+        let noise = Perlin::new();
         HexagonTriangleBackground {
             vertex_color,
             center_color,
@@ -31,7 +46,13 @@ impl HexagonTriangleBackground {
             size_info,
             radius,
             vecs: vec![],
+            noise,
         }
+    }
+
+    pub fn set_size_info(&mut self, size_info: SizeInfo) {
+        self.size_info = size_info;
+        self.update_opengl_vecs();
     }
 
     pub fn update_opengl_vecs(&mut self) {
@@ -51,13 +72,13 @@ impl HexagonTriangleBackground {
         //      5-------6
         //          S
         let mut center = vec![
-            0f32, // x
-            0f32, // y
-            0f32, // z
-            <f32 as From<_>>::from(self.center_color.r) / 255.,
-            <f32 as From<_>>::from(self.center_color.g) / 255.,
-            <f32 as From<_>>::from(self.center_color.b) / 255.,
-            0.0f32,
+            0.0f32, // x
+            0.0f32, // y
+            0.0f32, // z
+            <f32 as From<_>>::from(self.vertex_color.r) / 255.,
+            <f32 as From<_>>::from(self.vertex_color.g) / 255.,
+            <f32 as From<_>>::from(self.vertex_color.b) / 255.,
+            0.0f32, // a
         ];
         let sides = vec![
             0f32, // x
@@ -74,7 +95,7 @@ impl HexagonTriangleBackground {
         let mut west = sides.clone();
         let mut southwest = sides.clone();
         let mut southeast = sides;
-        for coord in coords {
+        for  coord in coords.iter() {
             // The first pair of coordinates are the center of the hexagon
             center[0] = self.size_info.scale_x(coord.x);
             center[1] = self.size_info.scale_y(coord.y);
@@ -123,6 +144,17 @@ impl HexagonTriangleBackground {
             res.append(&mut east.clone());
         }
         self.vecs = res;
+    }
+
+    pub fn tick(&mut self, time: f32) {
+        let sn = time.cos() as f64 * 0.01;
+        // Iterate over xyzrgba
+        for (idx, chunk) in self.vecs.chunks_exact_mut(7).enumerate() {
+            if idx % 3 != 0 {
+                let chunk_z = chunk[2] as f64;
+                chunk[2] += self.noise.get([sn * chunk_z, 0.0, 1.0]) as f32;
+            }
+        }
     }
 }
 
