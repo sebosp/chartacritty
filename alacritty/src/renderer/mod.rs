@@ -294,7 +294,7 @@ impl Renderer {
         // ];
         Self::prepare_rect_rendering_state(size_info);
 
-        self.hex_bg_renderer.draw(opengl_data, mode.clone().into(), size_info, time_secs_with_ms);
+        self.hex_bg_renderer.draw(opengl_data, mode.into(), size_info, time_secs_with_ms);
 
         self.activate_regular_state(size_info);
     }
@@ -330,7 +330,7 @@ impl Renderer {
 
         Self::prepare_rect_rendering_state(size_info);
 
-        self.chart_renderer.draw(&opengl_data_with_color, mode.clone().into());
+        self.chart_renderer.draw(&opengl_data_with_color, mode.into());
 
         self.activate_regular_state(size_info);
     }
