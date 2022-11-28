@@ -208,7 +208,7 @@ impl DecorationPoints {
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 #[serde(tag = "type", content = "props")]
 pub enum DecorationTriangles {
-    Hexagon(HexagonTriangleBackground),
+    Hexagon(Box<HexagonTriangleBackground>),
     Nannou(Box<NannouDecoration>),
 }
 
