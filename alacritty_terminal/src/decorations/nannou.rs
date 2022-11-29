@@ -11,6 +11,7 @@ use nannou::draw::renderer::{GlyphCache, RenderPrimitive};
 pub use nannou::draw::State;
 use nannou::glam::Vec2;
 use serde::{Deserialize, Serialize};
+use super::moon_phase::MoonPhaseState;
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub enum NannouDrawArrayMode {
@@ -62,6 +63,8 @@ pub struct NannouDecoration {
     #[serde(default)]
     pub polar_clock: PolarClockState,
     #[serde(default)]
+    pub moon_state: MoonPhaseState,
+    #[serde(default)]
     pub vertices: Vec<NannouVertices>,
     #[serde(default = "local_now")]
     pub now: DateTime<Local>,
@@ -110,6 +113,7 @@ impl NannouDecoration {
             size_info,
             radius,
             polar_clock,
+            moon_state: MoonPhaseState::new(radius),
             vertices: Default::default(),
             now,
             last_drawn_msecs: 0f32,
@@ -128,6 +132,7 @@ impl NannouDecoration {
         let now = Local::now();
         self.polar_clock.mark_as_dirty();
         self.polar_clock.tick(&now, self.x, self.y, self.radius, size_info, self.alpha);
+        self.moon_state.tick(self.x, self.y, self.radius, size_info);
         self.update_opengl_vecs();
     }
 
@@ -135,6 +140,7 @@ impl NannouDecoration {
     pub fn tick(&mut self, time: f32) {
         self.now = Local::now();
         self.polar_clock.tick(&self.now, self.x, self.y, self.radius, self.size_info, self.alpha);
+        self.moon_state.tick(self.x, self.y, self.radius, self.size_info);
         self.last_drawn_msecs = time;
         self.update_opengl_vecs();
     }
@@ -194,7 +200,7 @@ impl NannouDecoration {
                     for vx in mesh.vertices() {
                         primitive_render_vecs.push(size_info.scale_x(vx.x));
                         primitive_render_vecs.push(size_info.scale_y(vx.y));
-                        primitive_render_vecs.push(0.9);
+                        primitive_render_vecs.push(0.0);
                         primitive_render_vecs.push(vx.color.red);
                         primitive_render_vecs.push(vx.color.green);
                         primitive_render_vecs.push(vx.color.blue);
@@ -235,11 +241,6 @@ impl NannouDecoration {
             .rotate(30f32)
             .color(VIOLET);
 
-        draw.ellipse()
-            .x_y(x + x_60_degrees_offset, y + y_60_degrees_offset)
-            .radius(self.radius * 0.4)
-            .stroke(ellipse_stroke_color)
-            .rgba(ellipse_color.red, ellipse_color.green, ellipse_color.blue, self.alpha * 0.10);
         */
         let mut all_recs = self.polar_clock.day_of_year.vecs.clone();
         all_recs.append(&mut self.polar_clock.month_of_year.vecs.clone());
@@ -247,6 +248,7 @@ impl NannouDecoration {
         all_recs.append(&mut self.polar_clock.hour_of_day.vecs.clone());
         all_recs.append(&mut self.polar_clock.minute_of_hour.vecs.clone());
         all_recs.append(&mut self.polar_clock.seconds_with_millis_of_minute.vecs.clone());
+        all_recs.append(&mut self.moon_state.vecs.clone());
         all_recs
     }
 }

@@ -18,10 +18,11 @@ pub mod hexagon_point_background;
 pub mod hexagon_triangle_background;
 pub mod nannou;
 pub mod polar_clock;
+pub mod moon_phase;
 
 // TODO: Use const init that calculates these magic numbers at compile time
-const COS_60: f32 = 0.49999997f32;
-const SIN_60: f32 = 0.86602545f32;
+pub const COS_60: f32 = 0.49999997f32;
+pub const SIN_60: f32 = 0.86602545f32;
 
 pub trait Decoration {
     fn render(self) -> Vec<f32>;

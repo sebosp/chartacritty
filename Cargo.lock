@@ -123,6 +123,7 @@ dependencies = [
  "mio-anonymous-pipes",
  "mio-extras",
  "miow 0.3.7",
+ "moon-phase",
  "nannou 0.18.1 (git+https://github.com/sebosp/nannou)",
  "nix 0.24.2",
  "parking_lot 0.12.1",
@@ -2260,6 +2261,12 @@ checksum = "b9f1c5b025cda876f66ef43a113f91ebc9f4ccef34843000e0adf6ebbab84e21"
 dependencies = [
  "winapi 0.3.9",
 ]
+
+[[package]]
+name = "moon-phase"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7984c1e5817a8e5559d0e7719e766b52048ced9553d932cdfd094f82ea7b79cd"
 
 [[package]]
 name = "naga"

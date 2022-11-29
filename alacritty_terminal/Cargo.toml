@@ -48,6 +48,7 @@ regex-automata = "0.1.9"
 dirs = "4.0.0"
 lyon = "0.17"
 chrono = { version = "0.4", features = [ "serde" ] }
+moon-phase = "0.1.0"
 
 [target.'cfg(unix)'.dependencies]
 nix = "0.24.1"
