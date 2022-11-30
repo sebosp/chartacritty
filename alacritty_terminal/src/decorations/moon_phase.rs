@@ -42,21 +42,22 @@ impl PartialEq for MoonPhaseState {
 
 }
 
-fn build_moon_phase(x: f32, y: f32, radius: f32, phase: f32) -> nannou::geom::Path {
+fn build_moon_arc_fraction(x: f32, y: f32, radius: f32, fraction: f32) -> nannou::geom::Path {
     let mut builder = Builder::new().with_svg();
     // Start from the top
     builder.move_to(lyon::math::point(x, y + radius));
-    builder.arc(
-        lyon::math::point(x, y),
-        lyon::math::vector(radius, radius),
-        lyon::math::Angle::degrees(180.),
-        lyon::math::Angle::degrees(90.)
+    // For some reason I have to multiply the control point's x for 1.33 to get a shape similar to
+    // a circle... I'm kindof trying to build half a circle with bezier curves... Maybe not the
+    // right way.
+    builder.cubic_bezier_to(
+        lyon::math::point(x + radius * 1.33, y + radius),
+        lyon::math::point(x + radius * 1.33, y - radius),
+        lyon::math::point(x, y - radius),
     );
-    builder.arc(
-        lyon::math::point(x, y),
-        lyon::math::vector(radius, radius),
-        lyon::math::Angle::degrees(180.),
-        lyon::math::Angle::degrees(90.)
+    builder.cubic_bezier_to(
+        lyon::math::point(x + radius * 1.33 - radius * (fraction * 2.) * 1.33, y - radius),
+        lyon::math::point(x + radius * 1.33 - radius * (fraction * 2.) * 1.33, y + radius),
+        lyon::math::point(x, y + radius),
     );
     builder.build()
 }
@@ -99,18 +100,18 @@ impl MoonPhaseState {
             rgba(ellipse_color.red, ellipse_color.green, ellipse_color.blue, 0.01f32);
         let x_60_degrees_offset = super::COS_60 * self.radius;
         let y_60_degrees_offset = super::SIN_60 * self.radius;
-        let alpha = 0.07f32;
+        let alpha = 0.07;
         draw.ellipse()
             .x_y(x + x_60_degrees_offset, y + y_60_degrees_offset)
             .radius(self.radius * 0.4)
             .stroke(ellipse_stroke_color)
             .rgba(ellipse_color.red, ellipse_color.green, ellipse_color.blue, alpha);
-        /*draw.path()
+        draw.path()
             .fill()
-            .color(ellipse_color)
+            .rgba(ellipse_color.red, ellipse_color.green, ellipse_color.blue, alpha * 2.)
             .events(
-                build_moon_phase(x + x_60_degrees_offset, y + y_60_degrees_offset, self.radius * 0.4, self.moon_phase.fraction as f32).iter(),
-            );*/
+                build_moon_arc_fraction(x + x_60_degrees_offset, y + y_60_degrees_offset, self.radius * 0.4, self.moon_phase.fraction as f32).iter(),
+            );
         super::NannouDecoration::gen_vertices_from_nannou_draw(draw, size_info)
     }
 
