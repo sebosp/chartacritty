@@ -43,6 +43,8 @@ impl PartialEq for MoonPhaseState {
 }
 
 fn build_moon_arc_fraction(x: f32, y: f32, radius: f32, fraction: f32) -> nannou::geom::Path {
+    // It seems the fraction is inverted?
+    let fraction = 1. - fraction;
     let mut builder = Builder::new().with_svg();
     // Start from the top
     builder.move_to(lyon::math::point(x, y + radius));
