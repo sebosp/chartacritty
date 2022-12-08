@@ -13,17 +13,17 @@ use serde::{Deserialize, Serialize};
 // Create a Polar clock that has increasingly more and more opacity, so that the more granular time
 // is more easily visible, these can become default and we can read them from the config yaml file
 // for other hours, multipliers, etc.
-const DAY_OF_YEAR_ALPHA_MULTIPLIER: f32 = 0.30;
-const MONTH_OF_YEAR_ALPHA_MULTIPLIER: f32 = 0.05;
-const DAY_OF_MONTH_ALPHA_MULTIPLIER: f32 = 0.30;
+const DAY_OF_YEAR_ALPHA_MULTIPLIER: f32 = 0.20;
+const MONTH_OF_YEAR_ALPHA_MULTIPLIER: f32 = 0.025;
+const DAY_OF_MONTH_ALPHA_MULTIPLIER: f32 = 0.20;
 // For work hours, 9 to 5, show light line
-const WORKHOUR_OF_DAY_ALPHA_MULTIPLIER: f32 = 0.20;
+const WORKHOUR_OF_DAY_ALPHA_MULTIPLIER: f32 = 0.10;
 // For after-work-hours, show line more visible
-const NONWORKHOUR_OF_DAY_ALPHA_MULTIPLIER: f32 = 0.25;
-const MINUTE_OF_HOUR_ALPHA_MULTIPLIER: f32 = 0.25;
-const SECONDS_WITH_MILLIS_OF_MINUTE_ALPHA_MULTIPLIER: f32 = 0.15;
+const NONWORKHOUR_OF_DAY_ALPHA_MULTIPLIER: f32 = 0.12;
+const MINUTE_OF_HOUR_ALPHA_MULTIPLIER: f32 = 0.15;
+const SECONDS_WITH_MILLIS_OF_MINUTE_ALPHA_MULTIPLIER: f32 = 0.10;
 
-// The polar clock radius multipliers, similar to teh alpha multiplier, these make the arcs not
+// The polar clock radius multipliers, similar to the alpha multiplier, these make the arcs not
 // collide. TODO: Right now they depend on the arc stroke_weight to avoid overlap.
 const DAY_OF_YEAR_RADIUS_MULTIPLIER: f32 = 1.05;
 const MONTH_OF_YEAR_RADIUS_MULTIPLIER: f32 = 0.95;
@@ -58,7 +58,7 @@ fn build_time_arc_progress(x: f32, y: f32, radius: f32, arc_angles: f32) -> nann
         lyon::math::point(x, y),
         lyon::math::vector(radius, radius),
         lyon::math::Angle::degrees(arc_angles),
-        lyon::math::Angle::degrees(90.)
+        lyon::math::Angle::degrees(90.),
     );
     builder.build()
 }
@@ -66,7 +66,10 @@ fn build_time_arc_progress(x: f32, y: f32, radius: f32, arc_angles: f32) -> nann
 /// Draws the whiskers showing time unit significant separators
 fn build_time_arc_whisker(x: f32, y: f32, radius: f32, arc_angles: f32) -> nannou::geom::Path {
     let mut builder = Builder::new().with_svg();
-    builder.move_to(lyon::math::point(arc_angles.to_radians().cos() * radius + x, arc_angles.to_radians().sin() * radius + y));
+    builder.move_to(lyon::math::point(
+        arc_angles.to_radians().cos() * radius + x,
+        arc_angles.to_radians().sin() * radius + y,
+    ));
     builder.arc(
         lyon::math::point(x, y),
         lyon::math::vector(radius, radius * 1.1),
@@ -347,37 +350,46 @@ impl PolarClockUnitState {
             .color(color)
             .caps_round()
             .events(
-                build_time_arc_progress(x, y, radius * self.props.radius_multiplier, progress_angle).iter(),
+                build_time_arc_progress(
+                    x,
+                    y,
+                    radius * self.props.radius_multiplier,
+                    progress_angle,
+                )
+                .iter(),
             );
-        let color = rgba(GOLD.into_format::<f32>().red, GOLD.into_format::<f32>().green, GOLD.into_format::<f32>().blue, alpha * 0.4);
+        let color = rgba(
+            GOLD.into_format::<f32>().red,
+            GOLD.into_format::<f32>().green,
+            GOLD.into_format::<f32>().blue,
+            alpha * 0.3,
+        );
         for whisker in self.unit.get_unit_whiskers(tick_time) {
-            let mut whisker_angle = 360f32 * (whisker % self.unit.get_time_unit_max_value(tick_time)) as f32
+            let mut whisker_angle = 360f32
+                * (whisker % self.unit.get_time_unit_max_value(tick_time)) as f32
                 / self.unit.get_time_unit_max_value(tick_time) as f32;
-            whisker_angle = (whisker_angle + 90f32)% 360f32;
-            draw.path()
-                .stroke()
-                .stroke_weight(2.)
-                .color(color)
-                .events(
-                    build_time_arc_whisker(x, y, radius * self.props.radius_multiplier, whisker_angle).iter(),
-                );
+            whisker_angle = (whisker_angle + 90f32) % 360f32;
+            draw.path().stroke().stroke_weight(2.).color(color).events(
+                build_time_arc_whisker(x, y, radius * self.props.radius_multiplier, whisker_angle)
+                    .iter(),
+            );
         }
         /*draw.tri()
-            .points(
-                Point2::new(
-                    (radius * self.props.radius_multiplier * 0.95) * 90_f32.to_radians().cos() + x,
-                    (radius * self.props.radius_multiplier * 0.95) * 90_f32.to_radians().sin() + y
-                ),
-                Point2::new(
-                    ((radius + self.props.stroke_weight) * self.props.radius_multiplier) * 85_f32.to_radians().cos() + x,
-                    ((radius + self.props.stroke_weight) * self.props.radius_multiplier) * 85_f32.to_radians().sin() + y
-                ),
-                Point2::new(
-                    ((radius + self.props.stroke_weight) * self.props.radius_multiplier) * 95_f32.to_radians().cos() + x,
-                    ((radius + self.props.stroke_weight) * self.props.radius_multiplier) * 95_f32.to_radians().sin() + y
-                )
+        .points(
+            Point2::new(
+                (radius * self.props.radius_multiplier * 0.95) * 90_f32.to_radians().cos() + x,
+                (radius * self.props.radius_multiplier * 0.95) * 90_f32.to_radians().sin() + y
+            ),
+            Point2::new(
+                ((radius + self.props.stroke_weight) * self.props.radius_multiplier) * 85_f32.to_radians().cos() + x,
+                ((radius + self.props.stroke_weight) * self.props.radius_multiplier) * 85_f32.to_radians().sin() + y
+            ),
+            Point2::new(
+                ((radius + self.props.stroke_weight) * self.props.radius_multiplier) * 95_f32.to_radians().cos() + x,
+                ((radius + self.props.stroke_weight) * self.props.radius_multiplier) * 95_f32.to_radians().sin() + y
             )
-            .color(color);*/
+        )
+        .color(color);*/
         super::NannouDecoration::gen_vertices_from_nannou_draw(draw, size_info)
     }
 }
@@ -463,8 +475,10 @@ mod tests {
     fn returns_seconds_with_millis() {
         let seconds_with_millis = PolarClockUnit::SecondsWithMillisOfMinute;
         let timezone_west = FixedOffset::west_opt(7 * 60 * 60).unwrap();
-        let naivedatetime_west = NaiveDate::from_ymd_opt(2000, 1, 11).unwrap()
-            .and_hms_milli_opt(12, 34, 56, 789).unwrap();
+        let naivedatetime_west = NaiveDate::from_ymd_opt(2000, 1, 11)
+            .unwrap()
+            .and_hms_milli_opt(12, 34, 56, 789)
+            .unwrap();
         let dt = DateTime::<Local>::from_local(naivedatetime_west, timezone_west);
         assert_eq!(seconds_with_millis.get_time_unit_value(&dt), 56_789);
         let day_of_year = PolarClockUnit::DayOfYear;

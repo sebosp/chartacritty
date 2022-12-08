@@ -1,17 +1,17 @@
 //! Moon Phase Nannou decoration
 
-use std::time::SystemTime;
+use crate::term::SizeInfo;
 use moon_phase::MoonPhase;
 use nannou::draw;
 use nannou::geom::path::Builder;
 use nannou::prelude::*;
 use serde::{Deserialize, Serialize};
-use crate::term::SizeInfo;
+use std::time::SystemTime;
 
 use super::nannou::NannouVertices;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct MoonPhaseState{
+pub struct MoonPhaseState {
     /// The MoonPhase state.
     #[serde(skip, default = "current_moon_state")]
     moon_phase: MoonPhase,
@@ -23,11 +23,7 @@ pub struct MoonPhaseState{
 
 impl Default for MoonPhaseState {
     fn default() -> Self {
-        Self {
-            moon_phase: current_moon_state(),
-            radius: 0.,
-            vecs: vec![],
-        }
+        Self { moon_phase: current_moon_state(), radius: 0., vecs: vec![] }
     }
 }
 
@@ -39,12 +35,11 @@ impl PartialEq for MoonPhaseState {
     fn eq(&self, other: &Self) -> bool {
         self.radius == other.radius && self.vecs == other.vecs
     }
-
 }
 
-fn build_moon_arc_fraction(x: f32, y: f32, radius: f32, fraction: f32) -> nannou::geom::Path {
-    // It seems the fraction is inverted?
-    let fraction = 1. - fraction;
+fn build_moon_arc_fraction(x: f32, y: f32, radius: f32, phase: f32) -> nannou::geom::Path {
+    // phase is 0.5 full
+    let illuminated_percent = 1. - ((phase - 0.5).abs() * 2.);
     let mut builder = Builder::new().with_svg();
     // Start from the top
     builder.move_to(lyon::math::point(x, y + radius));
@@ -57,8 +52,14 @@ fn build_moon_arc_fraction(x: f32, y: f32, radius: f32, fraction: f32) -> nannou
         lyon::math::point(x, y - radius),
     );
     builder.cubic_bezier_to(
-        lyon::math::point(x + radius * 1.33 - radius * (fraction * 2.) * 1.33, y - radius),
-        lyon::math::point(x + radius * 1.33 - radius * (fraction * 2.) * 1.33, y + radius),
+        lyon::math::point(
+            x + radius * 1.33 - radius * (illuminated_percent * 2.) * 1.33,
+            y - radius,
+        ),
+        lyon::math::point(
+            x + radius * 1.33 - radius * (illuminated_percent * 2.) * 1.33,
+            y + radius,
+        ),
         lyon::math::point(x, y + radius),
     );
     builder.build()
@@ -67,21 +68,11 @@ impl MoonPhaseState {
     /// Creates a new MoonPhaseState.
     /// After `new()`, the caller must call `tick()` to populate the vertices
     pub fn new(radius: f32) -> Self {
-        Self {
-            moon_phase: current_moon_state(),
-            radius,
-            vecs: vec![],
-        }
+        Self { moon_phase: current_moon_state(), radius, vecs: vec![] }
     }
 
     /// Updates the vertices of the moon if needed.
-    pub fn tick(
-        &mut self,
-        x: f32,
-        y: f32,
-        radius: f32,
-        size_info: SizeInfo,
-    ) {
+    pub fn tick(&mut self, x: f32, y: f32, radius: f32, size_info: SizeInfo) {
         // Update the MoonPhase
         self.moon_phase = current_moon_state();
         self.radius = radius;
@@ -89,13 +80,8 @@ impl MoonPhaseState {
     }
 
     /// Creates vertices for the Polar Clock Arc
-    fn gen_vertices(
-        &self,
-        x: f32,
-        y: f32,
-        size_info: SizeInfo,
-    ) -> Vec<NannouVertices> {
-        //log::info!("MoonPhase::gen_vertices_from_nannou_draw radius {}", self.radius);
+    fn gen_vertices(&self, x: f32, y: f32, size_info: SizeInfo) -> Vec<NannouVertices> {
+        log::info!("MoonPhase::gen_vertices, phase: {:?}", self.moon_phase);
         let draw = draw::Draw::default().triangle_mode();
         let ellipse_color = LIGHTSKYBLUE.into_format::<f32>();
         let ellipse_stroke_color =
@@ -112,10 +98,14 @@ impl MoonPhaseState {
             .fill()
             .rgba(ellipse_color.red, ellipse_color.green, ellipse_color.blue, alpha * 2.)
             .events(
-                build_moon_arc_fraction(x + x_60_degrees_offset, y + y_60_degrees_offset, self.radius * 0.4, self.moon_phase.fraction as f32).iter(),
+                build_moon_arc_fraction(
+                    x + x_60_degrees_offset,
+                    y + y_60_degrees_offset,
+                    self.radius * 0.4,
+                    self.moon_phase.phase as f32,
+                )
+                .iter(),
             );
         super::NannouDecoration::gen_vertices_from_nannou_draw(draw, size_info)
     }
-
-
 }
