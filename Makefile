@@ -1,14 +1,14 @@
-TARGET = alacritty
+TARGET = chartacritty
 
 ASSETS_DIR = extra
 RELEASE_DIR = target/release
-MANPAGE = $(ASSETS_DIR)/alacritty.man
-MANPAGE-MSG = $(ASSETS_DIR)/alacritty-msg.man
-TERMINFO = $(ASSETS_DIR)/alacritty.info
+MANPAGE = $(ASSETS_DIR)/chartacritty.man
+MANPAGE-MSG = $(ASSETS_DIR)/chartacritty-msg.man
+TERMINFO = $(ASSETS_DIR)/chartacritty.info
 COMPLETIONS_DIR = $(ASSETS_DIR)/completions
-COMPLETIONS = $(COMPLETIONS_DIR)/_alacritty \
-	$(COMPLETIONS_DIR)/alacritty.bash \
-	$(COMPLETIONS_DIR)/alacritty.fish
+COMPLETIONS = $(COMPLETIONS_DIR)/_chartacritty \
+	$(COMPLETIONS_DIR)/chartacritty.bash \
+	$(COMPLETIONS_DIR)/chartacritty.fish
 
 APP_NAME = Chartacritty.app
 APP_TEMPLATE = $(ASSETS_DIR)/osx/$(APP_NAME)
@@ -45,9 +45,9 @@ $(APP_NAME)-%: $(TARGET)-%
 	@mkdir -p $(APP_BINARY_DIR)
 	@mkdir -p $(APP_EXTRAS_DIR)
 	@mkdir -p $(APP_COMPLETIONS_DIR)
-	@gzip -c $(MANPAGE) > $(APP_EXTRAS_DIR)/alacritty.1.gz
-	@gzip -c $(MANPAGE-MSG) > $(APP_EXTRAS_DIR)/alacritty-msg.1.gz
-	@tic -xe alacritty,alacritty-direct -o $(APP_EXTRAS_DIR) $(TERMINFO)
+	@gzip -c $(MANPAGE) > $(APP_EXTRAS_DIR)/chartacritty.1.gz
+	@gzip -c $(MANPAGE-MSG) > $(APP_EXTRAS_DIR)/chartacritty-msg.1.gz
+	@tic -xe chartacritty,chartacritty-direct -o $(APP_EXTRAS_DIR) $(TERMINFO)
 	@cp -fRp $(APP_TEMPLATE) $(APP_DIR)
 	@cp -fp $(APP_BINARY) $(APP_BINARY_DIR)
 	@cp -fp $(COMPLETIONS) $(APP_COMPLETIONS_DIR)
