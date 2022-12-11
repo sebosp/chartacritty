@@ -132,6 +132,7 @@ impl NannouDecoration {
         let now = Local::now();
         self.polar_clock.mark_as_dirty();
         self.polar_clock.tick(&now, self.x, self.y, self.radius, size_info, self.alpha);
+        self.moon_state.mark_as_dirty();
         self.moon_state.tick(self.x, self.y, self.radius, size_info);
         self.update_opengl_vecs();
     }

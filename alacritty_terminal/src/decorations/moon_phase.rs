@@ -19,16 +19,36 @@ pub struct MoonPhaseState {
     radius: f32,
     /// The vertices for the current state
     pub vecs: Vec<NannouVertices>,
+    /// Keep track of the last time the vertices needed to be calculated.
+    /// This should only happen once a day.
+    #[serde(skip, default = "current_system_time")]
+    pub last_drawn_time: SystemTime,
+    /// If redrawing is required
+    is_dirty: bool,
 }
 
 impl Default for MoonPhaseState {
     fn default() -> Self {
-        Self { moon_phase: current_moon_state(), radius: 0., vecs: vec![] }
+        Self {
+            moon_phase: current_moon_state(),
+            radius: 0.,
+            vecs: vec![],
+            last_drawn_time: SystemTime::now(),
+            is_dirty: true,
+        }
     }
 }
 
 fn current_moon_state() -> MoonPhase {
-    MoonPhase::new(SystemTime::now())
+    get_moon_phase_for_date(SystemTime::now())
+}
+
+fn current_system_time() -> SystemTime {
+    SystemTime::now()
+}
+
+fn get_moon_phase_for_date(time: SystemTime) -> MoonPhase {
+    MoonPhase::new(time)
 }
 
 impl PartialEq for MoonPhaseState {
@@ -64,11 +84,19 @@ fn build_moon_arc_fraction(x: f32, y: f32, radius: f32, phase: f32) -> nannou::g
     );
     builder.build()
 }
+
 impl MoonPhaseState {
     /// Creates a new MoonPhaseState.
     /// After `new()`, the caller must call `tick()` to populate the vertices
     pub fn new(radius: f32) -> Self {
-        Self { moon_phase: current_moon_state(), radius, vecs: vec![] }
+        let time = SystemTime::now();
+        Self {
+            moon_phase: get_moon_phase_for_date(time),
+            radius,
+            vecs: vec![],
+            last_drawn_time: time,
+            is_dirty: true,
+        }
     }
 
     /// Updates the vertices of the moon if needed.
@@ -76,7 +104,16 @@ impl MoonPhaseState {
         // Update the MoonPhase
         self.moon_phase = current_moon_state();
         self.radius = radius;
-        self.vecs = self.gen_vertices(x, y, size_info);
+        if let Ok(elapsed) = self.last_drawn_time.elapsed() {
+            // Recalculate the moon phase once a day
+            if elapsed > std::time::Duration::from_secs(24 * 60 * 60) {
+                self.is_dirty = true;
+            }
+        }
+        if self.is_dirty {
+            self.vecs = self.gen_vertices(x, y, size_info);
+            self.is_dirty = false;
+        }
     }
 
     /// Creates vertices for the Polar Clock Arc
@@ -107,5 +144,9 @@ impl MoonPhaseState {
                 .iter(),
             );
         super::NannouDecoration::gen_vertices_from_nannou_draw(draw, size_info)
+    }
+
+    pub fn mark_as_dirty(&mut self) {
+        self.is_dirty = true;
     }
 }
