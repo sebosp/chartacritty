@@ -27,6 +27,9 @@ uniform float_t underlineThickness;
 
 uniform float_t undercurlPosition;
 
+uniform vec3 iResolution;
+uniform float_t iTime;
+
 #define PI 3.1415926538
 
 #if defined(DRAW_UNDERCURL)
@@ -119,10 +122,10 @@ color_t draw_dashed(float_t x) {
 // License: Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported License
 // Motivated by implementation of van Wijk's IBFV by eiffie (lllGDl) and andregc (4llGWl)
 
-const vec2 iResolution = vec2 (2000., 2000.);
 const vec4 cHashA4 = vec4 (0., 1., 57., 58.);
 const vec3 cHashA3 = vec3 (1., 57., 113.);
 const float cHashM = 43758.54;
+float tCur;
 
 vec4 Hashv4f (float p)
 {
@@ -170,12 +173,13 @@ vec2 FlowField (vec2 q)
   return vr;
 }
 
-color_t main_image(color_t base) {
+color_t vortex_street(color_t base) {
   vec2 uv = gl_FragCoord.xy / iResolution.xy - 0.5;
   uv.x *= iResolution.x / iResolution.y;
+  tCur = iTime;
   vec2 p = uv;
   for (int i = 0; i < 10; i ++) p -= FlowField (p) * 0.03;
-  vec3 col = Fbm2 (5. * p + vec2 (-0.1 * activeXShineOffset / 1000., 0.)) * base.rgb;
+  vec3 col = Fbm2 (5. * p + vec2 (-0.1 * tCur / 1000., 0.)) * base.rgb;
   return vec4 (col, base.a);
 }
 
@@ -199,7 +203,7 @@ void main() {
     float_t alpha = color.a + (50. - dst) * 0.00075;
     FRAG_COLOR = vec4(color.rgb, alpha);
   } else {
-    FRAG_COLOR = main_image(color);
+    FRAG_COLOR = vortex_street(color);
   }
 #endif
 }
