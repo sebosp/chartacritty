@@ -77,7 +77,7 @@ impl HexBgRenderer {
             // "Bind" the newly created texture : all future texture functions will modify this texture
             gl::BindTexture(gl::TEXTURE_2D, rendered_texture);
             // Give an empty image to OpenGL ( the last "0" )
-            gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGB as i32, 1024, 768, 0, gl::RGB, gl::UNSIGNED_BYTE, 0 as *const _);
+            gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGB as i32, 1024, 768, 0, gl::RGB, gl::UNSIGNED_BYTE, std::ptr::null());
             // Poor filtering. Needed !
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32);
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32);
