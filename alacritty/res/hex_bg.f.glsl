@@ -125,7 +125,6 @@ color_t draw_dashed(float_t x) {
 const vec4 cHashA4 = vec4 (0., 1., 57., 58.);
 const vec3 cHashA3 = vec3 (1., 57., 113.);
 const float cHashM = 43758.54;
-float tCur;
 
 vec4 Hashv4f (float p)
 {
@@ -163,7 +162,7 @@ vec2 FlowField (vec2 q)
 {
   vec2 vr, c;
   float dir = 1.;
-  c = vec2 (mod (activeXShineOffset / 1000., 10.) - 20., 0.6 * dir);
+  c = vec2 (mod (iTime, 10.) - 20., 0.6 * dir);
   vr = vec2 (0.);
   for (int k = 0; k < 30; k ++) {
     vr += dir * VortF (4. * q, c);
@@ -174,13 +173,98 @@ vec2 FlowField (vec2 q)
 }
 
 color_t vortex_street(color_t base) {
-  vec2 uv = gl_FragCoord.xy / iResolution.xy - 0.5;
+  vec2 uv = gl_FragCoord.xy / iResolution.xy * 2. - 0.5;
   uv.x *= iResolution.x / iResolution.y;
-  tCur = iTime;
   vec2 p = uv;
   for (int i = 0; i < 10; i ++) p -= FlowField (p) * 0.03;
-  vec3 col = Fbm2 (5. * p + vec2 (-0.1 * tCur / 1000., 0.)) * base.rgb;
+  vec3 col = Fbm2 (5. * p + vec2 (-0.1 * iTime, 0.)) * base.rgb;
   return vec4 (col, base.a);
+}
+
+
+#define RAIN_SPEED 1000.75 // Speed of rain droplets
+#define DROP_SIZE  3.0  // Higher value lowers, the size of individual droplets
+
+float rand(vec2 co){
+    return fract(sin(dot(co.xy ,vec2(12.9898,78.233))) * 43758.5453);
+}
+
+float rchar(vec2 outer, vec2 inner, float globalTime) {
+	//return float(rand(floor(inner * 2.0) + outer) > 0.9);
+
+	vec2 seed = floor(inner * 4.0) + outer.y;
+	if (rand(vec2(outer.y, 23.0)) > 0.98) {
+		seed += floor((globalTime + rand(vec2(outer.y, 49.0))) * 3.0);
+	}
+
+	return float(rand(seed) > 0.5);
+}
+
+color_t matrix_rain_shader(color_t base) {
+
+	vec2 position = gl_FragCoord.xy / iResolution.xy;
+	vec2 uv = vec2(position.x, position.y - 100.);
+    position.x /= iResolution.x / iResolution.y;
+	float globalTime = iTime * RAIN_SPEED;
+
+	float scaledown = DROP_SIZE;
+	float rx = gl_FragCoord.x / (40.0 * scaledown);
+	float mx = 40.0*scaledown*fract(position.x * 30.0 * scaledown);
+	vec4 result = base;
+
+    float x = floor(rx);
+	float r1x = floor(gl_FragCoord.x / (15.0));
+
+
+	float ry = position.y*600.0 + rand(vec2(x, x * 3.0)) * 100000.0 + globalTime* rand(vec2(r1x, 23.0)) * 120.0;
+	float my = mod(ry, 15.0);
+	if (my > 12.0 * scaledown) {
+		result = base;
+	} else {
+
+		float y = floor(ry / 15.0);
+
+		float b = rchar(vec2(rx, floor((ry) / 15.0)), vec2(mx, my) / 12.0, globalTime);
+		float col = max(mod(-y, 24.0) - 4.0, 0.0) / 20.0;
+		vec3 c = col < 0.8 ? vec3(0.0, col / 0.8, 0.0) : mix(vec3(0.0, 1.0, 0.0), vec3(1.0), (col - 0.8) / 0.2);
+
+		result = vec4(c * b, 1.0)  ;
+	}
+
+	position.x += 0.05;
+
+	scaledown = DROP_SIZE;
+	rx = gl_FragCoord.x / (40.0 * scaledown);
+	mx = 40.0*scaledown*fract(position.x * 30.0 * scaledown);
+
+	if (mx > 12.0 * scaledown) {
+		result += vec4(0.0);
+	} else
+	{
+        float x = floor(rx);
+		float r1x = floor(gl_FragCoord.x / (12.0));
+
+
+		float ry = position.y*700.0 + rand(vec2(x, x * 3.0)) * 100000.0 + globalTime* rand(vec2(r1x, 23.0)) * 120.0;
+		float my = mod(ry, 15.0);
+		if (my > 12.0 * scaledown) {
+			result += vec4(0.0);
+		} else {
+
+			float y = floor(ry / 15.0);
+
+			float b = rchar(vec2(rx, floor((ry) / 15.0)), vec2(mx, my) / 12.0, globalTime);
+			float col = max(mod(-y, 24.0) - 4.0, 0.0) / 20.0;
+			vec3 c = col < 0.8 ? vec3(0.0, col / 0.8, 0.0) : mix(vec3(0.0, 1.0, 0.0), vec3(1.0), (col - 0.8) / 0.2);
+
+			result += vec4(c * b, 1.0)  ;
+		}
+	}
+
+	result = result * base + 0.22 * vec4(0.,base.g,0.,0.2);
+	if(result.b < 0.5)
+	result.b = result.g * 0.5 ;
+	return result;
 }
 
 void main() {
@@ -199,11 +283,12 @@ void main() {
   FRAG_COLOR = draw_dashed(x);
 #else
   float_t dst = abs(gl_FragCoord.x - gl_FragCoord.y - activeXShineOffset);
+  color_t temp = color;
+  // Modify the alpha depending on the activeXShineOffset uniform.
+  // This should draw the light beam that is diagonal and moves across the screen.
   if (activeXShineOffset != 0. && dst < 50.){
-    float_t alpha = color.a + (50. - dst) * 0.00075;
-    FRAG_COLOR = vec4(color.rgb, alpha);
-  } else {
-    FRAG_COLOR = vortex_street(color);
+    temp.a += (50. - dst) * 0.00075;
   }
+  FRAG_COLOR = vortex_street(temp);
 #endif
 }
