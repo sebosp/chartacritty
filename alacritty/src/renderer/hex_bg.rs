@@ -159,10 +159,6 @@ impl HexagonShaderProgram {
         let header: Option<&str> = None;
         let program = ShaderProgram::new(shader_version, header, HXBG_SHADER_V, HXBG_SHADER_F)?;
 
-        // get uniform locations
-        // let u_epoch_millis =
-        //     unsafe { gl::GetUniformLocation(program, b"epoch_millis\0".as_ptr() as *const _) };
-
         Ok(HexagonShaderProgram {
             u_active_x_shine_offset: program.get_uniform_location(cstr!("activeXShineOffset")).ok(),
             u_resolution: program.get_uniform_location(cstr!("iResolution")).ok(),
