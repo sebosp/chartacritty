@@ -2,7 +2,7 @@
 
 Last updated to v0.17.0 upstream
 
-![Chartacritty running with prometheus metrics, moon phase decoration, light beam decoration, polar clock decoration, hexagon background decorations](https://user-images.githubusercontent.com/873436/205136141-90adcb8a-cdce-4e03-aa72-d7761041424c.png)
+![Chartacritty running with prometheus metrics, moon phase decoration, light beam decoration, polar clock decoration, hexagon background decorations and christmas spirit with snow!](https://user-images.githubusercontent.com/873436/208736841-340e92cf-c14a-4ac8-b901-253d714421d6.gif)
 
 ## About
 
