@@ -7,7 +7,7 @@ description = "Library for writing terminal emulators"
 readme = "../README.md"
 homepage = "https://github.com/alacritty/alacritty"
 edition = "2021"
-rust-version = "1.57.0"
+rust-version = "1.59.0"
 
 [dependencies.alacritty_config_derive]
 path = "../alacritty_config_derive"
@@ -16,6 +16,10 @@ version = "0.2.1-dev"
 [dependencies.alacritty_config]
 path = "../alacritty_config"
 version = "0.1.1-dev"
+
+[dependencies.nannou]
+git = "https://github.com/sebosp/nannou"
+version = "0.18"
 
 [dependencies]
 libc = "0.2"
@@ -42,6 +46,9 @@ rand = "0.7.3"
 base64 = "0.13.0"
 regex-automata = "0.1.9"
 dirs = "4.0.0"
+lyon = "0.17"
+chrono = { version = "0.4", features = [ "serde" ] }
+moon-phase = "0.1.0"
 
 [target.'cfg(unix)'.dependencies]
 nix = "0.24.1"

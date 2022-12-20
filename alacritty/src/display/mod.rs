@@ -1218,7 +1218,9 @@ impl Display {
         // Create a "wind" effect of a moving curtain by making it very transparent as it
         // reaches 1000
         //
-        // TODO: Move to the decorations module and implement with tick()
+        // TODO:
+        // - Move to the decorations module and implement with tick()
+        // - Use nannou and perlin noise
         let seconds_cycle = 15f32;
         let epoch =
             std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH).unwrap();
@@ -1233,6 +1235,7 @@ impl Display {
         let x_move_in_time = (curr_second_cycle * wind_screen_size) / seconds_cycle;
         self.decorations.tick();
         for decoration in &self.decorations.decorators {
+            let elapsed_secs_with_millis = self.decorations.get_elapsed_secs_with_millis();
             match decoration {
                 DecorationTypes::Lines(line_decor) => match line_decor {
                     DecorationLines::Hexagon(hex_lines) => {
@@ -1252,19 +1255,28 @@ impl Display {
                             );
                         }
                     },
-                    DecorationLines::TreeSilhoutte(tree_decor) => {
-                        self.renderer.draw_array(
+                },
+                DecorationTypes::Triangles(tri_decor) => match &**tri_decor {
+                    DecorationTriangles::Hexagon(hex_tris) => {
+                        self.renderer.draw_xyzrgba_vertices(
                             size_info,
-                            &tree_decor.vecs,
-                            Rgb { r: 25, g: 88, b: 167 },
-                            0.9f32,
-                            renderer::DrawArrayMode::LineStrip,
+                            &hex_tris.vecs,
+                            renderer::DrawArrayMode::GlTriangles,
+                            elapsed_secs_with_millis,
                         );
                     },
-                },
-                DecorationTypes::Triangles(tri_decor) => match tri_decor {
-                    DecorationTriangles::Hexagon(hex_tris) => {
-                        self.renderer.draw_hex_bg(size_info, &hex_tris.vecs);
+                    DecorationTriangles::Nannou(nannou_tris) => {
+                        for decor_vertex in &nannou_tris.vertices {
+                            self.renderer.draw_xyzrgba_vertices(
+                                size_info,
+                                &decor_vertex.vecs,
+                                // decor_vertex.draw_array_mode.clone().into(), It seems we cannot
+                                // use mixed types of draw array modes, maybe they overwrite each
+                                // other or we end up seeing lines where there were none?
+                                renderer::DrawArrayMode::GlTriangles,
+                                elapsed_secs_with_millis,
+                            );
+                        }
                     },
                 },
                 DecorationTypes::Points(point_decor) => match point_decor {

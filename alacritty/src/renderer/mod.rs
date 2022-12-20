@@ -6,6 +6,7 @@ use crossfont::Metrics;
 use log::info;
 use once_cell::sync::OnceCell;
 
+use alacritty_terminal::decorations::NannouDrawArrayMode;
 use alacritty_terminal::index::Point;
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::color::Rgb;
@@ -43,7 +44,7 @@ pub enum Error {
     Shader(ShaderError),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum DrawArrayMode {
     Points,
     LineStrip,
@@ -51,12 +52,42 @@ pub enum DrawArrayMode {
     // GlTriangleFan,
     // GlLines,
     // GlTriangleStrip,
-    // GlTriangles,
+    GlTriangles,
     // GlQuadStrip, // Unsupported
     // GlQuads,
     // GlPolygon,
 }
 
+impl From<NannouDrawArrayMode> for DrawArrayMode {
+    fn from(src: NannouDrawArrayMode) -> Self {
+        match src {
+            NannouDrawArrayMode::Points => DrawArrayMode::Points,
+            NannouDrawArrayMode::LineStrip => DrawArrayMode::LineStrip,
+            NannouDrawArrayMode::LineLoop => DrawArrayMode::LineLoop,
+            NannouDrawArrayMode::GlTriangles => DrawArrayMode::GlTriangles,
+        }
+    }
+}
+
+impl From<DrawArrayMode> for u32 {
+    fn from(src: DrawArrayMode) -> Self {
+        // Translate our enum to opengl enum, maybe this can be ommitted?
+        // Maybe we can extend the enum with custom classes that end up being like this.
+        // So then it should become a trait
+        match src {
+            DrawArrayMode::Points => gl::POINTS,
+            DrawArrayMode::LineStrip => gl::LINE_STRIP,
+            DrawArrayMode::LineLoop => gl::LINE_LOOP,
+            // DrawArrayMode::GlTriangleFan => gl::TRIANGLE_FAN,
+            // DrawArrayMode::GlLines => gl::LINES,
+            // DrawArrayMode::GlTriangleStrip => gl::TRIANGLE_STRIP,
+            DrawArrayMode::GlTriangles => gl::TRIANGLES,
+            // DrawArrayMode::GlQuadStrip => gl::QUAD_STRIP, // Unsupported?
+            // DrawArrayMode::GlQuads => gl::QUADS,
+            // DrawArrayMode::GlPolygon => gl::POLYGON_MODE,
+        }
+    }
+}
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
@@ -243,21 +274,27 @@ impl Renderer {
         self.activate_regular_state(size_info);
     }
 
-    /// `draw_hex_bg` draws an array of triangles with properties (x,y,r,g,b,a)
-    pub fn draw_hex_bg(&mut self, size_info: &SizeInfo, opengl_data: &[f32]) {
-        // This function expects a vector that contains 6 data points per vertex:
-        // 2 are x,y position and the other 4 are the r,g,b,a
+    /// `draw_xyzrgba_array` draws an array of triangles with properties (x,y,z,r,g,b,a)
+    pub fn draw_xyzrgba_vertices(
+        &mut self,
+        size_info: &SizeInfo,
+        opengl_data: &[f32],
+        mode: DrawArrayMode,
+        time_secs_with_ms: f32,
+    ) {
+        // This function expects a vector that contains 7 data points per vertex:
+        // 3 are x,y,z position and the other 4 are the r,g,b,a
         // let opengl_data = vec![
-        // 0.5f32, 0.5f32, // x, y
+        // 0.5f32, 0.5f32, 0.0f32 // x, y, z
         // 1.0f32, 0.0f32, 0.0f32, 1.0f32, // RGBA
-        // 0.8f32, 0.8f32, // x, y
+        // 0.8f32, 0.8f32, 0.0f32 // x, y, z
         // 0.0f32, 1.0f32, 0.0f32, 1.0f32, // RGBA
-        // 0.7f32, 0.3f32, // x, y
+        // 0.7f32, 0.3f32, 0.0f32 // x, y, z
         // 0.0f32, 0.0f32, 1.0f32, 1.0f32, // RGBA
         // ];
         Self::prepare_rect_rendering_state(size_info);
 
-        self.hex_bg_renderer.draw(opengl_data);
+        self.hex_bg_renderer.draw(opengl_data, mode.into(), size_info, time_secs_with_ms);
 
         self.activate_regular_state(size_info);
     }
@@ -290,25 +327,10 @@ impl Renderer {
             opengl_data_with_color.push(f32::from(color.b) / 255.);
             opengl_data_with_color.push(alpha);
         }
-        // Translate our enum to opengl enum, maybe this can be ommitted?
-        // Maybe we can extend the enum with custom classes that end up being like this.
-        // So then it should become a trait
-        let gl_mode = match mode {
-            DrawArrayMode::Points => gl::POINTS,
-            DrawArrayMode::LineStrip => gl::LINE_STRIP,
-            DrawArrayMode::LineLoop => gl::LINE_LOOP,
-            // DrawArrayMode::GlTriangleFan => gl::TRIANGLE_FAN,
-            // DrawArrayMode::GlLines => gl::LINES,
-            // DrawArrayMode::GlTriangleStrip => gl::TRIANGLE_STRIP,
-            // DrawArrayMode::GlTriangles => gl::TRIANGLES,
-            // DrawArrayMode::GlQuadStrip => gl::QUAD_STRIP, // Unsupported?
-            // DrawArrayMode::GlQuads => gl::QUADS,
-            // DrawArrayMode::GlPolygon => gl::POLYGON_MODE,
-        };
 
         Self::prepare_rect_rendering_state(size_info);
 
-        self.chart_renderer.draw(&opengl_data_with_color, gl_mode);
+        self.chart_renderer.draw(&opengl_data_with_color, mode.into());
 
         self.activate_regular_state(size_info);
     }
