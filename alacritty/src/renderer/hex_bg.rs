@@ -1,10 +1,10 @@
 use std::mem;
 
+use crate::display::SizeInfo;
 use crate::gl;
 use crate::gl::types::*;
-use crate::renderer::{self, cstr};
 use crate::renderer::shader::{ShaderError, ShaderProgram, ShaderVersion};
-use crate::display::SizeInfo;
+use crate::renderer::{self, cstr};
 
 static HXBG_SHADER_F: &str = include_str!("../../res/hex_bg.f.glsl");
 static HXBG_SHADER_V: &str = include_str!("../../res/hex_bg.v.glsl");
@@ -77,7 +77,17 @@ impl HexBgRenderer {
             // "Bind" the newly created texture : all future texture functions will modify this texture
             gl::BindTexture(gl::TEXTURE_2D, rendered_texture);
             // Give an empty image to OpenGL ( the last "0" )
-            gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGB as i32, 1024, 768, 0, gl::RGB, gl::UNSIGNED_BYTE, std::ptr::null());
+            gl::TexImage2D(
+                gl::TEXTURE_2D,
+                0,
+                gl::RGB as i32,
+                1024,
+                768,
+                0,
+                gl::RGB,
+                gl::UNSIGNED_BYTE,
+                std::ptr::null(),
+            );
             // Poor filtering. Needed !
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32);
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32);
@@ -87,7 +97,12 @@ impl HexBgRenderer {
             gl::GenRenderbuffers(1, &mut depth_render_buffer);
             gl::BindRenderbuffer(gl::RENDERBUFFER, depth_render_buffer);
             gl::RenderbufferStorage(gl::RENDERBUFFER, gl::DEPTH_COMPONENT, 1024, 768);
-            gl::FramebufferRenderbuffer(gl::FRAMEBUFFER, gl::DEPTH_ATTACHMENT, gl::RENDERBUFFER, depth_render_buffer);
+            gl::FramebufferRenderbuffer(
+                gl::FRAMEBUFFER,
+                gl::DEPTH_ATTACHMENT,
+                gl::RENDERBUFFER,
+                depth_render_buffer,
+            );
             // Set "renderedTexture" as our colour attachement #0
             gl::FramebufferTexture(gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT0, rendered_texture, 0);
             // Set the list of draw buffers.
@@ -105,7 +120,13 @@ impl HexBgRenderer {
         Ok(Self { vao, vbo, fbo, program })
     }
 
-    pub fn draw(&mut self, opengl_data: &[f32], gl_mode: u32, size_info: &SizeInfo, time_secs_with_ms: f32) {
+    pub fn draw(
+        &mut self,
+        opengl_data: &[f32],
+        gl_mode: u32,
+        size_info: &SizeInfo,
+        time_secs_with_ms: f32,
+    ) {
         let max_dimension = size_info.width().max(size_info.height());
         unsafe {
             // Bind VAO to enable vertex attribute slots.
@@ -116,7 +137,11 @@ impl HexBgRenderer {
 
             // Swap program
             gl::UseProgram(self.program.id());
-            self.program.update_uniforms(max_dimension * 4. - (time_secs_with_ms * 200. % (max_dimension * 8.)), size_info, time_secs_with_ms / 1000.);
+            self.program.update_uniforms(
+                max_dimension * 16. - (time_secs_with_ms * 200. % (max_dimension * 32.)),
+                size_info,
+                time_secs_with_ms / 1000.,
+            );
 
             // Load vertex data into array buffer
             gl::BufferData(
@@ -167,7 +192,7 @@ impl HexagonShaderProgram {
         })
     }
 
-    pub fn update_uniforms(&self, time_secs_with_ms: f32, size_info: &SizeInfo, time_in_secs: f32,) {
+    pub fn update_uniforms(&self, time_secs_with_ms: f32, size_info: &SizeInfo, time_in_secs: f32) {
         unsafe {
             if let Some(u_active_x_shine_offset) = self.u_active_x_shine_offset {
                 gl::Uniform1f(u_active_x_shine_offset, time_secs_with_ms);
