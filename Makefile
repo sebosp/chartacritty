@@ -6,14 +6,15 @@ MANPAGE = $(ASSETS_DIR)/chartacritty.man
 MANPAGE-MSG = $(ASSETS_DIR)/chartacritty-msg.man
 TERMINFO = $(ASSETS_DIR)/chartacritty.info
 COMPLETIONS_DIR = $(ASSETS_DIR)/completions
-COMPLETIONS = $(COMPLETIONS_DIR)/_chartacritty \
-	$(COMPLETIONS_DIR)/chartacritty.bash \
-	$(COMPLETIONS_DIR)/chartacritty.fish
+COMPLETIONS = $(COMPLETIONS_DIR)/_alacritty \
+	$(COMPLETIONS_DIR)/alacritty.bash \
+	$(COMPLETIONS_DIR)/alacritty.fish
 
 APP_NAME = Chartacritty.app
 APP_TEMPLATE = $(ASSETS_DIR)/osx/$(APP_NAME)
 APP_DIR = $(RELEASE_DIR)/osx
-APP_BINARY = $(RELEASE_DIR)/$(TARGET)
+# cargo build generates this binary
+APP_BINARY = $(RELEASE_DIR)/alacritty
 APP_BINARY_DIR = $(APP_DIR)/$(APP_NAME)/Contents/MacOS
 APP_EXTRAS_DIR = $(APP_DIR)/$(APP_NAME)/Contents/Resources
 APP_COMPLETIONS_DIR = $(APP_EXTRAS_DIR)/completions
