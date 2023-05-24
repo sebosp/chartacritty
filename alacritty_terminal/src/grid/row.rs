@@ -76,7 +76,7 @@ impl<T: Clone + Default> Row<T> {
 
         // Split off cells for a new row.
         let mut new_row = self.inner.split_off(columns);
-        let index = new_row.iter().rposition(|c| !c.is_empty()).map(|i| i + 1).unwrap_or(0);
+        let index = new_row.iter().rposition(|c| !c.is_empty()).map_or(0, |i| i + 1);
         new_row.truncate(index);
 
         self.occ = min(self.occ, columns);
@@ -168,6 +168,16 @@ impl<T> Row<T> {
         let mut split = self.inner.split_off(at);
         std::mem::swap(&mut split, &mut self.inner);
         split
+    }
+}
+
+impl<'a, T> IntoIterator for &'a Row<T> {
+    type IntoIter = slice::Iter<'a, T>;
+    type Item = &'a T;
+
+    #[inline]
+    fn into_iter(self) -> slice::Iter<'a, T> {
+        self.inner.iter()
     }
 }
 

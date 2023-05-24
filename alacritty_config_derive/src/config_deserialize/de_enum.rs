@@ -1,9 +1,12 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
-use syn::{DataEnum, Ident};
+use syn::meta::ParseNestedMeta;
+use syn::{DataEnum, Generics, Ident};
 
-pub fn derive_deserialize(ident: Ident, data_enum: DataEnum) -> TokenStream {
+use crate::serde_replace;
+
+pub fn derive_deserialize(ident: Ident, generics: Generics, data_enum: DataEnum) -> TokenStream {
     let visitor = format_ident!("{}Visitor", ident);
 
     // Create match arm streams and get a list with all available values.
@@ -12,12 +15,19 @@ pub fn derive_deserialize(ident: Ident, data_enum: DataEnum) -> TokenStream {
     for variant in data_enum.variants.iter().filter(|variant| {
         // Skip deserialization for `#[config(skip)]` fields.
         variant.attrs.iter().all(|attr| {
-            !crate::path_ends_with(&attr.path, "config") || attr.tokens.to_string() != "(skip)"
+            let is_skip = |meta: ParseNestedMeta| {
+                if meta.path.is_ident("skip") {
+                    Ok(())
+                } else {
+                    Err(meta.error("not skip"))
+                }
+            };
+            !attr.path().is_ident("config") || attr.parse_nested_meta(is_skip).is_err()
         })
     }) {
         let variant_ident = &variant.ident;
         let variant_str = variant_ident.to_string();
-        available_values = format!("{}`{}`, ", available_values, variant_str);
+        available_values = format!("{available_values}`{variant_str}`, ");
 
         let literal = variant_str.to_lowercase();
 
@@ -30,7 +40,7 @@ pub fn derive_deserialize(ident: Ident, data_enum: DataEnum) -> TokenStream {
     available_values.truncate(available_values.len().saturating_sub(2));
 
     // Generate deserialization impl.
-    let tokens = quote! {
+    let mut tokens = quote! {
         struct #visitor;
         impl<'de> serde::de::Visitor<'de> for #visitor {
             type Value = #ident;
@@ -61,6 +71,9 @@ pub fn derive_deserialize(ident: Ident, data_enum: DataEnum) -> TokenStream {
             }
         }
     };
+
+    // Automatically implement [`alacritty_config::SerdeReplace`].
+    tokens.extend(serde_replace::derive_direct(ident, generics));
 
     tokens.into()
 }

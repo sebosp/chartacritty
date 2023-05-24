@@ -1,9 +1,11 @@
 //! Hand-rolled drawing of unicode [box drawing](http://www.unicode.org/charts/PDF/U2500.pdf)
 //! and [block elements](https://www.unicode.org/charts/PDF/U2580.pdf).
 
-use std::{cmp, mem};
+use std::{cmp, mem, ops};
 
 use crossfont::{BitmapBuffer, Metrics, RasterizedGlyph};
+
+use crate::config::ui_config::Delta;
 
 // Colors which are used for filling shade variants.
 const COLOR_FILL_ALPHA_STEP_1: Pixel = Pixel { _r: 192, _g: 192, _b: 192 };
@@ -14,19 +16,34 @@ const COLOR_FILL_ALPHA_STEP_3: Pixel = Pixel { _r: 64, _g: 64, _b: 64 };
 const COLOR_FILL: Pixel = Pixel { _r: 255, _g: 255, _b: 255 };
 
 /// Returns the rasterized glyph if the character is part of the built-in font.
-pub fn builtin_glyph(character: char, metrics: &Metrics) -> Option<RasterizedGlyph> {
-    match character {
+pub fn builtin_glyph(
+    character: char,
+    metrics: &Metrics,
+    offset: &Delta<i8>,
+    glyph_offset: &Delta<i8>,
+) -> Option<RasterizedGlyph> {
+    let mut glyph = match character {
         // Box drawing characters and block elements.
-        '\u{2500}'..='\u{259f}' => Some(box_drawing(character, metrics)),
-        _ => None,
-    }
+        '\u{2500}'..='\u{259f}' => box_drawing(character, metrics, offset),
+        _ => return None,
+    };
+
+    // Since we want to ignore `glyph_offset` for the built-in font, subtract it to compensate its
+    // addition when loading glyphs in the renderer.
+    glyph.left -= glyph_offset.x as i32;
+    glyph.top -= glyph_offset.y as i32;
+
+    Some(glyph)
 }
 
-fn box_drawing(character: char, metrics: &Metrics) -> RasterizedGlyph {
-    let height = metrics.line_height as usize;
-    let width = metrics.average_advance as usize;
-    let stroke_size = cmp::max(metrics.underline_thickness as usize, 1);
-    let heavy_stroke_size = stroke_size * 3;
+fn box_drawing(character: char, metrics: &Metrics, offset: &Delta<i8>) -> RasterizedGlyph {
+    // Ensure that width and height is at least one.
+    let height = (metrics.line_height as i32 + offset.y as i32).max(1) as usize;
+    let width = (metrics.average_advance as i32 + offset.x as i32).max(1) as usize;
+    // Use one eight of the cell width, since this is used as a step size for block elemenets.
+    let stroke_size = cmp::max((width as f32 / 8.).round() as usize, 1);
+    let heavy_stroke_size = stroke_size * 2;
+
     // Certain symbols require larger canvas than the cell itself, since for proper contiguous
     // lines they require drawing on neighbour cells. So treat them specially early on and handle
     // 'normal' characters later.
@@ -52,17 +69,17 @@ fn box_drawing(character: char, metrics: &Metrics) -> RasterizedGlyph {
 
             let from_x = 0.;
             let to_x = x_end + 1.;
-            for stroke_size in stroke_size..2 * stroke_size {
+            for stroke_size in 0..2 * stroke_size {
                 let stroke_size = stroke_size as f32 / 2.;
                 if character == '\u{2571}' || character == '\u{2573}' {
-                    let h = y_end - stroke_size as f32;
+                    let h = y_end - stroke_size;
                     let from_y = f_x(from_x, h);
                     let to_y = f_x(to_x, h);
                     canvas.draw_line(from_x, from_y, to_x, to_y);
                 }
                 if character == '\u{2572}' || character == '\u{2573}' {
-                    let from_y = g_x(from_x, stroke_size as f32);
-                    let to_y = g_x(to_x, stroke_size as f32);
+                    let from_y = g_x(from_x, stroke_size);
+                    let to_y = g_x(to_x, stroke_size);
                     canvas.draw_line(from_x, from_y, to_x, to_y);
                 }
             }
@@ -75,6 +92,7 @@ fn box_drawing(character: char, metrics: &Metrics) -> RasterizedGlyph {
                 height: height as i32,
                 width: width as i32,
                 buffer,
+                advance: (width as i32, height as i32),
             };
         },
         _ => Canvas::new(width, height),
@@ -258,7 +276,7 @@ fn box_drawing(character: char, metrics: &Metrics) -> RasterizedGlyph {
                 '\u{2561}'..='\u{2563}' | '\u{256a}' | '\u{256c}' => {
                     (v_left_bounds.1, v_left_bounds.1)
                 },
-                '\u{2564}'..='\u{2566}' => (canvas.x_center(), v_left_bounds.1),
+                '\u{2564}'..='\u{2568}' => (canvas.x_center(), v_left_bounds.1),
                 '\u{2569}'..='\u{2569}' => (v_left_bounds.1, canvas.x_center()),
                 _ => (0., 0.),
             };
@@ -281,13 +299,13 @@ fn box_drawing(character: char, metrics: &Metrics) -> RasterizedGlyph {
             // Top vertical part.
             let (left_top_size, right_top_size) = match character {
                 '\u{2551}' | '\u{256a}' => (canvas.y_center(), canvas.y_center()),
-                '\u{2558}'..='\u{255c}' | '\u{2567}' | '\u{2568}' => {
-                    (h_bot_bounds.1, h_top_bounds.1)
-                },
+                '\u{2558}'..='\u{255c}' | '\u{2568}' => (h_bot_bounds.1, h_top_bounds.1),
                 '\u{255d}' => (h_top_bounds.1, h_bot_bounds.1),
                 '\u{255e}'..='\u{2560}' => (canvas.y_center(), h_top_bounds.1),
                 '\u{2561}'..='\u{2563}' => (h_top_bounds.1, canvas.y_center()),
-                '\u{2569}' | '\u{256b}' | '\u{256c}' => (h_top_bounds.1, h_top_bounds.1),
+                '\u{2567}' | '\u{2569}' | '\u{256b}' | '\u{256c}' => {
+                    (h_top_bounds.1, h_top_bounds.1)
+                },
                 _ => (0., 0.),
             };
 
@@ -327,7 +345,9 @@ fn box_drawing(character: char, metrics: &Metrics) -> RasterizedGlyph {
             // Mirror `X` axis.
             if character == '\u{256d}' || character == '\u{2570}' {
                 let center = canvas.x_center() as usize;
-                let extra_offset = if width % 2 == 0 { 1 } else { 0 };
+
+                let extra_offset = usize::from(stroke_size % 2 != width % 2);
+
                 let buffer = canvas.buffer_mut();
                 for y in 1..height {
                     let left = (y - 1) * width;
@@ -343,7 +363,9 @@ fn box_drawing(character: char, metrics: &Metrics) -> RasterizedGlyph {
             // Mirror `Y` axis.
             if character == '\u{256d}' || character == '\u{256e}' {
                 let center = canvas.y_center() as usize;
-                let extra_offset = if height % 2 == 0 { 1 } else { 0 };
+
+                let extra_offset = usize::from(stroke_size % 2 != height % 2);
+
                 let buffer = canvas.buffer_mut();
                 if extra_offset != 0 {
                     let bottom_row = (height - 1) * width;
@@ -365,7 +387,7 @@ fn box_drawing(character: char, metrics: &Metrics) -> RasterizedGlyph {
         '\u{2580}'..='\u{2587}' | '\u{2589}'..='\u{2590}' | '\u{2594}' | '\u{2595}' => {
             let width = width as f32;
             let height = height as f32;
-            let rect_width = match character {
+            let mut rect_width = match character {
                 '\u{2589}' => width * 7. / 8.,
                 '\u{258a}' => width * 6. / 8.,
                 '\u{258b}' => width * 5. / 8.,
@@ -377,7 +399,8 @@ fn box_drawing(character: char, metrics: &Metrics) -> RasterizedGlyph {
                 '\u{2595}' => width * 1. / 8.,
                 _ => width,
             };
-            let (rect_height, y) = match character {
+
+            let (mut rect_height, mut y) = match character {
                 '\u{2580}' => (height * 4. / 8., height * 8. / 8.),
                 '\u{2581}' => (height * 1. / 8., height * 1. / 8.),
                 '\u{2582}' => (height * 2. / 8., height * 2. / 8.),
@@ -389,12 +412,18 @@ fn box_drawing(character: char, metrics: &Metrics) -> RasterizedGlyph {
                 '\u{2594}' => (height * 1. / 8., height * 8. / 8.),
                 _ => (height, height),
             };
+
             // Fix `y` coordinates.
-            let y = height - y;
+            y = (height - y).round();
+
+            // Ensure that resulted glyph will be visible and also round sizes instead of straight
+            // flooring them.
+            rect_width = rect_width.round().max(1.);
+            rect_height = rect_height.round().max(1.);
 
             let x = match character {
                 '\u{2590}' => canvas.x_center(),
-                '\u{2595}' => width as f32 - width / 8.,
+                '\u{2595}' => width - rect_width,
                 _ => 0.,
             };
 
@@ -413,27 +442,30 @@ fn box_drawing(character: char, metrics: &Metrics) -> RasterizedGlyph {
         },
         // Quadrants: '▖', '▗', '▘', '▙', '▚', '▛', '▜', '▝', '▞', '▟'.
         '\u{2596}'..='\u{259F}' => {
+            let x_center = canvas.x_center().round().max(1.);
+            let y_center = canvas.y_center().round().max(1.);
+
             let (w_second, h_second) = match character {
                 '\u{2598}' | '\u{2599}' | '\u{259a}' | '\u{259b}' | '\u{259c}' => {
-                    (canvas.x_center(), canvas.y_center())
+                    (x_center, y_center)
                 },
                 _ => (0., 0.),
             };
             let (w_first, h_first) = match character {
                 '\u{259b}' | '\u{259c}' | '\u{259d}' | '\u{259e}' | '\u{259f}' => {
-                    (canvas.x_center(), canvas.y_center())
+                    (x_center, y_center)
                 },
                 _ => (0., 0.),
             };
             let (w_third, h_third) = match character {
                 '\u{2596}' | '\u{2599}' | '\u{259b}' | '\u{259e}' | '\u{259f}' => {
-                    (canvas.x_center(), canvas.y_center())
+                    (x_center, y_center)
                 },
                 _ => (0., 0.),
             };
             let (w_fourth, h_fourth) = match character {
                 '\u{2597}' | '\u{2599}' | '\u{259a}' | '\u{259c}' | '\u{259f}' => {
-                    (canvas.x_center(), canvas.y_center())
+                    (x_center, y_center)
                 },
                 _ => (0., 0.),
             };
@@ -441,18 +473,26 @@ fn box_drawing(character: char, metrics: &Metrics) -> RasterizedGlyph {
             // Second quadrant.
             canvas.draw_rect(0., 0., w_second, h_second, COLOR_FILL);
             // First quadrant.
-            canvas.draw_rect(canvas.x_center(), 0., w_first, h_first, COLOR_FILL);
+            canvas.draw_rect(x_center, 0., w_first, h_first, COLOR_FILL);
             // Third quadrant.
-            canvas.draw_rect(0., canvas.y_center(), w_third, h_third, COLOR_FILL);
+            canvas.draw_rect(0., y_center, w_third, h_third, COLOR_FILL);
             // Fourth quadrant.
-            canvas.draw_rect(canvas.x_center(), canvas.y_center(), w_fourth, h_fourth, COLOR_FILL);
+            canvas.draw_rect(x_center, y_center, w_fourth, h_fourth, COLOR_FILL);
         },
         _ => unreachable!(),
     }
 
     let top = height as i32 + metrics.descent as i32;
     let buffer = BitmapBuffer::Rgb(canvas.into_raw());
-    RasterizedGlyph { character, top, left: 0, height: height as i32, width: width as i32, buffer }
+    RasterizedGlyph {
+        character,
+        top,
+        left: 0,
+        height: height as i32,
+        width: width as i32,
+        buffer,
+        advance: (width as i32, height as i32),
+    }
 }
 
 #[repr(packed)]
@@ -466,6 +506,28 @@ struct Pixel {
 impl Pixel {
     fn gray(color: u8) -> Self {
         Self { _r: color, _g: color, _b: color }
+    }
+}
+
+impl ops::Add for Pixel {
+    type Output = Pixel;
+
+    fn add(self, rhs: Pixel) -> Self::Output {
+        let _r = self._r.saturating_add(rhs._r);
+        let _g = self._g.saturating_add(rhs._g);
+        let _b = self._b.saturating_add(rhs._b);
+        Pixel { _r, _g, _b }
+    }
+}
+
+impl ops::Div<u8> for Pixel {
+    type Output = Pixel;
+
+    fn div(self, rhs: u8) -> Self::Output {
+        let _r = self._r / rhs;
+        let _g = self._g / rhs;
+        let _b = self._b / rhs;
+        Pixel { _r, _g, _b }
     }
 }
 
@@ -534,13 +596,13 @@ impl Canvas {
     /// Draws a horizontal straight line from (`x`, `y`) of `size` with the given `stroke_size`.
     fn draw_h_line(&mut self, x: f32, y: f32, size: f32, stroke_size: usize) {
         let (start_y, end_y) = self.h_line_bounds(y, stroke_size);
-        self.draw_rect(x, start_y as f32, size, (end_y - start_y) as f32, COLOR_FILL);
+        self.draw_rect(x, start_y, size, end_y - start_y, COLOR_FILL);
     }
 
     /// Draws a vertical straight line from (`x`, `y`) of `size` with the given `stroke_size`.
     fn draw_v_line(&mut self, x: f32, y: f32, size: f32, stroke_size: usize) {
         let (start_x, end_x) = self.v_line_bounds(x, stroke_size);
-        self.draw_rect(start_x as f32, y, (end_x - start_x) as f32, size, COLOR_FILL);
+        self.draw_rect(start_x, y, end_x - start_x, size, COLOR_FILL);
     }
 
     /// Draws a rect from the (`x`, `y`) of the given `width` and `height` using `color`.
@@ -657,9 +719,8 @@ impl Canvas {
         let v_line_bounds = (v_line_bounds.0 as usize, v_line_bounds.1 as usize);
         let max_transparancy = 0.5;
 
-        for (radius_y, radius_x) in (h_line_bounds.0..h_line_bounds.1)
-            .into_iter()
-            .zip((v_line_bounds.0..v_line_bounds.1).into_iter())
+        for (radius_y, radius_x) in
+            (h_line_bounds.0..h_line_bounds.1).zip(v_line_bounds.0..v_line_bounds.1)
         {
             let radius_x = radius_x as f32;
             let radius_y = radius_y as f32;
@@ -692,7 +753,7 @@ impl Canvas {
 
                 let x_next = (x + 1.).clamp(0., v_line_bounds.1 as f32 - 1.);
                 let x = x.clamp(0., v_line_bounds.1 as f32 - 1.);
-                let y = y.clamp(0., radius_y as f32);
+                let y = y.clamp(0., radius_y);
 
                 self.put_pixel(x, y, color_1);
                 self.put_pixel(x_next, y, color_2);
@@ -702,6 +763,24 @@ impl Canvas {
         // Ensure the part closer to edges is properly filled.
         self.draw_h_line(0., self.y_center(), stroke_size as f32, stroke_size);
         self.draw_v_line(self.x_center(), 0., stroke_size as f32, stroke_size);
+
+        // Fill the resulted arc, since it could have gaps in-between.
+        for y in 0..self.height {
+            let row = y * self.width;
+            let left = match self.buffer[row..row + self.width].iter().position(|p| p._r != 0) {
+                Some(left) => row + left,
+                _ => continue,
+            };
+            let right = match self.buffer[row..row + self.width].iter().rposition(|p| p._r != 0) {
+                Some(right) => row + right,
+                _ => continue,
+            };
+
+            for index in left + 1..right {
+                self.buffer[index] =
+                    self.buffer[index] + self.buffer[index - 1] / 2 + self.buffer[index + 1] / 2;
+            }
+        }
     }
 
     /// Fills the `Canvas` with the given `Color`.
@@ -724,13 +803,13 @@ impl Canvas {
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use super::*;
     use crossfont::Metrics;
 
     #[test]
     fn builtin_line_drawing_glyphs_coverage() {
-        // Dummy metrics values to test builtin glyphs coverage.
+        // Dummy metrics values to test built-in glyphs coverage.
         let metrics = Metrics {
             average_advance: 6.,
             line_height: 16.,
@@ -741,13 +820,16 @@ mod test {
             strikeout_thickness: 2.,
         };
 
+        let offset = Default::default();
+        let glyph_offset = Default::default();
+
         // Test coverage of box drawing characters.
         for character in '\u{2500}'..='\u{259f}' {
-            assert!(builtin_glyph(character, &metrics).is_some());
+            assert!(builtin_glyph(character, &metrics, &offset, &glyph_offset).is_some());
         }
 
         for character in ('\u{2450}'..'\u{2500}').chain('\u{25a0}'..'\u{2600}') {
-            assert!(builtin_glyph(character, &metrics).is_none());
+            assert!(builtin_glyph(character, &metrics, &offset, &glyph_offset).is_none());
         }
     }
 }

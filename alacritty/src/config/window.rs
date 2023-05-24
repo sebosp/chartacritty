@@ -1,12 +1,15 @@
 use std::fmt::{self, Formatter};
 use std::os::raw::c_ulong;
 
-use glutin::window::Fullscreen;
-use log::error;
+use log::{error, warn};
 use serde::de::{self, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
+use winit::window::{Fullscreen, Theme};
 
-use alacritty_config_derive::ConfigDeserialize;
+#[cfg(target_os = "macos")]
+use winit::platform::macos::OptionAsAlt;
+
+use alacritty_config_derive::{ConfigDeserialize, SerdeReplace};
 use alacritty_terminal::config::{Percentage, LOG_TARGET_CONFIG};
 use alacritty_terminal::index::Column;
 
@@ -30,8 +33,8 @@ pub struct WindowConfig {
     #[config(skip)]
     pub embed: Option<c_ulong>,
 
-    /// GTK theme variant.
-    pub gtk_theme_variant: Option<String>,
+    /// System decorations theme variant.
+    pub decorations_theme_variant: Option<Theme>,
 
     /// Spread out additional padding evenly.
     pub dynamic_padding: bool,
@@ -45,6 +48,13 @@ pub struct WindowConfig {
 
     /// Background opacity from 0.0 to 1.0.
     pub opacity: Percentage,
+
+    /// Controls which `Option` key should be treated as `Alt`.
+    #[cfg(target_os = "macos")]
+    pub option_as_alt: OptionAsAlt,
+
+    /// Resize increments.
+    pub resize_increments: bool,
 
     /// Pixel padding.
     padding: Delta<u8>,
@@ -61,12 +71,15 @@ impl Default for WindowConfig {
             decorations: Default::default(),
             startup_mode: Default::default(),
             embed: Default::default(),
-            gtk_theme_variant: Default::default(),
+            decorations_theme_variant: Default::default(),
             dynamic_padding: Default::default(),
             identity: Identity::default(),
             opacity: Default::default(),
             padding: Default::default(),
             dimensions: Default::default(),
+            resize_increments: Default::default(),
+            #[cfg(target_os = "macos")]
+            option_as_alt: Default::default(),
         }
     }
 }
@@ -74,20 +87,40 @@ impl Default for WindowConfig {
 impl WindowConfig {
     #[inline]
     pub fn dimensions(&self) -> Option<Dimensions> {
-        if self.dimensions.columns.0 != 0
-            && self.dimensions.lines != 0
-            && self.startup_mode != StartupMode::Maximized
-        {
+        let (lines, columns) = (self.dimensions.lines, self.dimensions.columns.0);
+        let (lines_is_non_zero, columns_is_non_zero) = (lines != 0, columns != 0);
+
+        if lines_is_non_zero && columns_is_non_zero {
+            // Return dimensions if both `lines` and `columns` are non-zero.
             Some(self.dimensions)
+        } else if lines_is_non_zero || columns_is_non_zero {
+            // Warn if either `columns` or `lines` is non-zero.
+
+            let (zero_key, non_zero_key, non_zero_value) = if lines_is_non_zero {
+                ("columns", "lines", lines)
+            } else {
+                ("lines", "columns", columns)
+            };
+
+            warn!(
+                target: LOG_TARGET_CONFIG,
+                "Both `lines` and `columns` must be non-zero for `window.dimensions` to take \
+                 effect. Configured value of `{}` is 0 while that of `{}` is {}",
+                zero_key,
+                non_zero_key,
+                non_zero_value,
+            );
+
+            None
         } else {
             None
         }
     }
 
     #[inline]
-    pub fn padding(&self, dpr: f64) -> (f32, f32) {
-        let padding_x = (f32::from(self.padding.x) * dpr as f32).floor();
-        let padding_y = (f32::from(self.padding.y) * dpr as f32).floor();
+    pub fn padding(&self, scale_factor: f32) -> (f32, f32) {
+        let padding_x = (f32::from(self.padding.x) * scale_factor).floor();
+        let padding_y = (f32::from(self.padding.y) * scale_factor).floor();
         (padding_x, padding_y)
     }
 
@@ -106,7 +139,7 @@ impl WindowConfig {
     }
 }
 
-#[derive(ConfigDeserialize, Debug, Clone, PartialEq)]
+#[derive(ConfigDeserialize, Debug, Clone, PartialEq, Eq)]
 pub struct Identity {
     /// Window title.
     pub title: String,
@@ -121,8 +154,9 @@ impl Default for Identity {
     }
 }
 
-#[derive(ConfigDeserialize, Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(ConfigDeserialize, Default, Debug, Copy, Clone, PartialEq, Eq)]
 pub enum StartupMode {
+    #[default]
     Windowed,
     Maximized,
     Fullscreen,
@@ -130,26 +164,15 @@ pub enum StartupMode {
     SimpleFullscreen,
 }
 
-impl Default for StartupMode {
-    fn default() -> StartupMode {
-        StartupMode::Windowed
-    }
-}
-
-#[derive(ConfigDeserialize, Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(ConfigDeserialize, Default, Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Decorations {
+    #[default]
     Full,
     #[cfg(target_os = "macos")]
     Transparent,
     #[cfg(target_os = "macos")]
     Buttonless,
     None,
-}
-
-impl Default for Decorations {
-    fn default() -> Decorations {
-        Decorations::Full
-    }
 }
 
 /// Window Dimensions.
@@ -165,15 +188,21 @@ pub struct Dimensions {
 }
 
 /// Window class hint.
-#[derive(Serialize, Debug, Clone, PartialEq, Eq)]
+#[derive(SerdeReplace, Serialize, Debug, Clone, PartialEq, Eq)]
 pub struct Class {
-    pub instance: String,
     pub general: String,
+    pub instance: String,
+}
+
+impl Class {
+    pub fn new(general: impl ToString, instance: impl ToString) -> Self {
+        Self { general: general.to_string(), instance: instance.to_string() }
+    }
 }
 
 impl Default for Class {
     fn default() -> Self {
-        Self { instance: DEFAULT_NAME.into(), general: DEFAULT_NAME.into() }
+        Self::new(DEFAULT_NAME, DEFAULT_NAME)
     }
 }
 

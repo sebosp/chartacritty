@@ -2,9 +2,9 @@
 
 use alacritty_terminal::ansi::CursorShape;
 use alacritty_terminal::term::color::Rgb;
-use alacritty_terminal::term::SizeInfo;
 
 use crate::display::content::RenderableCursor;
+use crate::display::SizeInfo;
 use crate::renderer::rects::RenderRect;
 
 /// Trait for conversion into the iterator.
@@ -22,7 +22,7 @@ impl IntoRects for RenderableCursor {
         let mut width = size_info.cell_width();
         let height = size_info.cell_height();
 
-        let thickness = (thickness * width as f32).round().max(1.);
+        let thickness = (thickness * width).round().max(1.);
 
         if self.is_wide() {
             width *= 2.;

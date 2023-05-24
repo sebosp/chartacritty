@@ -2,7 +2,7 @@ use std::fmt::{self, Display, Formatter};
 use std::path::{Path, PathBuf};
 use std::{env, fs, io};
 
-use log::{error, info};
+use log::{debug, error, info};
 use serde::Deserialize;
 use serde_yaml::mapping::Mapping;
 use serde_yaml::Value;
@@ -125,6 +125,8 @@ pub fn load(options: &Options) -> UiConfig {
 
 /// Attempt to reload the configuration file.
 pub fn reload(config_path: &Path, options: &Options) -> Result<UiConfig> {
+    debug!("Reloading configuration file: {:?}", config_path);
+
     // Load config, propagating errors.
     let config_options = options.config_options.clone();
     let mut config = load_from(config_path, config_options)?;
@@ -234,7 +236,7 @@ fn load_imports(config: &Value, config_paths: &mut Vec<PathBuf>, recursion_limit
         };
 
         // Resolve paths relative to user's home directory.
-        if let (Ok(stripped), Some(home_dir)) = (path.strip_prefix("~/"), dirs::home_dir()) {
+        if let (Ok(stripped), Some(home_dir)) = (path.strip_prefix("~/"), home::home_dir()) {
             path = home_dir.join(stripped);
         }
 

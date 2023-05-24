@@ -1,8 +1,5 @@
 //! TTY related functionality.
 
-use std::borrow::Cow;
-#[cfg(not(target_os = "macos"))]
-use std::env;
 use std::ffi::CStr;
 use std::fs::File;
 use std::io::{Error, ErrorKind, Result};
@@ -10,7 +7,7 @@ use std::mem::MaybeUninit;
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
-use std::ptr;
+use std::{env, ptr};
 
 use libc::{self, c_int, winsize, TIOCSCTTY};
 use log::error;
@@ -21,10 +18,8 @@ use nix::sys::termios::{self, InputFlags, SetArg};
 use signal_hook::consts as sigconsts;
 use signal_hook_mio::v0_6::Signals;
 
-use crate::config::{Program, PtyConfig};
-use crate::event::OnResize;
-use crate::grid::Dimensions;
-use crate::term::SizeInfo;
+use crate::config::PtyConfig;
+use crate::event::{OnResize, WindowSize};
 use crate::tty::{ChildEvent, EventedPty, EventedReadWrite};
 
 macro_rules! die {
@@ -35,14 +30,14 @@ macro_rules! die {
 }
 
 /// Get raw fds for master/slave ends of a new PTY.
-fn make_pty(size: winsize) -> (RawFd, RawFd) {
-    let mut win_size = size;
-    win_size.ws_xpixel = 0;
-    win_size.ws_ypixel = 0;
+fn make_pty(size: winsize) -> Result<(RawFd, RawFd)> {
+    let mut window_size = size;
+    window_size.ws_xpixel = 0;
+    window_size.ws_ypixel = 0;
 
-    let ends = openpty(Some(&win_size), None).expect("openpty failed");
+    let ends = openpty(Some(&window_size), None)?;
 
-    (ends.master, ends.slave)
+    Ok((ends.master, ends.slave))
 }
 
 /// Really only needed on BSD, but should be fine elsewhere.
@@ -73,7 +68,7 @@ struct Passwd<'a> {
 /// # Unsafety
 ///
 /// If `buf` is changed while `Passwd` is alive, bad thing will almost certainly happen.
-fn get_pw_entry(buf: &mut [i8; 1024]) -> Passwd<'_> {
+fn get_pw_entry(buf: &mut [i8; 1024]) -> Result<Passwd<'_>> {
     // Create zeroed passwd struct.
     let mut entry: MaybeUninit<libc::passwd> = MaybeUninit::uninit();
 
@@ -87,22 +82,22 @@ fn get_pw_entry(buf: &mut [i8; 1024]) -> Passwd<'_> {
     let entry = unsafe { entry.assume_init() };
 
     if status < 0 {
-        die!("getpwuid_r failed");
+        return Err(Error::new(ErrorKind::Other, "getpwuid_r failed"));
     }
 
     if res.is_null() {
-        die!("pw not found");
+        return Err(Error::new(ErrorKind::Other, "pw not found"));
     }
 
     // Sanity check.
     assert_eq!(entry.pw_uid, uid);
 
     // Build a borrowed Passwd struct.
-    Passwd {
+    Ok(Passwd {
         name: unsafe { CStr::from_ptr(entry.pw_name).to_str().unwrap() },
         dir: unsafe { CStr::from_ptr(entry.pw_dir).to_str().unwrap() },
         shell: unsafe { CStr::from_ptr(entry.pw_shell).to_str().unwrap() },
-    }
+    })
 }
 
 pub struct Pty {
@@ -123,22 +118,76 @@ impl Pty {
     }
 }
 
-#[cfg(target_os = "macos")]
-fn default_shell(pw: &Passwd<'_>) -> Program {
-    let shell_name = pw.shell.rsplit('/').next().unwrap();
-    let argv = vec![String::from("-c"), format!("exec -a -{} {}", shell_name, pw.shell)];
+/// User information that is required for a new shell session.
+struct ShellUser {
+    user: String,
+    home: String,
+    shell: String,
+}
 
-    Program::WithArgs { program: "/bin/bash".to_owned(), args: argv }
+impl ShellUser {
+    /// look for shell, username, longname, and home dir in the respective environment variables
+    /// before falling back on looking in to `passwd`.
+    fn from_env() -> Result<Self> {
+        let mut buf = [0; 1024];
+        let pw = get_pw_entry(&mut buf);
+
+        let user = match env::var("USER") {
+            Ok(user) => user,
+            Err(_) => match pw {
+                Ok(ref pw) => pw.name.to_owned(),
+                Err(err) => return Err(err),
+            },
+        };
+
+        let home = match env::var("HOME") {
+            Ok(home) => home,
+            Err(_) => match pw {
+                Ok(ref pw) => pw.dir.to_owned(),
+                Err(err) => return Err(err),
+            },
+        };
+
+        let shell = match env::var("SHELL") {
+            Ok(shell) => shell,
+            Err(_) => match pw {
+                Ok(ref pw) => pw.shell.to_owned(),
+                Err(err) => return Err(err),
+            },
+        };
+
+        Ok(Self { user, home, shell })
+    }
 }
 
 #[cfg(not(target_os = "macos"))]
-fn default_shell(pw: &Passwd<'_>) -> Program {
-    Program::Just(env::var("SHELL").unwrap_or_else(|_| pw.shell.to_owned()))
+fn default_shell_command(shell: &str, _user: &str) -> Command {
+    Command::new(shell)
+}
+
+#[cfg(target_os = "macos")]
+fn default_shell_command(shell: &str, user: &str) -> Command {
+    let shell_name = shell.rsplit('/').next().unwrap();
+
+    // On macOS, use the `login` command so the shell will appear as a tty session.
+    let mut login_command = Command::new("/usr/bin/login");
+
+    // Exec the shell with argv[0] prepended by '-' so it becomes a login shell.
+    // `login` normally does this itself, but `-l` disables this.
+    let exec = format!("exec -a -{} {}", shell_name, shell);
+
+    // -f: Bypasses authentication for the already-logged-in user.
+    // -l: Skips changing directory to $HOME and prepending '-' to argv[0].
+    // -p: Preserves the environment.
+    //
+    // XXX: we use zsh here over sh due to `exec -a`.
+    login_command.args(["-flp", user, "/bin/zsh", "-c", &exec]);
+    login_command
 }
 
 /// Create a new TTY and return a handle to interact with it.
-pub fn new(config: &PtyConfig, size: &SizeInfo, window_id: Option<usize>) -> Result<Pty> {
-    let (master, slave) = make_pty(size.to_winsize());
+pub fn new(config: &PtyConfig, window_size: WindowSize, window_id: u64) -> Result<Pty> {
+    let (master, slave) = make_pty(window_size.to_winsize())?;
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     if let Ok(mut termios) = termios::tcgetattr(master) {
@@ -147,18 +196,15 @@ pub fn new(config: &PtyConfig, size: &SizeInfo, window_id: Option<usize>) -> Res
         let _ = termios::tcsetattr(master, SetArg::TCSANOW, &termios);
     }
 
-    let mut buf = [0; 1024];
-    let pw = get_pw_entry(&mut buf);
+    let user = ShellUser::from_env()?;
 
-    let shell = match config.shell.as_ref() {
-        Some(shell) => Cow::Borrowed(shell),
-        None => Cow::Owned(default_shell(&pw)),
+    let mut builder = if let Some(shell) = config.shell.as_ref() {
+        let mut cmd = Command::new(shell.program());
+        cmd.args(shell.args());
+        cmd
+    } else {
+        default_shell_command(&user.shell, &user.user)
     };
-
-    let mut builder = Command::new(shell.program());
-    for arg in shell.args() {
-        builder.arg(arg);
-    }
 
     // Setup child stdin/stdout/stderr as slave fd of PTY.
     // Ownership of fd is transferred to the Stdio structs and will be closed by them at the end of
@@ -169,17 +215,13 @@ pub fn new(config: &PtyConfig, size: &SizeInfo, window_id: Option<usize>) -> Res
     builder.stdout(unsafe { Stdio::from_raw_fd(slave) });
 
     // Setup shell environment.
-    builder.env("LOGNAME", pw.name);
-    builder.env("USER", pw.name);
-    builder.env("HOME", pw.dir);
+    let window_id = window_id.to_string();
+    builder.env("ALACRITTY_WINDOW_ID", &window_id);
+    builder.env("USER", user.user);
+    builder.env("HOME", user.home);
 
-    // Set $SHELL environment variable on macOS, since login does not do it for us.
-    #[cfg(target_os = "macos")]
-    builder.env("SHELL", config.shell.as_ref().map(|sh| sh.program()).unwrap_or(pw.shell));
-
-    if let Some(window_id) = window_id {
-        builder.env("WINDOWID", format!("{}", window_id));
-    }
+    // Set Window ID for clients relying on X11 hacks.
+    builder.env("WINDOWID", window_id);
 
     unsafe {
         builder.pre_exec(move || {
@@ -212,7 +254,7 @@ pub fn new(config: &PtyConfig, size: &SizeInfo, window_id: Option<usize>) -> Res
     }
 
     // Prepare signal handling before spawning child.
-    let signals = Signals::new(&[sigconsts::SIGCHLD]).expect("error preparing signal handling");
+    let signals = Signals::new([sigconsts::SIGCHLD]).expect("error preparing signal handling");
 
     match builder.spawn() {
         Ok(child) => {
@@ -229,12 +271,16 @@ pub fn new(config: &PtyConfig, size: &SizeInfo, window_id: Option<usize>) -> Res
                 signals,
                 signals_token: mio::Token::from(0),
             };
-            pty.on_resize(size);
+            pty.on_resize(window_size);
             Ok(pty)
         },
         Err(err) => Err(Error::new(
-            ErrorKind::NotFound,
-            format!("Failed to spawn command '{}': {}", shell.program(), err),
+            err.kind(),
+            format!(
+                "Failed to spawn command '{}': {}",
+                builder.get_program().to_string_lossy(),
+                err
+            ),
         )),
     }
 }
@@ -347,8 +393,8 @@ impl OnResize for Pty {
     ///
     /// Tells the kernel that the window size changed with the new pixel
     /// dimensions and line/column counts.
-    fn on_resize(&mut self, size: &SizeInfo) {
-        let win = size.to_winsize();
+    fn on_resize(&mut self, window_size: WindowSize) {
+        let win = window_size.to_winsize();
 
         let res = unsafe { libc::ioctl(self.file.as_raw_fd(), libc::TIOCSWINSZ, &win as *const _) };
 
@@ -361,17 +407,17 @@ impl OnResize for Pty {
 /// Types that can produce a `libc::winsize`.
 pub trait ToWinsize {
     /// Get a `libc::winsize`.
-    fn to_winsize(&self) -> winsize;
+    fn to_winsize(self) -> winsize;
 }
 
-impl<'a> ToWinsize for &'a SizeInfo {
-    fn to_winsize(&self) -> winsize {
-        winsize {
-            ws_row: self.screen_lines() as libc::c_ushort,
-            ws_col: self.columns() as libc::c_ushort,
-            ws_xpixel: self.width() as libc::c_ushort,
-            ws_ypixel: self.height() as libc::c_ushort,
-        }
+impl ToWinsize for WindowSize {
+    fn to_winsize(self) -> winsize {
+        let ws_row = self.num_lines as libc::c_ushort;
+        let ws_col = self.num_cols as libc::c_ushort;
+
+        let ws_xpixel = ws_col * self.cell_width as libc::c_ushort;
+        let ws_ypixel = ws_row * self.cell_height as libc::c_ushort;
+        winsize { ws_row, ws_col, ws_xpixel, ws_ypixel }
     }
 }
 
@@ -385,5 +431,5 @@ unsafe fn set_nonblocking(fd: c_int) {
 #[test]
 fn test_get_pw_entry() {
     let mut buf: [i8; 1024] = [0; 1024];
-    let _pw = get_pw_entry(&mut buf);
+    let _pw = get_pw_entry(&mut buf).unwrap();
 }

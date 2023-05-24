@@ -6,7 +6,7 @@ use hyper::client::connect::HttpConnector;
 use hyper::Client;
 use hyper_tls::HttpsConnector;
 use log::*;
-use percent_encoding::{utf8_percent_encode, DEFAULT_ENCODE_SET};
+use percent_encoding::{utf8_percent_encode, CONTROLS};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, UNIX_EPOCH};
@@ -218,7 +218,7 @@ impl PrometheusTimeSeries {
         let url_base_path = url_parts[0];
         // XXX: We only support one input param
         let url_param = url_parts[1..].join("");
-        let encoded_url_param = utf8_percent_encode(&url_param, DEFAULT_ENCODE_SET).to_string();
+        let encoded_url_param = utf8_percent_encode(&url_param, CONTROLS).to_string();
         let mut encoded_url = format!("{}?{}", url_base_path, encoded_url_param);
         // If this is a query_range, we need to add time range
         if encoded_url.contains("/api/v1/query_range?") {
@@ -348,8 +348,8 @@ impl PrometheusTimeSeries {
 pub async fn get_from_prometheus(
     url: hyper::Uri,
     connect_timeout: Option<Duration>,
-) -> Result<hyper::body::Bytes, (hyper::Uri, hyper::error::Error)> {
-    info!("get_from_prometheus: Loading Prometheus URL: {}", url);
+) -> Result<hyper::body::Bytes, (hyper::Uri, hyper::Error)> {
+    debug!("get_from_prometheus: Loading Prometheus URL: {}", url);
     let request = if url.scheme() == Some(&hyper::http::uri::Scheme::HTTP) {
         Client::builder()
             .pool_idle_timeout(connect_timeout) // Is this the same as connect_timeout in Client?
@@ -377,7 +377,7 @@ pub async fn get_from_prometheus(
 /// `parse_json` transforms a hyper body chunk into a possible
 /// PrometheusResponse, mostly used for testing
 pub fn parse_json(url: &str, body: &hyper::body::Bytes) -> Option<HTTPResponse> {
-    let prom_res: Result<HTTPResponse, serde_json::Error> = serde_json::from_slice(&body);
+    let prom_res: Result<HTTPResponse, serde_json::Error> = serde_json::from_slice(body);
     match prom_res {
         Ok(v) => {
             debug!("parse_json for '{}': returned JSON={:?}", url, v);
@@ -422,7 +422,7 @@ mod tests {
             String::from("matrix"),
             HashMap::new(),
         );
-        assert_eq!(test0_res.is_ok(), true);
+        assert!(test0_res.is_ok());
         // A json returned by prometheus
         let test0_json = hyper::body::Bytes::from(
             r#"
@@ -434,10 +434,10 @@ mod tests {
             "#,
         );
         let res0_json = parse_json(&String::from("http://test"), &test0_json);
-        assert_eq!(res0_json.is_none(), true);
+        assert!(res0_json.is_none());
         let test1_json = hyper::body::Bytes::from("Internal Server Error");
         let res1_json = parse_json(&String::from("http://test"), &test1_json);
-        assert_eq!(res1_json.is_none(), true);
+        assert!(res1_json.is_none());
     }
 
     #[test]
@@ -448,7 +448,7 @@ mod tests {
             String::from("scalar"),
             HashMap::new(),
         );
-        assert_eq!(test0_res.is_ok(), true);
+        assert!(test0_res.is_ok());
         let mut test0 = test0_res.unwrap();
         // A json returned by prometheus
         let test0_json = hyper::body::Bytes::from(
@@ -461,7 +461,7 @@ mod tests {
             }"#,
         );
         let res0_json = parse_json(&String::from("http://test"), &test0_json);
-        assert_eq!(res0_json.is_some(), true);
+        assert!(res0_json.is_some());
         let res0_load = test0.load_prometheus_response(res0_json.unwrap());
         // 1 items should have been loaded
         assert_eq!(res0_load, Ok(1usize));
@@ -476,7 +476,7 @@ mod tests {
             }"#,
         );
         let res1_json = parse_json(&String::from("http://test"), &test1_json);
-        assert_eq!(res1_json.is_some(), true);
+        assert!(res1_json.is_some());
         let res1_load = test0.load_prometheus_response(res1_json.unwrap());
         // 0 items should have been loaded, because there's no value
         assert_eq!(res1_load, Ok(0usize));
@@ -491,7 +491,7 @@ mod tests {
             String::from("matrix"),
             HashMap::new()
         );
-        assert_eq!(test0_res.is_ok(), true);
+        assert!(test0_res.is_ok());
         let mut test0 = test0_res.unwrap();
         // Let's create space for 15, but we will receive 11 records:
         test0.series = test0.series.with_capacity(15usize);
@@ -520,7 +520,7 @@ mod tests {
             }"#,
         );
         let res0_json = parse_json(&String::from("http://test"), &test0_json);
-        assert_eq!(res0_json.is_some(), true);
+        assert!(res0_json.is_some());
         let res0_load = test0.load_prometheus_response(res0_json.unwrap());
         // 11 items should have been loaded in the node_exporter
         assert_eq!(res0_load, Ok(11usize));
@@ -557,7 +557,7 @@ mod tests {
             }"#,
         );
         let res1_json = parse_json(&String::from("http://test"), &test1_json);
-        assert_eq!(res1_json.is_some(), true);
+        assert!(res1_json.is_some());
         debug!("it_loads_prometheus_matrix NOTVEC: {:?}", test0.series.metrics);
         let loaded_data = test0.series.as_vec();
         debug!("it_loads_prometheus_matrix Data: {:?}", loaded_data);
@@ -599,7 +599,7 @@ mod tests {
             }"#,
         );
         let res2_json = parse_json(&String::from("http://test"), &test2_json);
-        assert_eq!(res2_json.is_some(), true);
+        assert!(res2_json.is_some());
         let res2_load = test0.load_prometheus_response(res2_json.unwrap());
         // 0 items should have been loaded, missing metric after epoch.
         assert_eq!(res2_load, Ok(0usize));
@@ -614,7 +614,7 @@ mod tests {
             String::from("vector"),
             metric_labels,
         );
-        assert_eq!(test0_res.is_ok(), true);
+        assert!(test0_res.is_ok());
         let mut test0 = test0_res.unwrap();
         let test1_json = hyper::body::Bytes::from(
             r#"
@@ -661,7 +661,7 @@ mod tests {
             }"#,
         );
         let res1_json = parse_json(&String::from("http://test"), &test1_json);
-        assert_eq!(res1_json.is_some(), true);
+        assert!(res1_json.is_some());
         let res1_load = test0.load_prometheus_response(res1_json.unwrap());
         // 1 items should have been loaded
         assert_eq!(res1_load, Ok(24usize));
@@ -716,7 +716,7 @@ mod tests {
             String::from("vector"),
             metric_labels.clone(),
         );
-        assert_eq!(test0_res.is_ok(), true);
+        assert!(test0_res.is_ok());
         let mut test0 = test0_res.unwrap();
         // A json returned by prometheus
         let test0_json = hyper::body::Bytes::from(
@@ -753,7 +753,7 @@ mod tests {
             }"#,
         );
         let res0_json = parse_json(&String::from("http://test"), &test0_json);
-        assert_eq!(res0_json.is_some(), true);
+        assert!(res0_json.is_some());
         let res0_load = test0.load_prometheus_response(res0_json.unwrap());
         // 2 items should have been loaded, one for Prometheus Server and the
         // other for Prometheus Node Exporter
@@ -797,7 +797,7 @@ mod tests {
             }"#,
         );
         let res1_json = parse_json(&String::from("http://test"), &test1_json);
-        assert_eq!(res1_json.is_some(), true);
+        assert!(res1_json.is_some());
 
         // Make the labels match only one instance
         metric_labels.insert(String::from("job"), String::from("prometheus"));
@@ -846,7 +846,7 @@ mod tests {
             }"#,
         );
         let res2_json = parse_json(&String::from("http://test"), &test2_json);
-        assert_eq!(res2_json.is_some(), true);
+        assert!(res2_json.is_some());
         // Make the labels not match
         metric_labels.insert(String::from("__name__"), String::from("down"));
         test0.required_labels = metric_labels;
@@ -880,7 +880,7 @@ mod tests {
             }"#,
         );
         let res3_json = parse_json(&String::from("http://test"), &test3_json);
-        assert_eq!(res3_json.is_some(), true);
+        assert!(res3_json.is_some());
         let res3_load = test0.load_prometheus_response(res3_json.unwrap());
         // 0 items should have been loaded, the data is invalid
         assert_eq!(res3_load, Ok(0usize));
@@ -910,11 +910,11 @@ mod tests {
             String::from("vector"),
             test_labels.clone(),
         );
-        assert_eq!(test1_res.is_ok(), true);
+        assert!(test1_res.is_ok());
         let test1 = test1_res.unwrap();
         let res1_get = tokio::try_join!(get_from_prometheus(test1.url.clone(), None));
         println!("get_from_prometheus: {:?}", res1_get);
-        assert_eq!(res1_get.is_ok(), true);
+        assert!(res1_get.is_ok());
         if let Some(prom_response) = parse_json(&String::from("http://test"), &res1_get.unwrap().0)
         {
             // This requires a Prometheus Server running locally
@@ -937,7 +937,7 @@ mod tests {
                     }
                 }
             }
-            assert_eq!(found_prometheus_job_metric, true);
+            assert!(found_prometheus_job_metric);
         }
     }
 
@@ -1017,7 +1017,7 @@ mod tests {
           }"#,
         );
         let res1_json = parse_json(&String::from("http://test"), &test1_json);
-        assert_eq!(res1_json.is_some(), true);
+        assert!(res1_json.is_some());
         let res1_load = test.load_prometheus_response(res1_json.unwrap());
         // 5 items should have been loaded, 5 already existed.
         assert_eq!(res1_load, Ok(5usize));
@@ -1400,7 +1400,7 @@ mod tests {
           }"#,
         );
         let res1_json = parse_json(&String::from("http://test"), &test1_json);
-        assert_eq!(res1_json.is_some(), true);
+        assert!(res1_json.is_some());
         let res1_load = test.load_prometheus_response(res1_json.unwrap());
         assert_eq!(res1_load, Ok(2usize));
         assert_eq!(test.series.active_items, 3usize);

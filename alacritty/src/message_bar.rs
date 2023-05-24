@@ -3,7 +3,8 @@ use std::collections::VecDeque;
 use unicode_width::UnicodeWidthChar;
 
 use alacritty_terminal::grid::Dimensions;
-use alacritty_terminal::term::SizeInfo;
+
+use crate::display::SizeInfo;
 
 pub const CLOSE_BUTTON_TEXT: &str = "[X]";
 const CLOSE_BUTTON_PADDING: usize = 1;
@@ -180,13 +181,19 @@ impl MessageBuffer {
     pub fn push(&mut self, message: Message) {
         self.messages.push_back(message);
     }
+
+    /// Check whether the message is already queued in the message bar.
+    #[inline]
+    pub fn is_queued(&self, message: &Message) -> bool {
+        self.messages.contains(message)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use alacritty_terminal::term::SizeInfo;
+    use crate::display::SizeInfo;
 
     #[test]
     fn appends_close_button() {

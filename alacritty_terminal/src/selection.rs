@@ -16,7 +16,7 @@ use crate::term::cell::{Cell, Flags};
 use crate::term::Term;
 
 /// A Point and side within that point.
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 struct Anchor {
     point: Point,
     side: Side,
@@ -41,6 +41,7 @@ pub struct SelectionRange {
 
 impl SelectionRange {
     pub fn new(start: Point, end: Point, is_block: bool) -> Self {
+        assert!(start <= end);
         Self { start, end, is_block }
     }
 }
@@ -88,7 +89,7 @@ impl SelectionRange {
 }
 
 /// Different kinds of selection.
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum SelectionType {
     Simple,
     Block,
@@ -114,7 +115,7 @@ pub enum SelectionType {
 /// [`semantic`]: enum.Selection.html#method.semantic
 /// [`lines`]: enum.Selection.html#method.lines
 /// [`update`]: enum.Selection.html#method.update
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Selection {
     pub ty: SelectionType,
     region: Range<Anchor>,
@@ -235,13 +236,13 @@ impl Selection {
         let range_top = match range.start_bound() {
             Bound::Included(&range_start) => range_start,
             Bound::Excluded(&range_start) => range_start + 1,
-            Bound::Unbounded => Line(i32::min_value()),
+            Bound::Unbounded => Line(i32::MIN),
         };
 
         let range_bottom = match range.end_bound() {
             Bound::Included(&range_end) => range_end,
             Bound::Excluded(&range_end) => range_end - 1,
-            Bound::Unbounded => Line(i32::max_value()),
+            Bound::Unbounded => Line(i32::MAX),
         };
 
         range_bottom >= start && range_top <= end
@@ -297,7 +298,7 @@ impl Selection {
         if start == end {
             if let Some(matching) = term.bracket_search(start) {
                 if (matching.line == start.line && matching.column < start.column)
-                    || (matching.line > start.line)
+                    || (matching.line < start.line)
                 {
                     start = matching;
                 } else {
@@ -396,11 +397,12 @@ mod tests {
 
     use crate::config::Config;
     use crate::index::{Column, Point, Side};
-    use crate::term::{SizeInfo, Term};
+    use crate::term::test::TermSize;
+    use crate::term::Term;
 
     fn term(height: usize, width: usize) -> Term<()> {
-        let size = SizeInfo::new(width as f32, height as f32, 1.0, 1.0, 0.0, 0.0, false);
-        Term::new(&Config::default(), size, ())
+        let size = TermSize::new(width, height);
+        Term::new(&Config::default(), &size, ())
     }
 
     /// Test case of single cell selection.
