@@ -3,11 +3,11 @@
 use std::fmt::{self, Debug, Display};
 
 use bitflags::bitflags;
-use glutin::event::VirtualKeyCode::*;
-use glutin::event::{ModifiersState, MouseButton, VirtualKeyCode};
 use serde::de::{self, Error as SerdeError, MapAccess, Unexpected, Visitor};
 use serde::{Deserialize, Deserializer};
 use serde_yaml::Value as SerdeValue;
+use winit::event::VirtualKeyCode::*;
+use winit::event::{ModifiersState, MouseButton, VirtualKeyCode};
 
 use alacritty_config_derive::{ConfigDeserialize, SerdeReplace};
 
@@ -717,7 +717,7 @@ pub fn platform_key_bindings() -> Vec<KeyBinding> {
             Action::Esc("\x0c".into());
         K, ModifiersState::LOGO, ~BindingMode::VI, ~BindingMode::SEARCH;  Action::ClearHistory;
         V, ModifiersState::LOGO, ~BindingMode::VI; Action::Paste;
-        N, ModifiersState::LOGO; Action::SpawnNewInstance;
+        N, ModifiersState::LOGO; Action::CreateNewWindow;
         F, ModifiersState::CTRL | ModifiersState::LOGO; Action::ToggleFullscreen;
         C, ModifiersState::LOGO; Action::Copy;
         C, ModifiersState::LOGO, +BindingMode::VI, ~BindingMode::SEARCH; Action::ClearSelection;
@@ -767,6 +767,7 @@ pub struct ModeWrapper {
 
 bitflags! {
     /// Modes available for key bindings.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct BindingMode: u8 {
         const APP_CURSOR          = 0b0000_0001;
         const APP_KEYPAD          = 0b0000_0010;
@@ -1117,26 +1118,8 @@ impl<'a> Deserialize<'a> for RawBinding {
 
                 let action = match (action, chars, command) {
                     (Some(action @ Action::ViMotion(_)), None, None)
-                    | (Some(action @ Action::Vi(_)), None, None) => {
-                        if !mode.intersects(BindingMode::VI) || not_mode.intersects(BindingMode::VI)
-                        {
-                            return Err(V::Error::custom(format!(
-                                "action `{}` is only available in vi mode, try adding `mode: Vi`",
-                                action,
-                            )));
-                        }
-                        action
-                    },
-                    (Some(action @ Action::Search(_)), None, None) => {
-                        if !mode.intersects(BindingMode::SEARCH) {
-                            return Err(V::Error::custom(format!(
-                                "action `{}` is only available in search mode, try adding `mode: \
-                                 Search`",
-                                action,
-                            )));
-                        }
-                        action
-                    },
+                    | (Some(action @ Action::Vi(_)), None, None) => action,
+                    (Some(action @ Action::Search(_)), None, None) => action,
                     (Some(action @ Action::Mouse(_)), None, None) => {
                         if mouse.is_none() {
                             return Err(V::Error::custom(format!(
@@ -1190,7 +1173,7 @@ impl<'a> Deserialize<'a> for KeyBinding {
     }
 }
 
-/// Newtype for implementing deserialize on glutin Mods.
+/// Newtype for implementing deserialize on winit Mods.
 ///
 /// Our deserialize impl wouldn't be covered by a derive(Deserialize); see the
 /// impl below.
@@ -1245,7 +1228,7 @@ impl<'a> de::Deserialize<'a> for ModsWrapper {
 mod tests {
     use super::*;
 
-    use glutin::event::ModifiersState;
+    use winit::event::ModifiersState;
 
     type MockBinding = Binding<usize>;
 

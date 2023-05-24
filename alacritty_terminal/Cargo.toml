@@ -1,39 +1,36 @@
 [package]
 name = "alacritty_terminal"
-version = "0.17.1-dev"
+version = "0.19.1-dev"
 authors = ["Christian Duerr <contact@christianduerr.com>", "Joe Wilm <joe@jwilm.com>"]
 license = "Apache-2.0"
 description = "Library for writing terminal emulators"
 readme = "../README.md"
 homepage = "https://github.com/alacritty/alacritty"
 edition = "2021"
-rust-version = "1.59.0"
+rust-version = "1.65.0"
 
 [dependencies.alacritty_config_derive]
 path = "../alacritty_config_derive"
-version = "0.2.1-dev"
+version = "0.2.2-dev"
 
 [dependencies.alacritty_config]
 path = "../alacritty_config"
-version = "0.1.1-dev"
+version = "0.1.2-dev"
 
 [dependencies.nannou]
 git = "https://github.com/sebosp/nannou"
 version = "0.18"
 
 [dependencies]
+base64 = "0.13.0"
+bitflags = { version = "2.2.1", features = ["serde"] }
+home = "0.5.5"
 libc = "0.2"
-bitflags = "1"
-parking_lot = "0.12.0"
-serde = { version = "1", features = ["derive", "rc"] }
-serde_yaml = "0.8"
-vte = { version = "0.10.0", default-features = false }
+log = "0.4"
 mio = "0.6.20"
 mio-extras = "2"
-log = "0.4"
-unicode-width = "0.1"
-tokio = { version = "1.2", features = ["full"] }
-futures = "0.3.25"
+tokio = { version = "1.28", features = ["full"] }
+futures = "0.3.28"
 hyper = { version = "0.14", features = ["full"] }
 hyper-tls = "0.5"
 serde_derive = "1.0"
@@ -41,23 +38,26 @@ serde_json = "1"
 env_logger = "0.7"
 tracing = { version = "0.1", features = ["log", "log-always"] }
 tracing-log = { version = "0.1", features = ["env_logger"]}
-percent-encoding = "1.0.1"
-rand = "0.7.3"
-base64 = "0.13.0"
-regex-automata = "0.1.9"
-dirs = "4.0.0"
+percent-encoding = "2.2"
+rand = "0.8.5"
 lyon = "0.17"
 chrono = { version = "0.4", features = [ "serde" ] }
 moon-phase = "0.1.0"
+parking_lot = "0.12.0"
+regex-automata = "0.1.9"
+serde = { version = "1", features = ["derive", "rc"] }
+serde_yaml = "0.8"
+unicode-width = "0.1"
+vte = { version = "0.11.1", default-features = false, features = ["ansi", "serde"] }
 
 [target.'cfg(unix)'.dependencies]
-nix = "0.24.1"
+nix = { version = "0.26.2", default-features = false, features = ["term"] }
 signal-hook = "0.3.10"
 signal-hook-mio = { version = "0.2.1", features = ["support-v0_6"] }
 
 [target.'cfg(windows)'.dependencies]
-miow = "0.3"
 mio-anonymous-pipes = "0.2"
+miow = "0.3"
 windows-sys = { version = "0.36", features = [
     "Win32_System_Console",
     "Win32_Foundation",

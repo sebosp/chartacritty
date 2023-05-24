@@ -1,24 +1,24 @@
 [package]
 name = "alacritty_config_derive"
-version = "0.2.1-dev"
+version = "0.2.2-dev"
 authors = ["Christian Duerr <contact@christianduerr.com>"]
 license = "MIT/Apache-2.0"
 description = "Failure resistant deserialization derive"
 homepage = "https://github.com/alacritty/alacritty"
 edition = "2021"
-rust-version = "1.59.0"
+rust-version = "1.65.0"
 
 [lib]
 proc-macro = true
 
 [dependencies]
-syn = { version = "1.0.53", features = ["derive", "parsing", "proc-macro", "printing"], default-features = false }
+syn = { version = "2.0.16", features = ["derive", "parsing", "proc-macro", "printing"], default-features = false }
 proc-macro2 = "1.0.24"
 quote = "1.0.7"
 
 [dev-dependencies.alacritty_config]
 path = "../alacritty_config"
-version = "0.1.1-dev"
+version = "0.1.2-dev"
 
 [dev-dependencies]
 serde = { version = "1.0.117", features = ["derive"] }

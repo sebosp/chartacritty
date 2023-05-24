@@ -354,13 +354,14 @@ where
 
             'event_loop: loop {
                 // Wakeup the event loop when a synchronized update timeout was reached.
-                let sync_timeout = state.parser.sync_timeout();
-                let timeout = sync_timeout.map(|st| st.saturating_duration_since(Instant::now()));
+                let handler = state.parser.sync_timeout();
+                let timeout =
+                    handler.sync_timeout().map(|st| st.saturating_duration_since(Instant::now()));
 
                 if let Err(err) = self.poll.poll(&mut events, timeout) {
                     match err.kind() {
                         ErrorKind::Interrupted => continue,
-                        _ => panic!("EventLoop polling error: {:?}", err),
+                        _ => panic!("EventLoop polling error: {err:?}"),
                     }
                 }
 

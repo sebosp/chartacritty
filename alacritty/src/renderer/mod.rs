@@ -1,9 +1,12 @@
 use std::collections::HashSet;
-use std::ffi::CStr;
-use std::fmt;
+use std::ffi::{CStr, CString};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::{fmt, ptr};
 
 use crossfont::Metrics;
-use log::info;
+use glutin::context::{ContextApi, GlContext, PossiblyCurrentContext};
+use glutin::display::{GetGlDisplay, GlDisplay};
+use log::{debug, error, info, warn, LevelFilter};
 use once_cell::sync::OnceCell;
 
 use alacritty_terminal::decorations::NannouDrawArrayMode;
@@ -11,6 +14,7 @@ use alacritty_terminal::index::Point;
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::color::Rgb;
 
+use crate::config::debug::RendererPreference;
 use crate::display::content::RenderableCell;
 use crate::display::SizeInfo;
 use crate::gl;
@@ -21,6 +25,7 @@ use crate::renderer::shader::ShaderError;
 
 pub mod charts;
 pub mod hex_bg;
+pub mod platform;
 pub mod rects;
 mod shader;
 mod text;
@@ -37,6 +42,9 @@ macro_rules! cstr {
     };
 }
 pub(crate) use cstr;
+
+/// Whether the OpenGL functions have been loaded.
+pub static GL_FUNS_LOADED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug)]
 pub enum Error {
@@ -131,29 +139,66 @@ impl Renderer {
     ///
     /// This will automatically pick between the GLES2 and GLSL3 renderer based on the GPU's
     /// supported OpenGL version.
-    pub fn new() -> Result<Self, Error> {
-        let (version, renderer) = unsafe {
-            let renderer = CStr::from_ptr(gl::GetString(gl::RENDERER) as *mut _);
-            let version = CStr::from_ptr(gl::GetString(gl::SHADING_LANGUAGE_VERSION) as *mut _);
-            (version.to_string_lossy(), renderer.to_string_lossy())
+    pub fn new(
+        context: &PossiblyCurrentContext,
+        renderer_prefernce: Option<RendererPreference>,
+    ) -> Result<Self, Error> {
+        // We need to load OpenGL functions once per instance, but only after we make our context
+        // current due to WGL limitations.
+        if !GL_FUNS_LOADED.swap(true, Ordering::Relaxed) {
+            let gl_display = context.display();
+            gl::load_with(|symbol| {
+                let symbol = CString::new(symbol).unwrap();
+                gl_display.get_proc_address(symbol.as_c_str()).cast()
+            });
+        }
+
+        let (shader_version, gl_version, renderer) = unsafe {
+            let renderer = CStr::from_ptr(gl::GetString(gl::RENDERER) as *mut _).to_string_lossy();
+            let shader_version =
+                CStr::from_ptr(gl::GetString(gl::SHADING_LANGUAGE_VERSION) as *mut _)
+                    .to_string_lossy();
+            let gl_version = CStr::from_ptr(gl::GetString(gl::VERSION) as *mut _).to_string_lossy();
+            (shader_version, gl_version, renderer)
         };
 
-        info!("Running on {}", renderer);
+        info!("Running on {renderer}");
+        info!("OpenGL version {gl_version}, shader_version {shader_version}");
 
-        let (text_renderer, rect_renderer, chart_renderer, hex_bg_renderer) =
-            if version.as_ref() >= "3.3" {
-                let text_renderer = TextRendererProvider::Glsl3(Glsl3Renderer::new()?);
-                let rect_renderer = RectRenderer::new(ShaderVersion::Glsl3)?;
-                let chart_renderer = ChartRenderer::new(ShaderVersion::Glsl3)?;
-                let hex_bg_renderer = HexBgRenderer::new(ShaderVersion::Glsl3)?;
-                (text_renderer, rect_renderer, chart_renderer, hex_bg_renderer)
-            } else {
-                let text_renderer = TextRendererProvider::Gles2(Gles2Renderer::new()?);
-                let rect_renderer = RectRenderer::new(ShaderVersion::Gles2)?;
-                let chart_renderer = ChartRenderer::new(ShaderVersion::Gles2)?;
-                let hex_bg_renderer = HexBgRenderer::new(ShaderVersion::Gles2)?;
-                (text_renderer, rect_renderer, chart_renderer, hex_bg_renderer)
-            };
+        let is_gles_context = matches!(context.context_api(), ContextApi::Gles(_));
+
+        // Use the config option to enforce a particular renderer configuration.
+        let (use_glsl3, allow_dsb) = match renderer_prefernce {
+            Some(RendererPreference::Glsl3) => (true, true),
+            Some(RendererPreference::Gles2) => (false, true),
+            Some(RendererPreference::Gles2Pure) => (false, false),
+            None => (shader_version.as_ref() >= "3.3" && !is_gles_context, true),
+        };
+
+        let (text_renderer, rect_renderer, chart_renderer, hex_bg_renderer) = if use_glsl3 {
+            let text_renderer = TextRendererProvider::Glsl3(Glsl3Renderer::new()?);
+            let rect_renderer = RectRenderer::new(ShaderVersion::Glsl3)?;
+            let chart_renderer = ChartRenderer::new(ShaderVersion::Glsl3)?;
+            let hex_bg_renderer = HexBgRenderer::new(ShaderVersion::Glsl3)?;
+            (text_renderer, rect_renderer, chart_renderer, hex_bg_renderer)
+        } else {
+            let text_renderer =
+                TextRendererProvider::Gles2(Gles2Renderer::new(allow_dsb, is_gles_context)?);
+            let rect_renderer = RectRenderer::new(ShaderVersion::Gles2)?;
+            let chart_renderer = ChartRenderer::new(ShaderVersion::Gles2)?;
+            let hex_bg_renderer = HexBgRenderer::new(ShaderVersion::Gles2)?;
+            (text_renderer, rect_renderer, chart_renderer, hex_bg_renderer)
+        };
+
+        // Enable debug logging for OpenGL as well.
+        if log::max_level() >= LevelFilter::Debug && GlExtensions::contains("GL_KHR_debug") {
+            debug!("Enabled debug logging for OpenGL");
+            unsafe {
+                gl::Enable(gl::DEBUG_OUTPUT);
+                gl::Enable(gl::DEBUG_OUTPUT_SYNCHRONOUS);
+                gl::DebugMessageCallback(Some(gl_debug_log), ptr::null_mut());
+            }
+        }
 
         Ok(Self { text_renderer, rect_renderer, chart_renderer, hex_bg_renderer })
     }
@@ -412,5 +457,24 @@ impl GlExtensions {
                 }
             }
         }
+    }
+}
+
+extern "system" fn gl_debug_log(
+    _: gl::types::GLenum,
+    kind: gl::types::GLenum,
+    _: gl::types::GLuint,
+    _: gl::types::GLenum,
+    _: gl::types::GLsizei,
+    msg: *const gl::types::GLchar,
+    _: *mut std::os::raw::c_void,
+) {
+    let msg = unsafe { CStr::from_ptr(msg).to_string_lossy() };
+    match kind {
+        gl::DEBUG_TYPE_ERROR | gl::DEBUG_TYPE_UNDEFINED_BEHAVIOR => {
+            error!("[gl_render] {}", msg)
+        },
+        gl::DEBUG_TYPE_DEPRECATED_BEHAVIOR => warn!("[gl_render] {}", msg),
+        _ => debug!("[gl_render] {}", msg),
     }
 }
