@@ -84,7 +84,7 @@ to build Alacritty. Here's an apt command that should install all of them. If
 something is still found to be missing, please open an issue.
 
 ```sh
-apt-get install cmake pkg-config libfreetype6-dev libfontconfig1-dev libxcb-xfixes0-dev libxkbcommon-dev python3
+apt install cmake pkg-config libfreetype6-dev libfontconfig1-dev libxcb-xfixes0-dev libxkbcommon-dev python3
 ```
 
 #### Arch Linux
@@ -378,7 +378,7 @@ echo "source ~/.bash_completion/alacritty" >> ~/.bashrc
 
 #### Fish
 
-To install the completions for fish, run
+To install the completions for fish, from inside the fish shell, run
 
 ```
 mkdir -p $fish_complete_path[1]

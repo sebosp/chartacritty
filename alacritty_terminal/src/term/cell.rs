@@ -3,13 +3,14 @@ use std::sync::Arc;
 
 use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
+use vte::ansi::Hyperlink as VteHyperlink;
 
 use crate::ansi::{Color, NamedColor};
 use crate::grid::{self, GridCell};
 use crate::index::Column;
 
 bitflags! {
-    #[derive(Serialize, Deserialize)]
+    #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct Flags: u16 {
         const INVERSE                   = 0b0000_0000_0000_0001;
         const BOLD                      = 0b0000_0000_0000_0010;
@@ -28,9 +29,9 @@ bitflags! {
         const UNDERCURL                 = 0b0001_0000_0000_0000;
         const DOTTED_UNDERLINE          = 0b0010_0000_0000_0000;
         const DASHED_UNDERLINE          = 0b0100_0000_0000_0000;
-        const ALL_UNDERLINES            = Self::UNDERLINE.bits | Self::DOUBLE_UNDERLINE.bits
-                                        | Self::UNDERCURL.bits | Self::DOTTED_UNDERLINE.bits
-                                        | Self::DASHED_UNDERLINE.bits;
+        const ALL_UNDERLINES            = Self::UNDERLINE.bits() | Self::DOUBLE_UNDERLINE.bits()
+                                        | Self::UNDERCURL.bits() | Self::DOTTED_UNDERLINE.bits()
+                                        | Self::DASHED_UNDERLINE.bits();
     }
 }
 
@@ -43,7 +44,7 @@ pub struct Hyperlink {
 }
 
 impl Hyperlink {
-    pub fn new<T: ToString>(id: Option<T>, uri: T) -> Self {
+    pub fn new<T: ToString>(id: Option<T>, uri: String) -> Self {
         let inner = Arc::new(HyperlinkInner::new(id, uri));
         Self { inner }
     }
@@ -57,6 +58,18 @@ impl Hyperlink {
     }
 }
 
+impl From<VteHyperlink> for Hyperlink {
+    fn from(value: VteHyperlink) -> Self {
+        Self::new(value.id, value.uri)
+    }
+}
+
+impl From<Hyperlink> for VteHyperlink {
+    fn from(val: Hyperlink) -> Self {
+        VteHyperlink { id: Some(val.id().to_owned()), uri: val.uri().to_owned() }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash)]
 struct HyperlinkInner {
     /// Identifier for the given hyperlink.
@@ -67,7 +80,7 @@ struct HyperlinkInner {
 }
 
 impl HyperlinkInner {
-    pub fn new<T: ToString>(id: Option<T>, uri: T) -> Self {
+    pub fn new<T: ToString>(id: Option<T>, uri: String) -> Self {
         let id = match id {
             Some(id) => id.to_string(),
             None => {
@@ -77,7 +90,7 @@ impl HyperlinkInner {
             },
         };
 
-        Self { id, uri: uri.to_string() }
+        Self { id, uri }
     }
 }
 

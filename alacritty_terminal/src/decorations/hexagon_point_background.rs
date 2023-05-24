@@ -58,7 +58,7 @@ impl Default for HexagonPointBackground {
         let start_animation_ms = epoch.as_secs_f32() + epoch.subsec_millis() as f32 / 1000f32;
         let animation_duration_ms = 2000f32;
         let mut res = HexagonPointBackground {
-            color: Rgb { r: 25, g: 88, b: 167 },
+            color: Rgb::new(25, 88, 167),
             alpha: 0.4f32,
             size_info: SizeInfo::default(),
             radius: 100f32,
@@ -134,7 +134,7 @@ impl HexagonPointBackground {
         let mut rng = rand::thread_rng();
         let mut current_vertex = 0;
         while current_vertex <= random_vertices_to_choose {
-            let new_vertex = rng.gen_range(0, total_hexagons);
+            let new_vertex = rng.gen_range(0..total_hexagons);
             if self.chosen_vertices.contains(&new_vertex) {
                 continue;
             }

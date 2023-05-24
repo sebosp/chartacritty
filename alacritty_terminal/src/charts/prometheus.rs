@@ -6,7 +6,7 @@ use hyper::client::connect::HttpConnector;
 use hyper::Client;
 use hyper_tls::HttpsConnector;
 use log::*;
-use percent_encoding::{utf8_percent_encode, DEFAULT_ENCODE_SET};
+use percent_encoding::{utf8_percent_encode, CONTROLS};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, UNIX_EPOCH};
@@ -218,7 +218,7 @@ impl PrometheusTimeSeries {
         let url_base_path = url_parts[0];
         // XXX: We only support one input param
         let url_param = url_parts[1..].join("");
-        let encoded_url_param = utf8_percent_encode(&url_param, DEFAULT_ENCODE_SET).to_string();
+        let encoded_url_param = utf8_percent_encode(&url_param, CONTROLS).to_string();
         let mut encoded_url = format!("{}?{}", url_base_path, encoded_url_param);
         // If this is a query_range, we need to add time range
         if encoded_url.contains("/api/v1/query_range?") {
