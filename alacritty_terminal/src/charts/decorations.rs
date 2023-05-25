@@ -30,22 +30,17 @@ use crate::term::color::Rgb;
 use serde::{Deserialize, Serialize};
 use tracing::{event, span, Level};
 /// `Decoration` contains several types of decorations to add to a chart
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[derive(Debug, Default, Serialize, Deserialize, PartialEq, Clone)]
 #[serde(tag = "type")]
 pub enum Decoration {
     #[serde(rename = "reference")]
     Reference(ReferencePointDecoration),
     #[serde(rename = "alert")]
     Alert(ActiveAlertUnderLineDecoration),
+    #[default]
     None,
     /* Maybe add Average, threshold coloring (turn line red after a certain
      * point) */
-}
-
-impl Default for Decoration {
-    fn default() -> Decoration {
-        Decoration::None
-    }
 }
 
 impl Decoration {
@@ -342,8 +337,9 @@ impl Decorate for ReferencePointDecoration {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[derive(Debug, Default, Serialize, Deserialize, PartialEq, Clone)]
 pub enum AlertComparator {
+    #[default]
     #[serde(rename = ">")]
     GreaterThan,
     #[serde(rename = ">=")]
@@ -354,12 +350,6 @@ pub enum AlertComparator {
     LessThanOrEqual,
     #[serde(rename = "=")]
     Equal,
-}
-
-impl Default for AlertComparator {
-    fn default() -> Self {
-        AlertComparator::GreaterThan
-    }
 }
 
 /// `ActiveAlertUnderLineDecoration` draws red triangles alert indicators

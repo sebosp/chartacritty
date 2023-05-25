@@ -101,18 +101,14 @@ impl DecorationsConfig {
 
 // TODO: Maybe we can change the <Type>(Decor<Type>) to simply Decor<Type>
 /// DecorationTypes Groups available decorations
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[derive(Debug, Default, Serialize, Deserialize, PartialEq, Clone)]
 #[serde(tag = "type", content = "props")]
 pub enum DecorationTypes {
     Lines(DecorationLines),
     Triangles(Box<DecorationTriangles>),
     Points(DecorationPoints),
+    #[default]
     None,
-}
-impl Default for DecorationTypes {
-    fn default() -> Self {
-        DecorationTypes::None
-    }
 }
 
 impl DecorationTypes {
@@ -326,7 +322,7 @@ fn find_hexagon_grid_center_idx(coords: &[Point3], size_info: SizeInfo, radius: 
     // hexagons may not be shown partially depending on the terminal size
     let y_hex_n = (total_height / hex_height).ceil() as usize;
     // total number of hexagons horizontally, in the grid, the number of them in X
-    let x_hex_n = (coords.len() / y_hex_n) as usize;
+    let x_hex_n = coords.len() / y_hex_n;
     let mut center_idx =
         y_hex_n * (x_hex_n as f32 / 2.).floor() as usize + (y_hex_n as f32 / 2.).floor() as usize;
     if (x_hex_n as f32 / 2.) as usize % 2usize == 0usize {

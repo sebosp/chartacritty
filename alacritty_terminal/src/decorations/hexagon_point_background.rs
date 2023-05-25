@@ -122,7 +122,7 @@ impl HexagonPointBackground {
         // Of the six vertices of x,y values, we only care about one of them, the top left.
         let total_hexagons = self.vecs.len() / 6usize / 2usize;
         // Let's animate 1/5 of the top-left hexagons
-        let random_vertices_to_choose = (total_hexagons / 5usize) as usize;
+        let random_vertices_to_choose = total_hexagons / 5usize;
         info!(
             "HexagonPointBackground::choose_random_vertices INIT. Total hexagons: {}, \
              random_vertices_to_choose: {}",
@@ -172,10 +172,9 @@ impl HexagonPointBackground {
         // The time is received as seconds.millis, let's transform all to ms
         let time_ms = time * 1000f32;
         info!(
-            "tick time: {}, as f32: {}, start_animation_ms: {}, animation_duration_ms: {}, \
+            "tick time: {}, start_animation_ms: {}, animation_duration_ms: {}, \
              animation_offset: {}, update_interval_s: {}, next_update_epoch: {}",
             time,
-            time as f32,
             self.start_animation_ms,
             self.animation_duration_ms,
             self.animation_offset,
@@ -187,8 +186,8 @@ impl HexagonPointBackground {
         {
             let current_animation_ms = time_ms - self.start_animation_ms;
             // Given this much time, the animation should have added this much offset
-            let current_ms_x_offset = (current_animation_ms as f32
-                / self.animation_duration_ms as f32)
+            let current_ms_x_offset = (current_animation_ms
+                / self.animation_duration_ms)
                 * self.animation_offset;
             info!("tick in range of animation, x_offset should be: {}", current_ms_x_offset);
             for curr_vertex in &self.chosen_vertices {
