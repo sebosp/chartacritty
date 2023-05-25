@@ -985,7 +985,7 @@ mod tests {
             data_type: String::from(""),
             required_labels: test_labels,
             pull_interval: 15,
-            color: Rgb { r: 207, g: 102, b: 121 },
+            color: Rgb::new(207, 102, 121),
             alpha: 1.0,
         };
         // This should result in adding 15 more items
@@ -1375,7 +1375,7 @@ mod tests {
             data_type: String::from(""),
             required_labels: test_labels,
             pull_interval: 15,
-            color: Rgb { r: 207, g: 102, b: 121 },
+            color: Rgb::new(207, 102, 121),
             alpha: 1.0,
         };
         assert_eq!(test.series.metrics.len(), 300usize);
