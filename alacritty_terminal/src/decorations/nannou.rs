@@ -13,7 +13,7 @@ use nannou::glam::Vec2;
 use serde::{Deserialize, Serialize};
 use super::moon_phase::MoonPhaseState;
 
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 pub enum NannouDrawArrayMode {
     Points,
     LineStrip,

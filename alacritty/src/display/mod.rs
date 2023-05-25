@@ -679,7 +679,7 @@ impl Display {
         // Update number of column/lines in the viewport.
         let message_bar_lines = message_buffer.message().map_or(0, |m| m.text(&new_size).len());
         let search_lines = usize::from(search_active);
-        let charts_lines = if terminal.charts_enabled() { 1 } else { 0 };
+        let charts_lines = usize::from(terminal.charts_enabled());
         new_size.reserve_lines(message_bar_lines + search_lines + charts_lines);
 
         // Update resize increments.
