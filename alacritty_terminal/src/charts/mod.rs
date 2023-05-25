@@ -91,7 +91,7 @@ impl MissingValuesPolicy {
 }
 /// `ValueCollisionPolicy` handles collisions when several values are collected
 /// for the same time unit, allowing for overwriting, incrementing, etc.
-#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq, Eq)]
 pub enum ValueCollisionPolicy {
     Overwrite,
     #[default]
