@@ -39,8 +39,9 @@ use tracing::{event, span, Level};
 
 /// `MissingValuesPolicy` provides several ways to deal with missing values
 /// when drawing the Metric
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
 pub enum MissingValuesPolicy {
+    #[default]
     Zero,
     One,
     First,
@@ -49,12 +50,6 @@ pub enum MissingValuesPolicy {
     Avg,
     Max,
     Min,
-}
-
-impl Default for MissingValuesPolicy {
-    fn default() -> MissingValuesPolicy {
-        MissingValuesPolicy::Zero
-    }
 }
 
 impl MissingValuesPolicy {
@@ -96,18 +91,13 @@ impl MissingValuesPolicy {
 }
 /// `ValueCollisionPolicy` handles collisions when several values are collected
 /// for the same time unit, allowing for overwriting, incrementing, etc.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq, Eq)]
 pub enum ValueCollisionPolicy {
     Overwrite,
+    #[default]
     Increment,
     Decrement,
     Ignore,
-}
-
-impl Default for ValueCollisionPolicy {
-    fn default() -> ValueCollisionPolicy {
-        ValueCollisionPolicy::Increment
-    }
 }
 
 /// `TimeSeriesStats` contains statistics about the current TimeSeries
@@ -142,8 +132,9 @@ impl Default for TimeSeriesStats {
 
 /// This enum is tied to the upsert() function and aids in a bug finding for synchronicity loss.
 /// TODO: Remove later
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq, Eq)]
 pub enum UpsertType {
+    #[default]
     Empty,
     TooOld,
     VectorDiscarded,
@@ -152,12 +143,6 @@ pub enum UpsertType {
     OverwritePrevEpoch,
     OverwriteLastEpoch,
     NewEpoch,
-}
-
-impl Default for UpsertType {
-    fn default() -> UpsertType {
-        UpsertType::Empty
-    }
 }
 
 /// `TimeSeries` contains a vector of tuple (epoch, Option<value>)
