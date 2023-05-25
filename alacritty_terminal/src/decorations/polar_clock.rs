@@ -166,7 +166,7 @@ impl PolarClockUnitProperties {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub enum PolarClockUnit {
     DayOfYear,
     MonthOfYear,

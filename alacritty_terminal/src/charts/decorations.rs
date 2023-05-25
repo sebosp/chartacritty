@@ -337,7 +337,7 @@ impl Decorate for ReferencePointDecoration {
     }
 }
 
-#[derive(Debug, Default, Serialize, Deserialize, PartialEq, Clone)]
+#[derive(Debug, Default, Serialize, Deserialize, PartialEq, Eq, Clone)]
 pub enum AlertComparator {
     #[default]
     #[serde(rename = ">")]

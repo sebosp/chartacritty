@@ -132,7 +132,7 @@ impl Default for TimeSeriesStats {
 
 /// This enum is tied to the upsert() function and aids in a bug finding for synchronicity loss.
 /// TODO: Remove later
-#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq, Eq)]
 pub enum UpsertType {
     #[default]
     Empty,

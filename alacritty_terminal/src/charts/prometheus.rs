@@ -32,7 +32,7 @@ use std::time::{Duration, UNIX_EPOCH};
 // }
 /// `HTTPMatrixResult` contains Range Vectors, data is stored like this
 /// [[Epoch1, Metric1], [Epoch2, Metric2], ...]
-#[derive(Serialize, Deserialize, Debug, Default, PartialEq, Clone)]
+#[derive(Serialize, Deserialize, Debug, Default, PartialEq, Eq, Clone)]
 pub struct HTTPMatrixResult {
     #[serde(rename = "metric")]
     pub labels: HashMap<String, String>,
@@ -41,7 +41,7 @@ pub struct HTTPMatrixResult {
 
 /// `HTTPVectorResult` contains Instant Vectors, data is stored like this
 /// [Epoch1, Metric1, Epoch2, Metric2, ...]
-#[derive(Serialize, Deserialize, Debug, Default, PartialEq, Clone)]
+#[derive(Serialize, Deserialize, Debug, Default, PartialEq, Eq, Clone)]
 pub struct HTTPVectorResult {
     #[serde(rename = "metric")]
     pub labels: HashMap<String, String>,
@@ -50,7 +50,7 @@ pub struct HTTPVectorResult {
 
 /// `HTTPResponseData` may be one of these types:
 /// https://prometheus.io/docs/prometheus/latest/querying/api/#expression-query-result-formats
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone)]
 #[serde(tag = "resultType")]
 pub enum HTTPResponseData {
     #[serde(rename = "vector")]
@@ -69,7 +69,7 @@ impl Default for HTTPResponseData {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Default, PartialEq, Clone)]
+#[derive(Serialize, Deserialize, Debug, Default, PartialEq, Eq, Clone)]
 pub struct HTTPResponse {
     pub data: HTTPResponseData,
     pub status: String,
@@ -389,9 +389,7 @@ pub fn parse_json(url: &str, body: &hyper::body::Bytes) -> Option<HTTPResponse> 
         },
     }
 }
-/// XXX: REMOVE
-/// Implement PartialEq for PrometheusTimeSeries because the field
-/// tokio_core should be ignored
+
 impl PartialEq<PrometheusTimeSeries> for PrometheusTimeSeries {
     fn eq(&self, other: &PrometheusTimeSeries) -> bool {
         self.series == other.series
