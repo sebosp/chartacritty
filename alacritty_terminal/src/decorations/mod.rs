@@ -1,7 +1,6 @@
 //! Decorations for the Alacritty Terminal.
 //!
-pub use self::nannou::NannouDecoration;
-pub use self::nannou::NannouDrawArrayMode;
+pub use self::nannou::LyonDecoration;
 use crate::term::SizeInfo;
 pub use hexagon_line_background::HexagonLineBackground;
 pub use hexagon_point_background::HexagonPointBackground;
@@ -10,8 +9,7 @@ use log::*;
 pub use polar_clock::PolarClockState;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
-use ::nannou::geom::point::pt3;
-use ::nannou::prelude::Point3;
+use lyon::math::point;
 
 pub mod hexagon_line_background;
 pub mod hexagon_point_background;
@@ -270,7 +268,7 @@ pub fn gen_2d_hexagon_vertices(size_info: SizeInfo, x: f32, y: f32, radius: f32)
 }
 
 /// Creates a vector with x,y,z coordinates in which new hexagons can be drawn
-fn gen_hex_grid_positions(size: SizeInfo, radius: f32) -> Vec<Point3> {
+fn gen_hex_grid_positions(size: SizeInfo, radius: f32) -> Vec<point> {
     // We only care for the 60 degrees X,Y,Z, the rest we can calculate from this distance.
     // For the degrees at 0, X is the radius, and Y is 0.
     // let angle = 60.0f32; // Hexagon degrees
@@ -288,7 +286,7 @@ fn gen_hex_grid_positions(size: SizeInfo, radius: f32) -> Vec<Point3> {
         let current_y_position = 0f32;
         let mut temp_y = current_y_position;
         while temp_y <= (size.height + y_offset) {
-            res.push(pt3(
+            res.push(point(
                 current_x_position,
                 // shift the y position in alternate fashion that the positions look like:
                 // x   x   x   x
@@ -297,7 +295,6 @@ fn gen_hex_grid_positions(size: SizeInfo, radius: f32) -> Vec<Point3> {
                     true => temp_y + y_offset,
                     false => temp_y,
                 },
-                0.0f32,
             ));
             temp_y += y_offset * 2f32;
         }
@@ -312,7 +309,7 @@ fn gen_hex_grid_positions(size: SizeInfo, radius: f32) -> Vec<Point3> {
 /// There is a background of hexagons, a sort of grid, this function finds the center-most in the
 /// array of hexagons, they are organized top to bottom, then interleaved a bit to avoid vertex
 /// overlapping.
-fn find_hexagon_grid_center_idx(coords: &[Point3], size_info: SizeInfo, radius: f32) -> usize {
+fn find_hexagon_grid_center_idx(coords: &[point], size_info: SizeInfo, radius: f32) -> usize {
     // We need to find the center hexagon.
     let hex_height = SIN_60 * radius * 2.;
     // We'll draw half a hexagon more than needed so that we can interleave them while having the

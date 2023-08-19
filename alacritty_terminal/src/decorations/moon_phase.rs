@@ -2,13 +2,12 @@
 
 use crate::term::SizeInfo;
 use moon_phase::MoonPhase;
-use nannou::draw;
-use nannou::geom::path::Builder;
-use nannou::prelude::*;
+use palette::named::*;
+use palette::rgb::Rgba;
 use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
-
-use super::nannou::NannouVertices;
+use lyon::path::Path;
+use lyon::path::builder::*;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct MoonPhaseState {
@@ -18,7 +17,7 @@ pub struct MoonPhaseState {
     /// The radius of the moon shown on the screen
     radius: f32,
     /// The vertices for the current state
-    pub vecs: Vec<NannouVertices>,
+    pub vecs: Vec<f32>,
     /// Keep track of the last time the vertices needed to be calculated.
     /// This should only happen once a day.
     #[serde(skip, default = "current_system_time")]
@@ -57,10 +56,10 @@ impl PartialEq for MoonPhaseState {
     }
 }
 
-fn build_moon_arc_fraction(x: f32, y: f32, radius: f32, phase: f32) -> nannou::geom::Path {
+fn build_moon_arc_fraction(x: f32, y: f32, radius: f32, phase: f32) -> Vec<f32> {
     // phase is 0.5 full
     let illuminated_percent = 1. - ((phase - 0.5).abs() * 2.);
-    let mut builder = Builder::new().with_svg();
+    let mut builder = Path::builder::new().with_svg();
     // Start from the top
     builder.move_to(lyon::math::point(x, y + radius));
     // For some reason I have to multiply the control point's x for 1.33 to get a shape similar to
@@ -117,12 +116,12 @@ impl MoonPhaseState {
     }
 
     /// Creates vertices for the Polar Clock Arc
-    fn gen_vertices(&self, x: f32, y: f32, size_info: SizeInfo) -> Vec<NannouVertices> {
+    fn gen_vertices(&self, x: f32, y: f32, size_info: SizeInfo) -> Vec<f32> {
         log::info!("MoonPhase::gen_vertices, phase: {:?}", self.moon_phase);
         let draw = draw::Draw::default().triangle_mode();
         let ellipse_color = LIGHTSKYBLUE.into_format::<f32>();
         let ellipse_stroke_color =
-            rgba(ellipse_color.red, ellipse_color.green, ellipse_color.blue, 0.01f32);
+            Rgba::new(ellipse_color.red, ellipse_color.green, ellipse_color.blue, 0.01f32);
         let x_60_degrees_offset = super::COS_60 * self.radius;
         let y_60_degrees_offset = super::SIN_60 * self.radius;
         let alpha = 0.07;
