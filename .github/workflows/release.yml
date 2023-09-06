@@ -24,8 +24,8 @@ jobs:
         run: make dmg-universal
       - name: Upload Application
         run: |
-          mv ./target/release/osx/Alacritty.dmg ./Alacritty-${GITHUB_REF##*/}.dmg
-          ./.github/workflows/upload_asset.sh ./Alacritty-${GITHUB_REF##*/}.dmg $GITHUB_TOKEN
+          mv ./target/release/osx/Chartacritty.dmg ./Chartacritty-${GITHUB_REF##*/}.dmg
+          ./.github/workflows/upload_asset.sh ./Chartacritty-${GITHUB_REF##*/}.dmg $GITHUB_TOKEN
 
 #  windows:
 #    runs-on: windows-latest
@@ -78,5 +78,5 @@ jobs:
           ./.github/workflows/upload_asset.sh ./extra/completions/alacritty.fish $GITHUB_TOKEN
           ./.github/workflows/upload_asset.sh ./extra/completions/_alacritty $GITHUB_TOKEN
           ./.github/workflows/upload_asset.sh ./extra/linux/Alacritty.desktop $GITHUB_TOKEN
-          ./.github/workflows/upload_asset.sh ./extra/alacritty.info $GITHUB_TOKEN
+          ./.github/workflows/upload_asset.sh ./extra/chartacritty.info $GITHUB_TOKEN
           ./.github/workflows/upload_asset.sh ./alacritty.yml $GITHUB_TOKEN
