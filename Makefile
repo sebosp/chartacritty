@@ -15,7 +15,7 @@ APP_NAME = Chartacritty.app
 APP_TEMPLATE = $(ASSETS_DIR)/osx/$(APP_NAME)
 APP_DIR = $(RELEASE_DIR)/osx
 # cargo build generates this binary
-APP_BINARY = $(RELEASE_DIR)/alacritty
+APP_BINARY = $(RELEASE_DIR)/chartacritty
 APP_BINARY_DIR = $(APP_DIR)/$(APP_NAME)/Contents/MacOS
 APP_EXTRAS_DIR = $(APP_DIR)/$(APP_NAME)/Contents/Resources
 APP_COMPLETIONS_DIR = $(APP_EXTRAS_DIR)/completions
@@ -39,7 +39,7 @@ $(TARGET)-native:
 $(TARGET)-universal:
 	MACOSX_DEPLOYMENT_TARGET="10.11" cargo build --release --target=x86_64-apple-darwin
 	MACOSX_DEPLOYMENT_TARGET="10.11" cargo build --release --target=aarch64-apple-darwin
-	@lipo target/{x86_64,aarch64}-apple-darwin/release/$(TARGET) -create -output $(APP_BINARY)
+	@lipo target/{x86_64,aarch64}-apple-darwin/release/alacritty -create -output $(APP_BINARY)
 
 app: $(APP_NAME)-native ## Create an Chartacritty.app
 app-universal: $(APP_NAME)-universal ## Create a universal Chartacritty.app
