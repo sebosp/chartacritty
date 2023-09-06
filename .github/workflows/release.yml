@@ -27,37 +27,37 @@ jobs:
           mv ./target/release/osx/Alacritty.dmg ./Alacritty-${GITHUB_REF##*/}.dmg
           ./.github/workflows/upload_asset.sh ./Alacritty-${GITHUB_REF##*/}.dmg $GITHUB_TOKEN
 
-  windows:
-    runs-on: windows-latest
-
-    defaults:
-      run:
-        shell: bash
-
-    steps:
-      - uses: actions/checkout@v3
-      - name: Test
-        run: cargo test --release
-      - name: Build
-        run: cargo build --release
-      - name: Upload portable executable
-        run: |
-          cp ./target/release/alacritty.exe ./Alacritty-${GITHUB_REF##*/}-portable.exe
-          ./.github/workflows/upload_asset.sh \
-            ./Alacritty-${GITHUB_REF##*/}-portable.exe $GITHUB_TOKEN
-      - name: Install WiX
-        run: nuget install WiX
-      - name: Crate msi installer
-        run: |
-          ./WiX.*/tools/candle.exe -nologo -arch "x64" -ext WixUIExtension -ext WixUtilExtension \
-            -out "./alacritty.wixobj" "alacritty/windows/wix/alacritty.wxs"
-          ./WiX.*/tools/light.exe -nologo -ext WixUIExtension -ext WixUtilExtension \
-            -out "./Alacritty-${GITHUB_REF##*/}-installer.msi" -sice:ICE61 -sice:ICE91 \
-            "./alacritty.wixobj"
-      - name: Upload msi installer
-        run: |
-          ./.github/workflows/upload_asset.sh \
-            ./Alacritty-${GITHUB_REF##*/}-installer.msi $GITHUB_TOKEN
+#  windows:
+#    runs-on: windows-latest
+#
+#    defaults:
+#      run:
+#        shell: bash
+#
+#    steps:
+#      - uses: actions/checkout@v3
+#      - name: Test
+#        run: cargo test --release
+#      - name: Build
+#        run: cargo build --release
+#      - name: Upload portable executable
+#        run: |
+#          cp ./target/release/alacritty.exe ./Alacritty-${GITHUB_REF##*/}-portable.exe
+#          ./.github/workflows/upload_asset.sh \
+#            ./Alacritty-${GITHUB_REF##*/}-portable.exe $GITHUB_TOKEN
+#      - name: Install WiX
+#        run: nuget install WiX
+#      - name: Crate msi installer
+#        run: |
+#          ./WiX.*/tools/candle.exe -nologo -arch "x64" -ext WixUIExtension -ext WixUtilExtension \
+#            -out "./alacritty.wixobj" "alacritty/windows/wix/alacritty.wxs"
+#          ./WiX.*/tools/light.exe -nologo -ext WixUIExtension -ext WixUtilExtension \
+#            -out "./Alacritty-${GITHUB_REF##*/}-installer.msi" -sice:ICE61 -sice:ICE91 \
+#            "./alacritty.wixobj"
+#      - name: Upload msi installer
+#        run: |
+#          ./.github/workflows/upload_asset.sh \
+#            ./Alacritty-${GITHUB_REF##*/}-installer.msi $GITHUB_TOKEN
 
   linux:
     runs-on: ubuntu-latest
