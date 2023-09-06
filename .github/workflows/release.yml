@@ -76,8 +76,8 @@ jobs:
           gzip -c "./extra/alacritty-msg.man" > "./alacritty-msg.1.gz"
       - name: Upload Assets
         run: |
-          mv ./extra/logo/alacritty-term.svg ./Alacritty.svg
-          ./.github/workflows/upload_asset.sh ./Alacritty.svg $GITHUB_TOKEN
+          mv ./extra/logo/chartacritty-term.svg ./Chartacritty.svg
+          ./.github/workflows/upload_asset.sh ./Chartacritty.svg $GITHUB_TOKEN
           ./.github/workflows/upload_asset.sh ./alacritty.1.gz $GITHUB_TOKEN
           ./.github/workflows/upload_asset.sh ./alacritty-msg.1.gz $GITHUB_TOKEN
           ./.github/workflows/upload_asset.sh ./extra/completions/alacritty.bash $GITHUB_TOKEN
