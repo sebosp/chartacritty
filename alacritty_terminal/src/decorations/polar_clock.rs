@@ -3,15 +3,16 @@
 use crate::term::SizeInfo;
 use chrono::prelude::*;
 use chrono::NaiveDate;
-use palette::named::*;
-use palette::Srgb;
-use palette::rgb::{Rgb, Rgba};
-use serde::{Deserialize, Serialize};
-use lyon::path::Path;
-use lyon::path::geom::{point, vector};
-use lyon::path::builder::SvgPathBuilder;
-use lyon::tessellation::VertexBuffers;
 use lyon::math::*;
+use lyon::path::builder::SvgPathBuilder;
+use lyon::path::geom::{point, vector};
+use lyon::path::Path;
+use lyon::tessellation::geometry_builder::simple_builder;
+use lyon::tessellation::*;
+use palette::named::*;
+use palette::rgb::{Rgb, Rgba};
+use palette::Srgb;
+use serde::{Deserialize, Serialize};
 
 // Create a Polar clock that has increasingly more and more opacity, so that the more granular time
 // is more easily visible, these can become default and we can read them from the config yaml file
@@ -323,7 +324,8 @@ impl PolarClockUnitState {
             } else {
                 (NONWORKHOUR_OF_DAY_RGB.into_format::<f32>(), NONWORKHOUR_OF_DAY_ALPHA_MULTIPLIER)
             };
-            self.props.color = Rgba::new(hour_color.red, hour_color.green, hour_color.blue, hour_alpha);
+            self.props.color =
+                Rgba::new(hour_color.red, hour_color.green, hour_color.blue, hour_alpha);
         }
         if self.is_dirty || self.last_drawn_unit != current_tick_unit {
             self.last_drawn_unit = current_tick_unit;
@@ -346,36 +348,28 @@ impl PolarClockUnitState {
             / self.unit.get_time_unit_max_value(tick_time) as f32;
         let mut color = self.props.color;
         color.alpha *= alpha;
-        let path = build_time_arc_progress(
-                    x,
-                    y,
-                    radius * self.props.radius_multiplier,
-                    progress_angle,
-                );
+        let path =
+            build_time_arc_progress(x, y, radius * self.props.radius_multiplier, progress_angle);
         // Create the destination vertex and index buffers.
         let mut buffers: VertexBuffers<Point, u16> = VertexBuffers::new();
         {
-          // Create the destination vertex and index buffers.
-          let mut vertex_builder = simple_builder(&mut buffers);
+            // Create the destination vertex and index buffers.
+            let mut vertex_builder = simple_builder(&mut buffers);
 
-          // Create the tessellator.
-          let mut tessellator = StrokeTessellator::new();
+            // Create the tessellator.
+            let mut tessellator = StrokeTessellator::new();
 
-          let stroke_options = StrokeOptions::default()
-              .with_colors(color)
-              .with_line_width(self.props.stroke_weight)
-              .with_line_join(LineJoin::Round)
-              .with_line_cap(LineCap::Round);
+            let stroke_options = StrokeOptions::default()
+                .with_colors(color)
+                .with_line_width(self.props.stroke_weight)
+                .with_line_join(LineJoin::Round)
+                .with_line_cap(LineCap::Round);
 
-          // Compute the tessellation.
-          tessellator.tessellate(
-              &path,
-              stroke_options,
-              &mut vertex_builder
-          );
+            // Compute the tessellation.
+            tessellator.tessellate(&path, stroke_options, &mut vertex_builder);
         }
 
-        let mut res = super::LyonDecoration::gen_vertices_from_nannou_draw(buffers, size_info, color);
+        let mut res = super::LyonDecoration::gen_vertices_from_lyon_path(buffers, size_info, color);
 
         let color = Rgba::new(
             GOLD.into_format::<f32>().red,
@@ -388,10 +382,9 @@ impl PolarClockUnitState {
                 * (whisker % self.unit.get_time_unit_max_value(tick_time)) as f32
                 / self.unit.get_time_unit_max_value(tick_time) as f32;
             whisker_angle = (whisker_angle + 90f32) % 360f32;
-            draw.path().stroke().stroke_weight(2.).color(color).events(
-                build_time_arc_whisker(x, y, radius * self.props.radius_multiplier, whisker_angle)
-                    .iter(),
-            );
+            res.append(&mut super::LyonDecoration::gen_vertices_from_lyon_path(
+                build_time_arc_whisker(x, y, radius * self.props.radius_multiplier, whisker_angle),
+            ));
         }
         /*draw.tri()
         .points(

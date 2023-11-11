@@ -6,17 +6,23 @@ pub use hexagon_line_background::HexagonLineBackground;
 pub use hexagon_point_background::HexagonPointBackground;
 pub use hexagon_triangle_background::HexagonTriangleBackground;
 use log::*;
+use lyon::math::point;
 pub use polar_clock::PolarClockState;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
-use lyon::math::point;
 
 pub mod hexagon_line_background;
 pub mod hexagon_point_background;
 pub mod hexagon_triangle_background;
+pub mod moon_phase;
 pub mod nannou;
 pub mod polar_clock;
-pub mod moon_phase;
+
+/// A vertex type used to build the lyon geometry.
+#[derive(Copy, Clone, Debug)]
+struct LyonVertex {
+    position: [f32; 2],
+}
 
 // TODO: Use const init that calculates these magic numbers at compile time
 pub const COS_60: f32 = 0.49999997f32;
@@ -224,7 +230,7 @@ impl DecorationTriangles {
         match self {
             DecorationTriangles::Hexagon(ref mut hex_triangles) => {
                 hex_triangles.tick(time);
-            }
+            },
             DecorationTriangles::Nannou(ref mut nannou) => {
                 nannou.tick(time);
             },
@@ -268,7 +274,7 @@ pub fn gen_2d_hexagon_vertices(size_info: SizeInfo, x: f32, y: f32, radius: f32)
 }
 
 /// Creates a vector with x,y,z coordinates in which new hexagons can be drawn
-fn gen_hex_grid_positions(size: SizeInfo, radius: f32) -> Vec<point> {
+fn gen_hex_grid_positions(size: SizeInfo, radius: f32) -> Vec<Point> {
     // We only care for the 60 degrees X,Y,Z, the rest we can calculate from this distance.
     // For the degrees at 0, X is the radius, and Y is 0.
     // let angle = 60.0f32; // Hexagon degrees

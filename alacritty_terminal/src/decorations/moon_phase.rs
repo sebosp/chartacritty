@@ -1,13 +1,14 @@
 //! Moon Phase Nannou decoration
 
 use crate::term::SizeInfo;
+use lyon::path::builder::*;
+use lyon::path::Path;
+use lyon::tessellation::*;
 use moon_phase::MoonPhase;
 use palette::named::*;
 use palette::rgb::Rgba;
 use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
-use lyon::path::Path;
-use lyon::path::builder::*;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct MoonPhaseState {
@@ -57,7 +58,7 @@ impl PartialEq for MoonPhaseState {
 }
 
 fn build_moon_arc_fraction(x: f32, y: f32, radius: f32, phase: f32) -> Vec<f32> {
-    // phase is 0.5 full
+    // phase 0.5 is full
     let illuminated_percent = 1. - ((phase - 0.5).abs() * 2.);
     let mut builder = Path::builder::new().with_svg();
     // Start from the top
@@ -115,34 +116,118 @@ impl MoonPhaseState {
         }
     }
 
+    /*
+     *     // Build a Path.
+    let mut builder = Path::builder();
+    builder.begin(point(0.0, 0.0));
+    builder.line_to(point(1.0, 0.0));
+    builder.quadratic_bezier_to(point(2.0, 0.0), point(2.0, 1.0));
+    builder.cubic_bezier_to(point(1.0, 1.0), point(0.0, 1.0), point(0.0, 0.0));
+    builder.close();
+    let path = builder.build();
+
+    // Will contain the result of the tessellation.
+    let mut geometry: VertexBuffers<super::LyonVertex, u16> = VertexBuffers::new();
+
+    let mut tessellator = FillTessellator::new();
+
+    {
+        // Compute the tessellation.
+        tessellator.tessellate_path(
+            &path,
+            &FillOptions::default(),
+            &mut BuffersBuilder::new(&mut geometry, |vertex: FillVertex| {
+                super::LyonVertex {
+                    position: vertex.position().to_array(),
+                }
+            }),
+        ).unwrap();
+    }
+
+    // The tessellated geometry is ready to be uploaded to the GPU.
+    println!(" -- {} vertices {} indices",
+        geometry.vertices.len(),
+        geometry.indices.len()
+    );
+     */
+
     /// Creates vertices for the Polar Clock Arc
     fn gen_vertices(&self, x: f32, y: f32, size_info: SizeInfo) -> Vec<f32> {
         log::info!("MoonPhase::gen_vertices, phase: {:?}", self.moon_phase);
-        let draw = draw::Draw::default().triangle_mode();
         let ellipse_color = LIGHTSKYBLUE.into_format::<f32>();
-        let ellipse_stroke_color =
-            Rgba::new(ellipse_color.red, ellipse_color.green, ellipse_color.blue, 0.01f32);
+        let _ellipse_stroke_color =
+            Rgba::new(ellipse_color.red, ellipse_color.green, ellipse_color.blue, 0.002f32);
         let x_60_degrees_offset = super::COS_60 * self.radius;
         let y_60_degrees_offset = super::SIN_60 * self.radius;
         let alpha = 0.07;
-        draw.ellipse()
-            .x_y(x + x_60_degrees_offset, y + y_60_degrees_offset)
-            .radius(self.radius * 0.4)
-            .stroke(ellipse_stroke_color)
-            .rgba(ellipse_color.red, ellipse_color.green, ellipse_color.blue, alpha);
-        draw.path()
-            .fill()
-            .rgba(ellipse_color.red, ellipse_color.green, ellipse_color.blue, alpha * 2.)
-            .events(
-                build_moon_arc_fraction(
-                    x + x_60_degrees_offset,
-                    y + y_60_degrees_offset,
-                    self.radius * 0.4,
-                    self.moon_phase.phase as f32,
+        let mut builder = Path::builder().with_svg();
+        // TODO: Add the ellipse stroke.
+
+        // phase 0.5 is full
+        let illuminated_percent = 1. - ((self.moon_phase.phase as f32 - 0.5).abs() * 2.);
+        let mut builder = Path::builder::new().with_svg();
+        let moon_fraction_x = x + x_60_degrees_offset;
+        let moon_fraction_y = y + y_60_degrees_offset;
+        let moon_fraction_radius = self.radius * 0.4;
+        // Start from the top
+        builder.move_to(lyon::math::point(moon_fraction_x, moon_fraction_y + moon_fraction_radius));
+        // For some reason I have to multiply the control point's x for 1.33 to get a shape similar to
+        // a circle... I'm kindof trying to build half a circle with bezier curves... Maybe not the
+        // right way.
+        builder.cubic_bezier_to(
+            lyon::math::point(
+                moon_fraction_x + moon_fraction_radius * 1.33,
+                moon_fraction_y + moon_fraction_radius,
+            ),
+            lyon::math::point(
+                moon_fraction_x + moon_fraction_radius * 1.33,
+                moon_fraction_y - moon_fraction_radius,
+            ),
+            lyon::math::point(moon_fraction_x, moon_fraction_y - moon_fraction_radius),
+        );
+        builder.cubic_bezier_to(
+            lyon::math::point(
+                moon_fraction_x + moon_fraction_radius * 1.33
+                    - moon_fraction_radius * (illuminated_percent * 2.) * 1.33,
+                moon_fraction_y - moon_fraction_radius,
+            ),
+            lyon::math::point(
+                moon_fraction_x + moon_fraction_radius * 1.33
+                    - moon_fraction_radius * (illuminated_percent * 2.) * 1.33,
+                moon_fraction_y + moon_fraction_radius,
+            ),
+            lyon::math::point(moon_fraction_x, moon_fraction_y + moon_fraction_radius),
+        );
+        builder.add_ellipse(
+            lyon::math::point(x + x_60_degrees_offset, y + y_60_degrees_offset),
+            self.radius * 0.4,
+            0,
+            Default::default(),
+        );
+        let mut res = super::LyonDecoration::gen_vertices_from_lyon_path(
+            builder.build(),
+            size_info,
+            ellipse_color,
+        );
+        // Will contain the result of the tessellation.
+        let mut geometry: VertexBuffers<super::LyonVertex, u16> = VertexBuffers::new();
+
+        let mut tessellator = FillTessellator::new();
+
+        {
+            // Compute the tessellation.
+            tessellator
+                .tessellate_path(
+                    &path,
+                    &FillOptions::default(),
+                    &mut BuffersBuilder::new(&mut geometry, |vertex: FillVertex| {
+                        super::LyonVertex { position: vertex.position().to_array() }
+                    }),
                 )
-                .iter(),
-            );
-        super::NannouDecoration::gen_vertices_from_nannou_draw(draw, size_info)
+                .unwrap();
+        }
+
+        res
     }
 
     pub fn mark_as_dirty(&mut self) {

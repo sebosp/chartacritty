@@ -1,5 +1,6 @@
 //! Lyon-based decorations for Alacritty
 
+use super::moon_phase::MoonPhaseState;
 use super::PolarClockState;
 use crate::term::SizeInfo;
 use chrono::prelude::*;
@@ -7,7 +8,6 @@ use lyon::math::Point;
 use lyon::tessellation::VertexBuffers;
 use palette::rgb::{Rgb, Rgba};
 use serde::{Deserialize, Serialize};
-use super::moon_phase::MoonPhaseState;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct LyonDecoration {
@@ -93,24 +93,24 @@ impl LyonDecoration {
         self.vertices = self.gen_vertices();
     }
 
-    // Transforms nannou::draw::Draw into xyrgba vertices we can draw through our renderer
-    pub fn gen_vertices_from_nannou_draw(
+    /// Transforms lyon build paths into xyzrgba vertices we can draw through our renderer
+    pub fn gen_vertices_from_lyon_path(
         geometry: VertexBuffers<Point, u16>,
         size_info: SizeInfo,
         color: Rgba<f32>,
     ) -> Vec<f32> {
-    // No idea how gl Draw Elements work so let's build the payload by hand:
-    let mut vertices: Vec<f32> = Vec::with_capacity(geometry.indices.len() * 7usize);
-    for idx in geometry.indices {
-        vertices.push(geometry.vertices[idx as usize].x);
-        vertices.push(geometry.vertices[idx as usize].y);
-        vertices.push(0.0); // z
-        vertices.push(color.color.red);
-        vertices.push(color.color.green);
-        vertices.push(color.color.blue);
-        vertices.push(color.alpha);
-    }
-    vertices
+        // No idea how gl Draw Elements work so let's build the payload by hand:
+        let mut vertices: Vec<f32> = Vec::with_capacity(geometry.indices.len() * 7usize);
+        for idx in geometry.indices {
+            vertices.push(geometry.vertices[idx as usize].x);
+            vertices.push(geometry.vertices[idx as usize].y);
+            vertices.push(0.0); // z
+            vertices.push(color.color.red);
+            vertices.push(color.color.green);
+            vertices.push(color.color.blue);
+            vertices.push(color.alpha);
+        }
+        vertices
     }
 
     /// `gen_vertices` Returns the vertices for an tree created at center x,y with a
