@@ -1168,7 +1168,7 @@ impl Display {
         //
         // TODO:
         // - Move to the decorations module and implement with tick()
-        // - Use nannou and perlin noise
+        // - Use lyon and perlin noise
         let seconds_cycle = 15f32;
         let epoch =
             std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH).unwrap();

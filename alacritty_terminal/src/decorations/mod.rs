@@ -1,12 +1,12 @@
 //! Decorations for the Alacritty Terminal.
 //!
-pub use self::nannou::LyonDecoration;
 use crate::term::SizeInfo;
 pub use hexagon_line_background::HexagonLineBackground;
 pub use hexagon_point_background::HexagonPointBackground;
 pub use hexagon_triangle_background::HexagonTriangleBackground;
 use log::*;
 use lyon::math::point;
+pub use lyon_decor::LyonDecoration;
 pub use polar_clock::PolarClockState;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
@@ -14,8 +14,8 @@ use std::time::Instant;
 pub mod hexagon_line_background;
 pub mod hexagon_point_background;
 pub mod hexagon_triangle_background;
+pub mod lyon_decor;
 pub mod moon_phase;
-pub mod nannou;
 pub mod polar_clock;
 
 // TODO: Use const init that calculates these magic numbers at compile time
@@ -225,8 +225,8 @@ impl DecorationTriangles {
             DecorationTriangles::Hexagon(ref mut hex_triangles) => {
                 hex_triangles.tick(time);
             },
-            DecorationTriangles::Lyon(ref mut nannou) => {
-                nannou.tick(time);
+            DecorationTriangles::Lyon(ref mut lyon_decor) => {
+                lyon_decor.tick(time);
             },
         }
     }

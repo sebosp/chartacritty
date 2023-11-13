@@ -1,12 +1,12 @@
 //! Hexagon Point Background decoration
-//! TODO: Use nannou
-use crate::term::SizeInfo;
+//! TODO: Use lyon
 use crate::term::color::Rgb;
+use crate::term::SizeInfo;
 use log::*;
-use std::time::Instant;
-use std::time::UNIX_EPOCH;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
+use std::time::Instant;
+use std::time::UNIX_EPOCH;
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct HexagonPointBackground {
     // shader_vertex_path: String,
@@ -186,9 +186,8 @@ impl HexagonPointBackground {
         {
             let current_animation_ms = time_ms - self.start_animation_ms;
             // Given this much time, the animation should have added this much offset
-            let current_ms_x_offset = (current_animation_ms
-                / self.animation_duration_ms)
-                * self.animation_offset;
+            let current_ms_x_offset =
+                (current_animation_ms / self.animation_duration_ms) * self.animation_offset;
             info!("tick in range of animation, x_offset should be: {}", current_ms_x_offset);
             for curr_vertex in &self.chosen_vertices {
                 // This vertex is static, so we can use it as a start
@@ -221,4 +220,3 @@ impl HexagonPointBackground {
         }
     }
 }
-
