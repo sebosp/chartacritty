@@ -4,10 +4,12 @@ use super::moon_phase::MoonPhaseState;
 use super::PolarClockState;
 use crate::term::SizeInfo;
 use chrono::prelude::*;
-use lyon::math::Point;
-use lyon::tessellation::VertexBuffers;
+use lyon::tessellation as tess;
 use palette::rgb::{Rgb, Rgba};
 use serde::{Deserialize, Serialize};
+use tess::geometry_builder::{simple_builder, VertexBuffers};
+use tess::math::Point;
+use tess::*;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct LyonDecoration {
@@ -21,7 +23,7 @@ pub struct LyonDecoration {
     #[serde(default)]
     pub moon_state: MoonPhaseState,
     #[serde(default)]
-    pub vertices: Vec<f32>,
+    pub vertices: Vec<Vec<f32>>,
     #[serde(default = "local_now")]
     pub now: DateTime<Local>,
     #[serde(default)]
@@ -93,17 +95,31 @@ impl LyonDecoration {
         self.vertices = self.gen_vertices();
     }
 
-    /// Transforms lyon build paths into xyzrgba vertices we can draw through our renderer
+    /// Transforms lyon paths into xyzrgba vertices we can draw through our renderer
     pub fn gen_vertices_from_lyon_path(
-        geometry: VertexBuffers<Point, u16>,
-        size_info: SizeInfo,
+        path: &lyon::path::Path,
+        _size_info: SizeInfo,
         color: Rgba<f32>,
     ) -> Vec<f32> {
+        // Create the destination vertex and index buffers.
+        let mut buffers: VertexBuffers<Point, u16> = VertexBuffers::new();
+
+        {
+            let mut vertex_builder = simple_builder(&mut buffers);
+
+            // Create the tessellator.
+            let mut tessellator = FillTessellator::new();
+
+            // Compute the tessellation.
+            let result =
+                tessellator.tessellate_path(path, &FillOptions::default(), &mut vertex_builder);
+            assert!(result.is_ok());
+        }
         // No idea how gl Draw Elements work so let's build the payload by hand:
-        let mut vertices: Vec<f32> = Vec::with_capacity(geometry.indices.len() * 7usize);
-        for idx in geometry.indices {
-            vertices.push(geometry.vertices[idx as usize].x);
-            vertices.push(geometry.vertices[idx as usize].y);
+        let mut vertices: Vec<f32> = Vec::with_capacity(buffers.indices.len() * 7usize);
+        for idx in buffers.indices {
+            vertices.push(buffers.vertices[idx as usize].x);
+            vertices.push(buffers.vertices[idx as usize].y);
             vertices.push(0.0); // z
             vertices.push(color.color.red);
             vertices.push(color.color.green);
@@ -113,9 +129,9 @@ impl LyonDecoration {
         vertices
     }
 
-    /// `gen_vertices` Returns the vertices for an tree created at center x,y with a
+    /// `gen_vertices` Returns the vertices for a polar clock created at center x,y with a
     /// specific radius
-    pub fn gen_vertices(&self) -> Vec<f32> {
+    pub fn gen_vertices(&self) -> Vec<Vec<f32>> {
         /*let x = self.x;
         let y = self.y;
         let x_60_degrees_offset = COS_60 * self.radius;
@@ -142,14 +158,15 @@ impl LyonDecoration {
             .color(VIOLET);
 
         */
-        let mut all_recs = self.polar_clock.day_of_year.vecs.clone();
-        all_recs.append(&mut self.polar_clock.month_of_year.vecs.clone());
-        all_recs.append(&mut self.polar_clock.day_of_month.vecs.clone());
-        all_recs.append(&mut self.polar_clock.hour_of_day.vecs.clone());
-        all_recs.append(&mut self.polar_clock.minute_of_hour.vecs.clone());
-        all_recs.append(&mut self.polar_clock.seconds_with_millis_of_minute.vecs.clone());
-        all_recs.append(&mut self.moon_state.vecs.clone());
-        all_recs
+        vec![
+            self.polar_clock.day_of_year.vecs.clone(),
+            self.polar_clock.month_of_year.vecs.clone(),
+            self.polar_clock.day_of_month.vecs.clone(),
+            self.polar_clock.hour_of_day.vecs.clone(),
+            self.polar_clock.minute_of_hour.vecs.clone(),
+            self.polar_clock.seconds_with_millis_of_minute.vecs.clone(),
+            self.moon_state.vecs.clone(),
+        ]
     }
 }
 

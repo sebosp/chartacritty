@@ -1,7 +1,6 @@
 //! Moon Phase Nannou decoration
 
 use crate::term::SizeInfo;
-use lyon::path::builder::*;
 use lyon::path::Path;
 use lyon::tessellation::*;
 use moon_phase::MoonPhase;
@@ -55,34 +54,6 @@ impl PartialEq for MoonPhaseState {
     fn eq(&self, other: &Self) -> bool {
         self.radius == other.radius && self.vecs == other.vecs
     }
-}
-
-fn build_moon_arc_fraction(x: f32, y: f32, radius: f32, phase: f32) -> Vec<f32> {
-    // phase 0.5 is full
-    let illuminated_percent = 1. - ((phase - 0.5).abs() * 2.);
-    let mut builder = Path::builder::new().with_svg();
-    // Start from the top
-    builder.move_to(lyon::math::point(x, y + radius));
-    // For some reason I have to multiply the control point's x for 1.33 to get a shape similar to
-    // a circle... I'm kindof trying to build half a circle with bezier curves... Maybe not the
-    // right way.
-    builder.cubic_bezier_to(
-        lyon::math::point(x + radius * 1.33, y + radius),
-        lyon::math::point(x + radius * 1.33, y - radius),
-        lyon::math::point(x, y - radius),
-    );
-    builder.cubic_bezier_to(
-        lyon::math::point(
-            x + radius * 1.33 - radius * (illuminated_percent * 2.) * 1.33,
-            y - radius,
-        ),
-        lyon::math::point(
-            x + radius * 1.33 - radius * (illuminated_percent * 2.) * 1.33,
-            y + radius,
-        ),
-        lyon::math::point(x, y + radius),
-    );
-    builder.build()
 }
 
 impl MoonPhaseState {
@@ -155,17 +126,15 @@ impl MoonPhaseState {
     fn gen_vertices(&self, x: f32, y: f32, size_info: SizeInfo) -> Vec<f32> {
         log::info!("MoonPhase::gen_vertices, phase: {:?}", self.moon_phase);
         let ellipse_color = LIGHTSKYBLUE.into_format::<f32>();
-        let _ellipse_stroke_color =
+        let ellipse_color =
             Rgba::new(ellipse_color.red, ellipse_color.green, ellipse_color.blue, 0.002f32);
         let x_60_degrees_offset = super::COS_60 * self.radius;
         let y_60_degrees_offset = super::SIN_60 * self.radius;
-        let alpha = 0.07;
         let mut builder = Path::builder().with_svg();
         // TODO: Add the ellipse stroke.
 
         // phase 0.5 is full
         let illuminated_percent = 1. - ((self.moon_phase.phase as f32 - 0.5).abs() * 2.);
-        let mut builder = Path::builder::new().with_svg();
         let moon_fraction_x = x + x_60_degrees_offset;
         let moon_fraction_y = y + y_60_degrees_offset;
         let moon_fraction_radius = self.radius * 0.4;
@@ -198,36 +167,8 @@ impl MoonPhaseState {
             ),
             lyon::math::point(moon_fraction_x, moon_fraction_y + moon_fraction_radius),
         );
-        builder.add_ellipse(
-            lyon::math::point(x + x_60_degrees_offset, y + y_60_degrees_offset),
-            self.radius * 0.4,
-            0,
-            Default::default(),
-        );
-        let mut res = super::LyonDecoration::gen_vertices_from_lyon_path(
-            builder.build(),
-            size_info,
-            ellipse_color,
-        );
-        // Will contain the result of the tessellation.
-        let mut geometry: VertexBuffers<super::LyonVertex, u16> = VertexBuffers::new();
-
-        let mut tessellator = FillTessellator::new();
-
-        {
-            // Compute the tessellation.
-            tessellator
-                .tessellate_path(
-                    &path,
-                    &FillOptions::default(),
-                    &mut BuffersBuilder::new(&mut geometry, |vertex: FillVertex| {
-                        super::LyonVertex { position: vertex.position().to_array() }
-                    }),
-                )
-                .unwrap();
-        }
-
-        res
+        let path = builder.build();
+        super::LyonDecoration::gen_vertices_from_lyon_path(&path, size_info, ellipse_color)
     }
 
     pub fn mark_as_dirty(&mut self) {

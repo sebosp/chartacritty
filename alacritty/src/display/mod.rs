@@ -1197,7 +1197,7 @@ impl Display {
                             self.renderer.draw_array(
                                 size_info,
                                 opengl_data,
-                                Rgb::new(25, 88, 167 ),
+                                Rgb::new(25, 88, 167),
                                 curr_opacity.abs(),
                                 renderer::DrawArrayMode::LineLoop,
                             );
@@ -1213,11 +1213,11 @@ impl Display {
                             elapsed_secs_with_millis,
                         );
                     },
-                    DecorationTriangles::Nannou(nannou_tris) => {
-                        for decor_vertex in &nannou_tris.vertices {
+                    DecorationTriangles::Lyon(lyon_tris) => {
+                        for decor_vertex in &lyon_tris.vertices {
                             self.renderer.draw_xyzrgba_vertices(
                                 size_info,
-                                &decor_vertex.vecs,
+                                decor_vertex,
                                 // decor_vertex.draw_array_mode.clone().into(), It seems we cannot
                                 // use mixed types of draw array modes, maybe they overwrite each
                                 // other or we end up seeing lines where there were none?
@@ -1232,7 +1232,7 @@ impl Display {
                         self.renderer.draw_array(
                             size_info,
                             &hex_points.vecs,
-                            Rgb::new(25, 88, 167 ),
+                            Rgb::new(25, 88, 167),
                             0.7f32,
                             renderer::DrawArrayMode::Points,
                         );

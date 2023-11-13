@@ -4,10 +4,8 @@ use crate::term::SizeInfo;
 use chrono::prelude::*;
 use chrono::NaiveDate;
 use lyon::math::*;
-use lyon::path::builder::SvgPathBuilder;
 use lyon::path::geom::{point, vector};
 use lyon::path::Path;
-use lyon::tessellation::geometry_builder::simple_builder;
 use lyon::tessellation::*;
 use palette::named::*;
 use palette::rgb::{Rgb, Rgba};
@@ -350,26 +348,7 @@ impl PolarClockUnitState {
         color.alpha *= alpha;
         let path =
             build_time_arc_progress(x, y, radius * self.props.radius_multiplier, progress_angle);
-        // Create the destination vertex and index buffers.
-        let mut buffers: VertexBuffers<Point, u16> = VertexBuffers::new();
-        {
-            // Create the destination vertex and index buffers.
-            let mut vertex_builder = simple_builder(&mut buffers);
-
-            // Create the tessellator.
-            let mut tessellator = StrokeTessellator::new();
-
-            let stroke_options = StrokeOptions::default()
-                .with_colors(color)
-                .with_line_width(self.props.stroke_weight)
-                .with_line_join(LineJoin::Round)
-                .with_line_cap(LineCap::Round);
-
-            // Compute the tessellation.
-            tessellator.tessellate(&path, stroke_options, &mut vertex_builder);
-        }
-
-        let mut res = super::LyonDecoration::gen_vertices_from_lyon_path(buffers, size_info, color);
+        let mut res = super::LyonDecoration::gen_vertices_from_lyon_path(&path, size_info, color);
 
         let color = Rgba::new(
             GOLD.into_format::<f32>().red,
@@ -382,26 +361,13 @@ impl PolarClockUnitState {
                 * (whisker % self.unit.get_time_unit_max_value(tick_time)) as f32
                 / self.unit.get_time_unit_max_value(tick_time) as f32;
             whisker_angle = (whisker_angle + 90f32) % 360f32;
+            let path =
+                build_time_arc_whisker(x, y, radius * self.props.radius_multiplier, whisker_angle);
             res.append(&mut super::LyonDecoration::gen_vertices_from_lyon_path(
-                build_time_arc_whisker(x, y, radius * self.props.radius_multiplier, whisker_angle),
+                &path, size_info, color,
             ));
         }
-        /*draw.tri()
-        .points(
-            Point2::new(
-                (radius * self.props.radius_multiplier * 0.95) * 90_f32.to_radians().cos() + x,
-                (radius * self.props.radius_multiplier * 0.95) * 90_f32.to_radians().sin() + y
-            ),
-            Point2::new(
-                ((radius + self.props.stroke_weight) * self.props.radius_multiplier) * 85_f32.to_radians().cos() + x,
-                ((radius + self.props.stroke_weight) * self.props.radius_multiplier) * 85_f32.to_radians().sin() + y
-            ),
-            Point2::new(
-                ((radius + self.props.stroke_weight) * self.props.radius_multiplier) * 95_f32.to_radians().cos() + x,
-                ((radius + self.props.stroke_weight) * self.props.radius_multiplier) * 95_f32.to_radians().sin() + y
-            )
-        )
-        .color(color);*/
+
         res
     }
 }
@@ -491,7 +457,7 @@ mod tests {
             .unwrap()
             .and_hms_milli_opt(12, 34, 56, 789)
             .unwrap();
-        let dt = DateTime::<Local>::from_local(naivedatetime_west, timezone_west);
+        let dt = DateTime::<Local>::from_naive_utc_and_offset(naivedatetime_west, timezone_west);
         assert_eq!(seconds_with_millis.get_time_unit_value(&dt), 56_789);
         let day_of_year = PolarClockUnit::DayOfYear;
         assert_eq!(day_of_year.get_time_unit_value(&dt), 11);

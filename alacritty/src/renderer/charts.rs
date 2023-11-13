@@ -81,7 +81,7 @@ impl ChartRenderer {
             // Load vertex data into array buffer
             gl::BufferData(
                 gl::ARRAY_BUFFER,
-                (mem::size_of::<f32>() * opengl_data.len()) as _,
+                std::mem::size_of_val(opengl_data) as _,
                 opengl_data.as_ptr() as *const _,
                 gl::STATIC_DRAW,
             );

@@ -22,12 +22,6 @@ pub mod config;
 pub mod decorations;
 pub mod prometheus;
 
-pub use futures;
-pub use hyper;
-pub use hyper_tls;
-pub use percent_encoding;
-pub use tokio;
-
 use crate::term::color::Rgb;
 use crate::term::SizeInfo;
 use decorations::*;

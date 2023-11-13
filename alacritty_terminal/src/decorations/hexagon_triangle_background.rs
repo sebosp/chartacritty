@@ -2,7 +2,7 @@
 
 use crate::term::color::Rgb;
 use crate::term::SizeInfo;
-use noise::Perlin;
+use noise::{NoiseFn, Perlin};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -16,7 +16,7 @@ pub struct HexagonTriangleBackground {
     #[serde(default)]
     pub vecs: Vec<f32>,
     #[serde(skip)]
-    pub noise: noise::Perlin,
+    pub noise: Perlin,
 }
 
 impl PartialEq for HexagonTriangleBackground {
