@@ -15,15 +15,15 @@ use serde::{Deserialize, Serialize};
 // Create a Polar clock that has increasingly more and more opacity, so that the more granular time
 // is more easily visible, these can become default and we can read them from the config yaml file
 // for other hours, multipliers, etc.
-const DAY_OF_YEAR_ALPHA_MULTIPLIER: f32 = 0.20;
-const MONTH_OF_YEAR_ALPHA_MULTIPLIER: f32 = 0.025;
-const DAY_OF_MONTH_ALPHA_MULTIPLIER: f32 = 0.20;
+const DAY_OF_YEAR_ALPHA_MULTIPLIER: f32 = 0.40;
+const MONTH_OF_YEAR_ALPHA_MULTIPLIER: f32 = 0.05;
+const DAY_OF_MONTH_ALPHA_MULTIPLIER: f32 = 0.40;
 // For work hours, 9 to 5, show light line
-const WORKHOUR_OF_DAY_ALPHA_MULTIPLIER: f32 = 0.10;
+const WORKHOUR_OF_DAY_ALPHA_MULTIPLIER: f32 = 0.20;
 // For after-work-hours, show line more visible
-const NONWORKHOUR_OF_DAY_ALPHA_MULTIPLIER: f32 = 0.12;
-const MINUTE_OF_HOUR_ALPHA_MULTIPLIER: f32 = 0.15;
-const SECONDS_WITH_MILLIS_OF_MINUTE_ALPHA_MULTIPLIER: f32 = 0.10;
+const NONWORKHOUR_OF_DAY_ALPHA_MULTIPLIER: f32 = 0.24;
+const MINUTE_OF_HOUR_ALPHA_MULTIPLIER: f32 = 0.3;
+const SECONDS_WITH_MILLIS_OF_MINUTE_ALPHA_MULTIPLIER: f32 = 0.20;
 
 // The polar clock radius multipliers, similar to the alpha multiplier, these make the arcs not
 // collide. TODO: Right now they depend on the arc stroke_weight to avoid overlap.
@@ -54,7 +54,7 @@ const SECONDS_WITH_MILLIS_OF_MINUTE_STROKE_WEIGHT: f32 = 6.;
 
 /// Draws the progression arc for a time unit along its domain.
 fn build_time_arc_progress(x: f32, y: f32, radius: f32, arc_angles: f32) -> lyon::path::Path {
-    let mut builder = Path::svg_builder();
+    let mut builder = Path::svg_builder().flattened(0.1);
     builder.move_to(point(x, y + radius));
     builder.arc(
         point(x, y),
@@ -62,12 +62,13 @@ fn build_time_arc_progress(x: f32, y: f32, radius: f32, arc_angles: f32) -> lyon
         Angle::degrees(arc_angles),
         Angle::degrees(90.),
     );
+    // builder.close();
     builder.build()
 }
 
 /// Draws the whiskers showing time unit significant separators
 fn build_time_arc_whisker(x: f32, y: f32, radius: f32, arc_angles: f32) -> lyon::path::Path {
-    let mut builder = Path::svg_builder();
+    let mut builder = Path::svg_builder().flattened(0.1);
     builder.move_to(lyon::math::point(
         arc_angles.to_radians().cos() * radius + x,
         arc_angles.to_radians().sin() * radius + y,
@@ -78,6 +79,7 @@ fn build_time_arc_whisker(x: f32, y: f32, radius: f32, arc_angles: f32) -> lyon:
         lyon::math::Angle::degrees(2f32), // Draw a 2 degrees arc.
         lyon::math::Angle::degrees(arc_angles),
     );
+    builder.close();
     builder.build()
 }
 

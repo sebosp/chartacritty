@@ -87,41 +87,6 @@ impl MoonPhaseState {
         }
     }
 
-    /*
-     *     // Build a Path.
-    let mut builder = Path::builder();
-    builder.begin(point(0.0, 0.0));
-    builder.line_to(point(1.0, 0.0));
-    builder.quadratic_bezier_to(point(2.0, 0.0), point(2.0, 1.0));
-    builder.cubic_bezier_to(point(1.0, 1.0), point(0.0, 1.0), point(0.0, 0.0));
-    builder.close();
-    let path = builder.build();
-
-    // Will contain the result of the tessellation.
-    let mut geometry: VertexBuffers<super::LyonVertex, u16> = VertexBuffers::new();
-
-    let mut tessellator = FillTessellator::new();
-
-    {
-        // Compute the tessellation.
-        tessellator.tessellate_path(
-            &path,
-            &FillOptions::default(),
-            &mut BuffersBuilder::new(&mut geometry, |vertex: FillVertex| {
-                super::LyonVertex {
-                    position: vertex.position().to_array(),
-                }
-            }),
-        ).unwrap();
-    }
-
-    // The tessellated geometry is ready to be uploaded to the GPU.
-    println!(" -- {} vertices {} indices",
-        geometry.vertices.len(),
-        geometry.indices.len()
-    );
-     */
-
     /// Creates vertices for the Polar Clock Arc
     fn gen_vertices(&self, x: f32, y: f32, size_info: SizeInfo) -> Vec<f32> {
         log::info!("MoonPhase::gen_vertices, phase: {:?}", self.moon_phase);
@@ -167,6 +132,7 @@ impl MoonPhaseState {
             ),
             lyon::math::point(moon_fraction_x, moon_fraction_y + moon_fraction_radius),
         );
+        builder.close();
         let path = builder.build();
         super::LyonDecoration::gen_vertices_from_lyon_path(&path, size_info, ellipse_color)
     }

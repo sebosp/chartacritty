@@ -5,14 +5,16 @@ use super::PolarClockState;
 use crate::term::SizeInfo;
 use chrono::prelude::*;
 use lyon::tessellation as tess;
-use palette::rgb::{Rgb, Rgba};
+use palette::rgb::{FromHexError, Rgb, Rgba, Srgb};
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 use tess::geometry_builder::{simple_builder, VertexBuffers};
 use tess::math::Point;
 use tess::*;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct LyonDecoration {
+    #[serde(deserialize_with = "from_str_serde")]
     pub color: Rgb,
     pub alpha: f32,
     #[serde(default)]
@@ -33,6 +35,17 @@ pub struct LyonDecoration {
     /// The last time the decoration was drawn.
     #[serde(default)]
     pub last_drawn_msecs: f32,
+}
+
+fn from_str_serde<'de, D>(deserializer: D) -> Result<Rgb, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    let s = if let Some(stripped) = s.strip_prefix("0x") { format!("#{}", stripped) } else { s };
+    let color_convert: Result<Rgb<Srgb, u8>, FromHexError> = Rgb::<Srgb, u8>::from_str(&s);
+    let color = color_convert.map_err(serde::de::Error::custom)?;
+    Ok(Rgb::new(color.red as f32 / 255f32, color.green as f32 / 255f32, color.blue as f32 / 255f32))
 }
 
 fn local_now() -> DateTime<Local> {
@@ -98,7 +111,7 @@ impl LyonDecoration {
     /// Transforms lyon paths into xyzrgba vertices we can draw through our renderer
     pub fn gen_vertices_from_lyon_path(
         path: &lyon::path::Path,
-        _size_info: SizeInfo,
+        size_info: SizeInfo,
         color: Rgba<f32>,
     ) -> Vec<f32> {
         // Create the destination vertex and index buffers.
@@ -108,18 +121,21 @@ impl LyonDecoration {
             let mut vertex_builder = simple_builder(&mut buffers);
 
             // Create the tessellator.
-            let mut tessellator = FillTessellator::new();
+            let mut tessellator = StrokeTessellator::new();
 
             // Compute the tessellation.
-            let result =
-                tessellator.tessellate_path(path, &FillOptions::default(), &mut vertex_builder);
+            let result = tessellator.tessellate_path(
+                path,
+                &StrokeOptions::default().with_line_width(4.).with_tolerance(50.),
+                &mut vertex_builder,
+            );
             assert!(result.is_ok());
         }
         // No idea how gl Draw Elements work so let's build the payload by hand:
         let mut vertices: Vec<f32> = Vec::with_capacity(buffers.indices.len() * 7usize);
         for idx in buffers.indices {
-            vertices.push(buffers.vertices[idx as usize].x);
-            vertices.push(buffers.vertices[idx as usize].y);
+            vertices.push(size_info.scale_x(buffers.vertices[idx as usize].x));
+            vertices.push(size_info.scale_y(buffers.vertices[idx as usize].y));
             vertices.push(0.0); // z
             vertices.push(color.color.red);
             vertices.push(color.color.green);
