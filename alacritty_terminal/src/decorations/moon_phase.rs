@@ -1,7 +1,7 @@
 //! Moon Phase Nannou decoration
 
 use crate::term::SizeInfo;
-use lyon::math::{point, vector};
+use lyon::math::point;
 use lyon::path::Path;
 use lyon::tessellation::*;
 use moon_phase::MoonPhase;
@@ -109,7 +109,7 @@ impl MoonPhaseState {
         let moon_radius = moon_radius.abs();
 
         // https://spencermortensen.com/articles/bezier-circle/
-        const CONSTANT_FACTOR: f32 = 0.55191505;
+        //  const CONSTANT_FACTOR: f32 = 0.55191505;
         // TODO: Winding, and use CONSTANT_FACTOR
 
         builder.begin(point(moon_center_x, moon_center_y + moon_radius));
