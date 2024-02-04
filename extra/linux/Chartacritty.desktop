@@ -1,0 +1,17 @@
+[Desktop Entry]
+Type=Application
+TryExec=chartacritty
+Exec=chartacritty
+Icon=Chartacritty
+Terminal=false
+Categories=System;TerminalEmulator;
+
+Name=Chartacritty
+GenericName=Terminal
+Comment=A semi-fast, cross-platform, OpenGL terminal emulator
+StartupWMClass=Chartacritty
+Actions=New;
+
+[Desktop Action New]
+Name=New Terminal
+Exec=chartacritty
