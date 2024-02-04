@@ -93,50 +93,26 @@ impl MoonPhaseState {
         log::info!("MoonPhase::gen_vertices, phase: {:?}", self.moon_phase);
         let ellipse_color = LIGHTSKYBLUE.into_format::<f32>();
         let ellipse_color =
-            Rgba::new(ellipse_color.red, ellipse_color.green, ellipse_color.blue, 0.2f32);
+            Rgba::new(ellipse_color.red, ellipse_color.green, ellipse_color.blue, 0.02f32);
         let x_60_degrees_offset = super::COS_60 * self.radius;
         let y_60_degrees_offset = super::SIN_60 * self.radius;
-        let mut builder = Path::builder().with_svg();
+        let tolerance = 0.5; // maximum distance between a curve and its approximation.
+        let mut builder = Path::builder().flattened(tolerance);
         // TODO: Add the ellipse stroke.
 
         // phase 0.5 is full
         let illuminated_percent = 1. - ((self.moon_phase.phase as f32 - 0.5).abs() * 2.);
         let moon_center_x = x + x_60_degrees_offset;
         let moon_center_y = y + y_60_degrees_offset;
-        let moon_center = point(moon_center_x, moon_center_y);
         let moon_radius = self.radius * 0.4;
-        // Start from the top
-        builder.move_to(point(moon_center_x, moon_center_y + moon_radius));
+
         let moon_radius = moon_radius.abs();
-        let dir = 1.0;
 
         // https://spencermortensen.com/articles/bezier-circle/
         const CONSTANT_FACTOR: f32 = 0.55191505;
-        let d = moon_radius * CONSTANT_FACTOR;
+        // TODO: Winding, and use CONSTANT_FACTOR
 
-        let ctrl_0 = moon_center + vector(-moon_radius, -d * dir);
-        let ctrl_1 = moon_center + vector(-d, -moon_radius * dir);
-        let mid = moon_center + vector(0.0, -moon_radius * dir);
-        builder.cubic_bezier_to(ctrl_0, ctrl_1, mid);
-
-        let ctrl_0 = moon_center + vector(d, -moon_radius * dir);
-        let ctrl_1 = moon_center + vector(moon_radius, -d * dir);
-        let mid = moon_center + vector(moon_radius, 0.0);
-        builder.cubic_bezier_to(ctrl_0, ctrl_1, mid);
-
-        let ctrl_0 = moon_center + vector(moon_radius, d * dir);
-        let ctrl_1 = moon_center + vector(d, moon_radius * dir);
-        let mid = moon_center + vector(0.0, moon_radius * dir);
-        builder.cubic_bezier_to(ctrl_0, ctrl_1, mid);
-
-        let ctrl_0 = moon_center + vector(-d, moon_radius * dir);
-        let ctrl_1 = moon_center + vector(-moon_radius, d * dir);
-        let mid = moon_center + vector(-moon_radius, 0.0);
-        builder.cubic_bezier_to(ctrl_0, ctrl_1, mid);
-
-        builder.close();
-        // Go  back to the top
-        builder.move_to(point(moon_center_x, moon_center_y + moon_radius));
+        builder.begin(point(moon_center_x, moon_center_y + moon_radius));
         // For some reason I have to multiply the control point's x for 1.33 to get a shape similar to
         // a circle... I'm kindof trying to build half a circle with bezier curves... Maybe not the
         // right way.
@@ -158,7 +134,7 @@ impl MoonPhaseState {
             ),
             point(moon_center_x, moon_center_y + moon_radius),
         );
-        builder.close();
+        builder.end(true);
         let path = builder.build();
         super::LyonDecoration::gen_vertices_from_lyon_path(&path, size_info, ellipse_color)
     }
