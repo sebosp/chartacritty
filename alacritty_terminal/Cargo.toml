@@ -25,17 +25,16 @@ libc = "0.2"
 log = "0.4"
 mio = "0.6.20"
 mio-extras = "2"
-tokio = { version = "1.28", features = ["full"] }
+reqwest = { version = "0.11", features = ["json"] }
+tokio = { version = "1.36", features = ["full"] }
 futures = "0.3.28"
-hyper = { version = "0.14.27", features = ["full"] }
-hyper-rustls = "0.24.2"
-rustls = "0.21.8"
-rustls-native-certs = "0.6"
+tokio-native-tls = "0.3"
+tower-service = "0.3"
 serde_derive = "1.0"
 serde_json = "1"
 env_logger = "0.7"
 tracing = { version = "0.1", features = ["log", "log-always"] }
-tracing-log = { version = "0.1", features = ["env_logger"]}
+tracing-log = { version = "0.2"}
 percent-encoding = "2.2"
 rand = "0.8.5"
 lyon = { version ="1.0", features = ["serialization"] }
@@ -49,6 +48,7 @@ unicode-width = "0.1"
 vte = { version = "0.11.1", default-features = false, features = ["ansi", "serde"] }
 noise = "0.8.2"
 palette = { version = "0.7.3", features = ["serializing", "named"] }
+bytes = "1.5"
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.26.2", default-features = false, features = ["term"] }

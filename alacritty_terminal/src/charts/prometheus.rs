@@ -2,8 +2,6 @@
 use crate::charts::TimeSeries;
 use crate::charts::ValueCollisionPolicy;
 use crate::term::color::Rgb;
-use hyper::client::connect::HttpConnector;
-use hyper::Client;
 use log::*;
 use percent_encoding::{utf8_percent_encode, CONTROLS};
 use serde::{Deserialize, Serialize};
@@ -116,7 +114,7 @@ pub struct PrometheusTimeSeries {
 
     /// The URL were Prometheus metrics may be acquaired
     #[serde(skip)]
-    pub url: hyper::Uri,
+    pub url: String,
 
     /// A response may be vector, matrix, scalar or string
     #[serde(default)]
@@ -152,7 +150,7 @@ impl Default for PrometheusTimeSeries {
             },
             data: HTTPResponseData::default(),
             source: String::from(""),
-            url: hyper::Uri::default(),
+            url: String::from(""),
             pull_interval: 15,
             data_type: String::from("vector"),
             required_labels: HashMap::new(),
@@ -179,7 +177,7 @@ impl PrometheusTimeSeries {
             },
             data: HTTPResponseData::default(),
             source: url_param,
-            url: hyper::Uri::default(),
+            url: String::from(""),
             pull_interval,
             data_type,
             required_labels,
@@ -187,7 +185,7 @@ impl PrometheusTimeSeries {
         };
         match PrometheusTimeSeries::prepare_url(&res.source, res.series.metrics_capacity as u64) {
             Ok(url) => {
-                res.url = url;
+                res.url = url.to_string();
                 Ok(res)
             },
             Err(err) => Err(err),
@@ -199,10 +197,10 @@ impl PrometheusTimeSeries {
         self.series.collision_policy = ValueCollisionPolicy::Overwrite;
     }
 
-    /// `prepare_url` loads self.source into a hyper::Uri
+    /// `prepare_url` loads self.source into a reqwest::Url
     /// It also adds a epoch-start and epoch-end to the
     /// URL depending on the metrics capacity
-    pub fn prepare_url(source: &str, metrics_capacity: u64) -> Result<hyper::Uri, String> {
+    pub fn prepare_url(source: &str, metrics_capacity: u64) -> Result<reqwest::Url, String> {
         // url should be like ("http://localhost:9090/api/v1/query?{}",query)
         // We split self.source into url_base_path?params
         // XXX: We only support one param, if more params are added with &
@@ -226,11 +224,9 @@ impl PrometheusTimeSeries {
             let step = "1"; // Maybe we can change granularity later
             encoded_url = format!("{}&start={}&end={}&step={}", encoded_url, start, end, step);
         }
-        match encoded_url.parse::<hyper::Uri>() {
+        match encoded_url.parse::<reqwest::Url>() {
             Ok(url) => {
-                if url.scheme() == Some(&hyper::http::uri::Scheme::HTTP)
-                    || url.scheme() == Some(&hyper::http::uri::Scheme::HTTPS)
-                {
+                if url.scheme() == "http" || url.scheme() == "https" {
                     debug!("Setting url to: {:?}", url);
                     Ok(url)
                 } else {
@@ -345,38 +341,27 @@ impl PrometheusTimeSeries {
 /// `get_from_prometheus` is an async operation that returns an Optional
 /// PrometheusResponse
 pub async fn get_from_prometheus(
-    url: hyper::Uri,
+    url: reqwest::Url,
     connect_timeout: Option<Duration>,
-) -> Result<hyper::body::Bytes, (hyper::Uri, hyper::Error)> {
+) -> Result<bytes::Bytes, (reqwest::Url, reqwest::Error)> {
     debug!("get_from_prometheus: Loading Prometheus URL: {}", url);
-    let request = if url.scheme() == Some(&hyper::http::uri::Scheme::HTTP) {
-        Client::builder()
-            .pool_idle_timeout(connect_timeout) // Is this the same as connect_timeout in Client?
-            .build::<_, hyper::Body>(HttpConnector::new())
-            .get(url.clone())
-    } else {
-        let mut roots = rustls::RootCertStore::empty();
-        for cert in rustls_native_certs::load_native_certs().expect("could not load platform certs")
-        {
-            roots.add(&rustls::Certificate(cert.0)).unwrap();
-        }
-        let tls = rustls::ClientConfig::builder()
-            .with_safe_defaults()
-            .with_root_certificates(roots)
-            .with_no_client_auth();
-        let https = hyper_rustls::HttpsConnectorBuilder::new()
-            .with_tls_config(tls)
-            .https_or_http()
-            .enable_http1()
-            .build();
-        Client::builder().build::<_, hyper::Body>(https).get(url.clone())
-    };
     let url_copy = url.clone();
-    match request.await {
+    // use the timeout:
+    let client = match reqwest::Client::builder()
+        .timeout(connect_timeout.unwrap_or(Duration::from_secs(10)))
+        .build()
+    {
+        Ok(res) => res,
+        Err(err) => {
+            error!("get_from_prometheus: Error creating client: {:?}", err);
+            return Err((url_copy, err));
+        },
+    };
+    match client.get(url).send().await {
         // Since we don't know the end yet, we can't simply stream
         // the chunks as they arrive as we did with the above uppercase endpoint.
         // So here we do `.await` on the future, waiting on concatenating the full body,
-        Ok(res) => match hyper::body::to_bytes(res.into_body()).await {
+        Ok(res) => match res.bytes().await {
             Ok(body) => Ok(body),
             Err(err) => Err((url_copy, err)),
         },
@@ -386,9 +371,10 @@ pub async fn get_from_prometheus(
         },
     }
 }
+
 /// `parse_json` transforms a hyper body chunk into a possible
 /// PrometheusResponse, mostly used for testing
-pub fn parse_json(url: &str, body: &hyper::body::Bytes) -> Option<HTTPResponse> {
+pub fn parse_json(url: &str, body: &bytes::Bytes) -> Option<HTTPResponse> {
     let prom_res: Result<HTTPResponse, serde_json::Error> = serde_json::from_slice(body);
     match prom_res {
         Ok(v) => {
@@ -434,7 +420,7 @@ mod tests {
         );
         assert!(test0_res.is_ok());
         // A json returned by prometheus
-        let test0_json = hyper::body::Bytes::from(
+        let test0_json = bytes::Bytes::from(
             r#"
             {
               "status": "error",
@@ -445,7 +431,7 @@ mod tests {
         );
         let res0_json = parse_json(&String::from("http://test"), &test0_json);
         assert!(res0_json.is_none());
-        let test1_json = hyper::body::Bytes::from("Internal Server Error");
+        let test1_json = bytes::Bytes::from("Internal Server Error");
         let res1_json = parse_json(&String::from("http://test"), &test1_json);
         assert!(res1_json.is_none());
     }
@@ -461,7 +447,7 @@ mod tests {
         assert!(test0_res.is_ok());
         let mut test0 = test0_res.unwrap();
         // A json returned by prometheus
-        let test0_json = hyper::body::Bytes::from(
+        let test0_json = bytes::Bytes::from(
             r#"
             { "status":"success",
               "data":{
@@ -476,7 +462,7 @@ mod tests {
         // 1 items should have been loaded
         assert_eq!(res0_load, Ok(1usize));
         // This json is missing the value after the epoch
-        let test1_json = hyper::body::Bytes::from(
+        let test1_json = bytes::Bytes::from(
             r#"
             { "status":"success",
               "data":{
@@ -506,7 +492,7 @@ mod tests {
         // Let's create space for 15, but we will receive 11 records:
         test0.series = test0.series.with_capacity(15usize);
         // A json returned by prometheus
-        let test0_json = hyper::body::Bytes::from(
+        let test0_json = bytes::Bytes::from(
             r#"
             {
               "status": "success",
@@ -541,7 +527,7 @@ mod tests {
         assert_eq!(loaded_data[1], (1558253470, Some(1.70f64)));
         assert_eq!(loaded_data[5], (1558253474, Some(1.74f64)));
         // Let's add one more item and subtract one item from the array
-        let test1_json = hyper::body::Bytes::from(
+        let test1_json = bytes::Bytes::from(
             r#"
             {
               "status": "success",
@@ -587,7 +573,7 @@ mod tests {
         assert_eq!(loaded_data[3], (1558253472, Some(1.72f64)));
         assert_eq!(loaded_data[5], (1558253474, Some(1.74f64)));
         // This json is missing the value after the epoch
-        let test2_json = hyper::body::Bytes::from(
+        let test2_json = bytes::Bytes::from(
             r#"
             {
               "status": "success",
@@ -626,7 +612,7 @@ mod tests {
         );
         assert!(test0_res.is_ok());
         let mut test0 = test0_res.unwrap();
-        let test1_json = hyper::body::Bytes::from(
+        let test1_json = bytes::Bytes::from(
             r#"
             {
               "status": "success",
@@ -735,7 +721,7 @@ mod tests {
         assert!(test0_res.is_ok());
         let mut test0 = test0_res.unwrap();
         // A json returned by prometheus
-        let test0_json = hyper::body::Bytes::from(
+        let test0_json = bytes::Bytes::from(
             r#"
             {
               "status": "success",
@@ -779,7 +765,7 @@ mod tests {
             vec![(1557571137u64, Some(1.)), (1557571138u64, Some(1.))]
         );
 
-        let test1_json = hyper::body::Bytes::from(
+        let test1_json = bytes::Bytes::from(
             r#"
             {
               "status": "success",
@@ -827,7 +813,7 @@ mod tests {
             vec![(1557571137u64, Some(1.)), (1557571138u64, Some(1.)), (1557571139u64, Some(1.))]
         );
 
-        let test2_json = hyper::body::Bytes::from(
+        let test2_json = bytes::Bytes::from(
             r#"
             {
               "status": "success",
@@ -872,7 +858,7 @@ mod tests {
             vec![(1557571137u64, Some(1.)), (1557571138u64, Some(1.)), (1557571139u64, Some(1.))]
         );
         // This json is missing the value after the epoch
-        let test3_json = hyper::body::Bytes::from(
+        let test3_json = bytes::Bytes::from(
             r#"
             {
               "status": "success",
@@ -995,7 +981,7 @@ mod tests {
             source: String::from(
                 "http://localhost:9090/api/v1/query_range?query=node_memory_bytes_total",
             ),
-            url: "/".parse::<hyper::Uri>().unwrap(),
+            url: "/".parse::<reqwest::Url>().unwrap(),
             data_type: String::from(""),
             required_labels: test_labels,
             pull_interval: 15,
@@ -1003,7 +989,7 @@ mod tests {
             alpha: 1.0,
         };
         // This should result in adding 15 more items
-        let test1_json = hyper::body::Bytes::from(
+        let test1_json = bytes::Bytes::from(
             r#"{
               "status":"success",
               "data":{
@@ -1388,7 +1374,7 @@ mod tests {
             source: String::from(
                 "http://localhost:9090/api/v1/query_range?query=node_memory_bytes_total",
             ),
-            url: "/".parse::<hyper::Uri>().unwrap(),
+            url: "/".parse::<reqwest::Url>().unwrap(),
             data_type: String::from(""),
             required_labels: test_labels,
             pull_interval: 15,
@@ -1396,7 +1382,7 @@ mod tests {
             alpha: 1.0,
         };
         assert_eq!(test.series.metrics.len(), 300usize);
-        let test1_json = hyper::body::Bytes::from(
+        let test1_json = bytes::Bytes::from(
             r#"{
               "status":"success",
               "data":{
