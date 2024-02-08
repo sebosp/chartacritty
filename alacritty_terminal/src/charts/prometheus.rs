@@ -341,7 +341,7 @@ impl PrometheusTimeSeries {
 /// `get_from_prometheus` is an async operation that returns an Optional
 /// PrometheusResponse
 pub async fn get_from_prometheus(
-    url: reqwest::Url,
+    url: String,
     connect_timeout: Option<Duration>,
 ) -> Result<bytes::Bytes, (reqwest::Url, reqwest::Error)> {
     debug!("get_from_prometheus: Loading Prometheus URL: {}", url);
@@ -981,7 +981,7 @@ mod tests {
             source: String::from(
                 "http://localhost:9090/api/v1/query_range?query=node_memory_bytes_total",
             ),
-            url: "/".parse::<reqwest::Url>().unwrap(),
+            url: String::from("/"),
             data_type: String::from(""),
             required_labels: test_labels,
             pull_interval: 15,
@@ -1374,7 +1374,7 @@ mod tests {
             source: String::from(
                 "http://localhost:9090/api/v1/query_range?query=node_memory_bytes_total",
             ),
-            url: "/".parse::<reqwest::Url>().unwrap(),
+            url: String::from("/"),
             data_type: String::from(""),
             required_labels: test_labels,
             pull_interval: 15,
