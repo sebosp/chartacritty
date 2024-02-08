@@ -22,9 +22,7 @@ mod bindings;
 mod mouse;
 
 use crate::cli::Options;
-pub use crate::config::bindings::{
-    Action, Binding, BindingMode, Key, MouseAction, SearchAction, ViAction,
-};
+pub use crate::config::bindings::{Action, BindingMode, Key, MouseAction, SearchAction, ViAction};
 #[cfg(test)]
 pub use crate::config::mouse::{ClickHandler, Mouse};
 pub use crate::config::ui_config::UiConfig;

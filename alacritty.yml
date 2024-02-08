@@ -1055,7 +1055,7 @@ key_bindings:
 #          radius: 100
 #    - type: Triangles
 #      props:
-#        type: Nannou
+#        type: Lyon
 #        props:
 #          color: "0x1958a7"
 #          alpha: 0.2

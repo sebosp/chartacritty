@@ -9,7 +9,6 @@ use glutin::display::{GetGlDisplay, GlDisplay};
 use log::{debug, error, info, warn, LevelFilter};
 use once_cell::sync::OnceCell;
 
-use alacritty_terminal::decorations::NannouDrawArrayMode;
 use alacritty_terminal::index::Point;
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::color::Rgb;
@@ -64,17 +63,6 @@ pub enum DrawArrayMode {
     // GlQuadStrip, // Unsupported
     // GlQuads,
     // GlPolygon,
-}
-
-impl From<NannouDrawArrayMode> for DrawArrayMode {
-    fn from(src: NannouDrawArrayMode) -> Self {
-        match src {
-            NannouDrawArrayMode::Points => DrawArrayMode::Points,
-            NannouDrawArrayMode::LineStrip => DrawArrayMode::LineStrip,
-            NannouDrawArrayMode::LineLoop => DrawArrayMode::LineLoop,
-            NannouDrawArrayMode::GlTriangles => DrawArrayMode::GlTriangles,
-        }
-    }
 }
 
 impl From<DrawArrayMode> for u32 {

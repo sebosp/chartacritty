@@ -25,7 +25,7 @@ version = "0.1.2-dev"
 [dependencies]
 tokio = { version = "1.28", features = ["full"] }
 futures = "0.3.28"
-nannou = "0.18"
+lyon = "1.0"
 bitflags = "2.2.1"
 clap = { version = "4.2.7", features = ["derive", "env"] }
 copypasta = { version = "0.8.1", default-features = false }

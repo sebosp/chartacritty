@@ -2,8 +2,8 @@
 
 use crate::term::color::Rgb;
 use crate::term::SizeInfo;
+use noise::{NoiseFn, Perlin};
 use serde::{Deserialize, Serialize};
-use ::nannou::noise::*;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct HexagonTriangleBackground {
@@ -21,12 +21,12 @@ pub struct HexagonTriangleBackground {
 
 impl PartialEq for HexagonTriangleBackground {
     fn eq(&self, rhs: &Self) -> bool {
-        self.vertex_color == rhs.vertex_color &&
-        self.center_color == rhs.center_color &&
-        self.alpha ==  rhs.alpha &&
-        self.size_info == rhs.size_info &&
-        self.radius == rhs.radius &&
-        self.vecs ==  rhs.vecs
+        self.vertex_color == rhs.vertex_color
+            && self.center_color == rhs.center_color
+            && self.alpha == rhs.alpha
+            && self.size_info == rhs.size_info
+            && self.radius == rhs.radius
+            && self.vecs == rhs.vecs
     }
 }
 
@@ -38,7 +38,7 @@ impl HexagonTriangleBackground {
         size_info: SizeInfo,
         radius: f32,
     ) -> Self {
-        let noise = Perlin::new();
+        let noise = Default::default();
         HexagonTriangleBackground {
             vertex_color,
             center_color,
@@ -95,7 +95,7 @@ impl HexagonTriangleBackground {
         let mut west = sides.clone();
         let mut southwest = sides.clone();
         let mut southeast = sides;
-        for  coord in coords.iter() {
+        for coord in coords.iter() {
             // The first pair of coordinates are the center of the hexagon
             center[0] = self.size_info.scale_x(coord.x);
             center[1] = self.size_info.scale_y(coord.y);
@@ -157,4 +157,3 @@ impl HexagonTriangleBackground {
         }
     }
 }
-

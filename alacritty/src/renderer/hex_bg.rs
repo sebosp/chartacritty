@@ -106,7 +106,7 @@ impl HexBgRenderer {
             // Set "renderedTexture" as our colour attachement #0
             gl::FramebufferTexture(gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT0, rendered_texture, 0);
             // Set the list of draw buffers.
-            let draw_buffers = vec![gl::COLOR_ATTACHMENT0];
+            let draw_buffers = [gl::COLOR_ATTACHMENT0];
             gl::DrawBuffers(1, draw_buffers.as_ptr() as *const _); // "1" is the size of DrawBuffers
             if gl::CheckFramebufferStatus(gl::FRAMEBUFFER) != gl::FRAMEBUFFER_COMPLETE {
                 log::error!("CheckFramebufferStatus is not COMPLETE state");
@@ -146,7 +146,7 @@ impl HexBgRenderer {
             // Load vertex data into array buffer
             gl::BufferData(
                 gl::ARRAY_BUFFER,
-                (mem::size_of::<f32>() * opengl_data.len()) as _,
+                std::mem::size_of_val(opengl_data) as _,
                 opengl_data.as_ptr() as *const _,
                 gl::STATIC_DRAW,
             );
