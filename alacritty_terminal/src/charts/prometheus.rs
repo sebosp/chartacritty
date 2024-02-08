@@ -197,10 +197,10 @@ impl PrometheusTimeSeries {
         self.series.collision_policy = ValueCollisionPolicy::Overwrite;
     }
 
-    /// `prepare_url` loads self.source into a reqwest::Url
+    /// `prepare_url` loads self.source into a String
     /// It also adds a epoch-start and epoch-end to the
     /// URL depending on the metrics capacity
-    pub fn prepare_url(source: &str, metrics_capacity: u64) -> Result<reqwest::Url, String> {
+    pub fn prepare_url(source: &str, metrics_capacity: u64) -> Result<String, String> {
         // url should be like ("http://localhost:9090/api/v1/query?{}",query)
         // We split self.source into url_base_path?params
         // XXX: We only support one param, if more params are added with &
@@ -228,7 +228,7 @@ impl PrometheusTimeSeries {
             Ok(url) => {
                 if url.scheme() == "http" || url.scheme() == "https" {
                     debug!("Setting url to: {:?}", url);
-                    Ok(url)
+                    Ok(url.to_string())
                 } else {
                     error!("Only HTTP and HTTPS protocols are supported");
                     Err(format!("Unsupported protocol: {:?}", url.scheme()))
@@ -343,7 +343,7 @@ impl PrometheusTimeSeries {
 pub async fn get_from_prometheus(
     url: String,
     connect_timeout: Option<Duration>,
-) -> Result<bytes::Bytes, (reqwest::Url, reqwest::Error)> {
+) -> Result<bytes::Bytes, (String, reqwest::Error)> {
     debug!("get_from_prometheus: Loading Prometheus URL: {}", url);
     let url_copy = url.clone();
     // use the timeout:
