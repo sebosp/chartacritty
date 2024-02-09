@@ -9,10 +9,6 @@ homepage = "https://github.com/alacritty/alacritty"
 edition = "2021"
 rust-version = "1.70.0"
 
-[features]
-default = ["serde"]
-serde = ["dep:serde", "bitflags/serde", "vte/serde"]
-
 [dependencies]
 base64 = "0.21.3"
 bitflags = "2.4.1"
@@ -24,7 +20,7 @@ polling = "3.0.0"
 regex-automata = "0.4.3"
 unicode-width = "0.1"
 vte = { version = "0.13.0", default-features = false, features = ["ansi", "serde"] }
-serde = { version = "1", features = ["derive", "rc"], optional = true }
+serde = { version = "1", features = ["derive", "rc"]}
 reqwest = { version = "0.11", features = ["json"] }
 tokio = { version = "1.36", features = ["full"] }
 futures = "0.3.28"
