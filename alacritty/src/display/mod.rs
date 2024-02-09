@@ -521,10 +521,8 @@ impl Display {
         let mut damage_tracker = DamageTracker::new(size_info.screen_lines(), size_info.columns());
         damage_tracker.debug = config.debug.highlight_damage;
 
-        let decorations_config = match &config.decorations {
-            Some(decorations) => Some(decorations.config.0.clone()),
-            None => None,
-        };
+        let decorations_config =
+            config.decorations.as_ref().map(|decorations| decorations.config.0.clone());
         let mut decorations =
             DecorationsConfig::optional_decor_to_sized(decorations_config, size_info.into());
         decorations.init_timers();
