@@ -26,9 +26,9 @@
 // TODO: There are several RFCs in rust to allow enum variants to impl a specific Trait but they
 // haven't been merged
 use crate::charts::{ChartSizeInfo, TimeSeriesSource, TimeSeriesStats, Value2D};
-use crate::term::color::Rgb;
 use serde::{Deserialize, Serialize};
 use tracing::{event, span, Level};
+use vte::ansi::Rgb;
 /// `Decoration` contains several types of decorations to add to a chart
 #[derive(Debug, Default, Serialize, Deserialize, PartialEq, Clone)]
 #[serde(tag = "type")]
@@ -63,10 +63,10 @@ impl Decoration {
         match self {
             Decoration::Reference(ref mut d) => {
                 d.update_opengl_vecs(display_size, offset, stats, sources)
-            }
+            },
             Decoration::Alert(ref mut d) => {
                 d.update_opengl_vecs(display_size, offset, stats, sources)
-            }
+            },
             Decoration::None => (),
         };
     }
@@ -494,27 +494,27 @@ impl ActiveAlertUnderLineDecoration {
                         {
                             return true;
                         }
-                    }
+                    },
                     AlertComparator::LessThan => {
                         if series.series().stats.last < self.threshold {
                             return true;
                         }
-                    }
+                    },
                     AlertComparator::LessThanOrEqual => {
                         if series.series().stats.last <= self.threshold {
                             return true;
                         }
-                    }
+                    },
                     AlertComparator::GreaterThan => {
                         if series.series().stats.last > self.threshold {
                             return true;
                         }
-                    }
+                    },
                     AlertComparator::GreaterThanOrEqual => {
                         if series.series().stats.last >= self.threshold {
                             return true;
                         }
-                    }
+                    },
                 }
             }
         }

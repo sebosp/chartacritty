@@ -1,19 +1,22 @@
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::ffi::{CStr, CString};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
 use std::{fmt, ptr};
 
+use ahash::RandomState;
 use crossfont::Metrics;
 use glutin::context::{ContextApi, GlContext, PossiblyCurrentContext};
 use glutin::display::{GetGlDisplay, GlDisplay};
 use log::{debug, error, info, warn, LevelFilter};
-use once_cell::sync::OnceCell;
+use unicode_width::UnicodeWidthChar;
 
 use alacritty_terminal::index::Point;
 use alacritty_terminal::term::cell::Flags;
-use alacritty_terminal::term::color::Rgb;
 
 use crate::config::debug::RendererPreference;
+use crate::display::color::Rgb;
 use crate::display::content::RenderableCell;
 use crate::display::SizeInfo;
 use crate::gl;
@@ -49,6 +52,9 @@ pub static GL_FUNS_LOADED: AtomicBool = AtomicBool::new(false);
 pub enum Error {
     /// Shader error.
     Shader(ShaderError),
+
+    /// Other error.
+    Other(String),
 }
 
 #[derive(Debug, Clone)]
@@ -88,6 +94,7 @@ impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Error::Shader(err) => err.source(),
+            Error::Other(_) => None,
         }
     }
 }
@@ -98,6 +105,9 @@ impl fmt::Display for Error {
             Error::Shader(err) => {
                 write!(f, "There was an error initializing the shaders: {}", err)
             },
+            Error::Other(err) => {
+                write!(f, "{}", err)
+            },
         }
     }
 }
@@ -105,6 +115,12 @@ impl fmt::Display for Error {
 impl From<ShaderError> for Error {
     fn from(val: ShaderError) -> Self {
         Error::Shader(val)
+    }
+}
+
+impl From<String> for Error {
+    fn from(val: String) -> Self {
+        Error::Other(val)
     }
 }
 
@@ -122,6 +138,25 @@ pub struct Renderer {
     hex_bg_renderer: HexBgRenderer,
 }
 
+/// Wrapper around gl::GetString with error checking and reporting.
+fn gl_get_string(
+    string_id: gl::types::GLenum,
+    description: &str,
+) -> Result<Cow<'static, str>, Error> {
+    unsafe {
+        let string_ptr = gl::GetString(string_id);
+        match gl::GetError() {
+            gl::NO_ERROR if !string_ptr.is_null() => {
+                Ok(CStr::from_ptr(string_ptr as *const _).to_string_lossy())
+            },
+            gl::INVALID_ENUM => {
+                Err(format!("OpenGL error requesting {}: invalid enum", description).into())
+            },
+            error_id => Err(format!("OpenGL error {} requesting {}", error_id, description).into()),
+        }
+    }
+}
+
 impl Renderer {
     /// Create a new renderer.
     ///
@@ -129,7 +164,7 @@ impl Renderer {
     /// supported OpenGL version.
     pub fn new(
         context: &PossiblyCurrentContext,
-        renderer_prefernce: Option<RendererPreference>,
+        renderer_preference: Option<RendererPreference>,
     ) -> Result<Self, Error> {
         // We need to load OpenGL functions once per instance, but only after we make our context
         // current due to WGL limitations.
@@ -141,14 +176,9 @@ impl Renderer {
             });
         }
 
-        let (shader_version, gl_version, renderer) = unsafe {
-            let renderer = CStr::from_ptr(gl::GetString(gl::RENDERER) as *mut _).to_string_lossy();
-            let shader_version =
-                CStr::from_ptr(gl::GetString(gl::SHADING_LANGUAGE_VERSION) as *mut _)
-                    .to_string_lossy();
-            let gl_version = CStr::from_ptr(gl::GetString(gl::VERSION) as *mut _).to_string_lossy();
-            (shader_version, gl_version, renderer)
-        };
+        let shader_version = gl_get_string(gl::SHADING_LANGUAGE_VERSION, "shader version")?;
+        let gl_version = gl_get_string(gl::VERSION, "OpenGL version")?;
+        let renderer = gl_get_string(gl::RENDERER, "renderer version")?;
 
         info!("Running on {renderer}");
         info!("OpenGL version {gl_version}, shader_version {shader_version}");
@@ -156,7 +186,7 @@ impl Renderer {
         let is_gles_context = matches!(context.context_api(), ContextApi::Gles(_));
 
         // Use the config option to enforce a particular renderer configuration.
-        let (use_glsl3, allow_dsb) = match renderer_prefernce {
+        let (use_glsl3, allow_dsb) = match renderer_preference {
             Some(RendererPreference::Glsl3) => (true, true),
             Some(RendererPreference::Gles2) => (false, true),
             Some(RendererPreference::Gles2Pure) => (false, false),
@@ -218,15 +248,30 @@ impl Renderer {
         size_info: &SizeInfo,
         glyph_cache: &mut GlyphCache,
     ) {
-        let cells = string_chars.enumerate().map(|(i, character)| RenderableCell {
-            point: Point::new(point.line, point.column + i),
-            character,
-            extra: None,
-            flags: Flags::empty(),
-            bg_alpha: 1.0,
-            fg,
-            bg,
-            underline: fg,
+        let mut skip_next = false;
+        let cells = string_chars.enumerate().filter_map(|(i, character)| {
+            if skip_next {
+                skip_next = false;
+                return None;
+            }
+
+            let mut flags = Flags::empty();
+            if character.width() == Some(2) {
+                flags.insert(Flags::WIDE_CHAR);
+                // Wide character is always followed by a spacer, so skip it.
+                skip_next = true;
+            }
+
+            Some(RenderableCell {
+                point: Point::new(point.line, point.column + i),
+                character,
+                extra: None,
+                flags: Flags::empty(),
+                bg_alpha: 1.0,
+                fg,
+                bg,
+                underline: fg,
+            })
         });
 
         self.draw_cells(size_info, glyph_cache, cells);
@@ -381,7 +426,6 @@ impl Renderer {
         }
     }
 
-    #[cfg(not(any(target_os = "macos", windows)))]
     pub fn finish(&self) {
         unsafe {
             gl::Finish();
@@ -416,15 +460,15 @@ struct GlExtensions;
 impl GlExtensions {
     /// Check if the given `extension` is supported.
     ///
-    /// This function will lazyly load OpenGL extensions.
+    /// This function will lazily load OpenGL extensions.
     fn contains(extension: &str) -> bool {
-        static OPENGL_EXTENSIONS: OnceCell<HashSet<&'static str>> = OnceCell::new();
+        static OPENGL_EXTENSIONS: OnceLock<HashSet<&'static str, RandomState>> = OnceLock::new();
 
         OPENGL_EXTENSIONS.get_or_init(Self::load_extensions).contains(extension)
     }
 
     /// Load available OpenGL extensions.
-    fn load_extensions() -> HashSet<&'static str> {
+    fn load_extensions() -> HashSet<&'static str, RandomState> {
         unsafe {
             let extensions = gl::GetString(gl::EXTENSIONS);
 
@@ -441,7 +485,7 @@ impl GlExtensions {
             } else {
                 match CStr::from_ptr(extensions as *mut _).to_str() {
                     Ok(ext) => ext.split_whitespace().collect(),
-                    Err(_) => HashSet::new(),
+                    Err(_) => Default::default(),
                 }
             }
         }

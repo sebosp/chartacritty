@@ -22,7 +22,6 @@ pub mod config;
 pub mod decorations;
 pub mod prometheus;
 
-use crate::term::color::Rgb;
 use crate::term::SizeInfo;
 use decorations::*;
 use log::*;
@@ -30,6 +29,7 @@ use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::time::UNIX_EPOCH;
 use tracing::{event, span, Level};
+use vte::ansi::Rgb;
 
 /// `MissingValuesPolicy` provides several ways to deal with missing values
 /// when drawing the Metric

@@ -7,6 +7,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 static DEFAULT_CHART_CONFIG: &str =
     include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/charts.yml"));
+
 /// Top-level config type
 #[derive(Debug, PartialEq, Deserialize, Clone)]
 pub struct Config {

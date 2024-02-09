@@ -1,12 +1,12 @@
 //! Hexagon Point Background decoration
 //! TODO: Use lyon
-use crate::term::color::Rgb;
 use crate::term::SizeInfo;
 use log::*;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
 use std::time::UNIX_EPOCH;
+use vte::ansi::Rgb;
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct HexagonPointBackground {
     // shader_vertex_path: String,
@@ -58,7 +58,7 @@ impl Default for HexagonPointBackground {
         let start_animation_ms = epoch.as_secs_f32() + epoch.subsec_millis() as f32 / 1000f32;
         let animation_duration_ms = 2000f32;
         let mut res = HexagonPointBackground {
-            color: Rgb::new(25, 88, 167),
+            color: Rgb { r: 25, g: 88, b: 167 },
             alpha: 0.4f32,
             size_info: SizeInfo::default(),
             radius: 100f32,

@@ -1,9 +1,9 @@
 //! Hexagon Triangle Background decoration
 
-use crate::term::color::Rgb;
 use crate::term::SizeInfo;
 use noise::{NoiseFn, Perlin};
 use serde::{Deserialize, Serialize};
+use vte::ansi::Rgb;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct HexagonTriangleBackground {

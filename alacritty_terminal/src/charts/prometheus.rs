@@ -1,12 +1,12 @@
 //! `Prometheus HTTP API` data structures
 use crate::charts::TimeSeries;
 use crate::charts::ValueCollisionPolicy;
-use crate::term::color::Rgb;
 use log::*;
 use percent_encoding::{utf8_percent_encode, CONTROLS};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, UNIX_EPOCH};
+use vte::ansi::Rgb;
 // The below data structures for parsing something like:
 //  {
 //   "data": {
@@ -985,7 +985,7 @@ mod tests {
             data_type: String::from(""),
             required_labels: test_labels,
             pull_interval: 15,
-            color: Rgb::new(207, 102, 121),
+            color: Rgb { r: 207, g: 102, b: 121 },
             alpha: 1.0,
         };
         // This should result in adding 15 more items
@@ -1378,7 +1378,7 @@ mod tests {
             data_type: String::from(""),
             required_labels: test_labels,
             pull_interval: 15,
-            color: Rgb::new(207, 102, 121),
+            color: Rgb { r: 207, g: 102, b: 121 },
             alpha: 1.0,
         };
         assert_eq!(test.series.metrics.len(), 300usize);

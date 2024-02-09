@@ -14,6 +14,9 @@
       but allows for extensive configuration. By integrating with other
       applications, rather than reimplementing their functionality, it manages
       to provide a flexible set of features with high performance.
+      Chartacritty is a fork of Alacritty that adds a charting feature,
+      shaders and other useless stuff. All credits go to the original.
+
     </p>
   </description>
   <screenshots>
