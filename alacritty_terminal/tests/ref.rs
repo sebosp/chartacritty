@@ -1,4 +1,3 @@
-#![cfg(feature = "serde")]
 use serde::Deserialize;
 use serde_json as json;
 

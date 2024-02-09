@@ -1,6 +1,5 @@
 use std::cmp::min;
 
-#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
 use crate::event::EventListener;
@@ -10,8 +9,8 @@ use crate::term::cell::Flags;
 use crate::term::Term;
 
 /// Possible vi mode motion movements.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize), serde(rename_all = "lowercase"))]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ViMotion {
     /// Move up.
     Up,
