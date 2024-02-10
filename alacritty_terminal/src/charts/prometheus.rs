@@ -185,7 +185,7 @@ impl PrometheusTimeSeries {
         };
         match PrometheusTimeSeries::prepare_url(&res.source, res.series.metrics_capacity as u64) {
             Ok(url) => {
-                res.url = url.to_string();
+                res.url = url;
                 Ok(res)
             },
             Err(err) => Err(err),
