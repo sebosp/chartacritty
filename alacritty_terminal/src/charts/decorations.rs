@@ -25,10 +25,12 @@
 //
 // TODO: There are several RFCs in rust to allow enum variants to impl a specific Trait but they
 // haven't been merged
+use super::super::charts::deserialize_rgb_from_str;
 use crate::charts::{ChartSizeInfo, TimeSeriesSource, TimeSeriesStats, Value2D};
 use serde::{Deserialize, Serialize};
 use tracing::{event, span, Level};
 use vte::ansi::Rgb;
+
 /// `Decoration` contains several types of decorations to add to a chart
 #[derive(Debug, Default, Serialize, Deserialize, PartialEq, Clone)]
 #[serde(tag = "type")]
@@ -225,7 +227,7 @@ pub struct ReferencePointDecoration {
     pub height_multiplier: f64,
 
     /// RGB color
-    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_rgb_from_str", default)]
     pub color: Rgb,
 
     /// Transparency
@@ -368,7 +370,7 @@ pub struct ActiveAlertUnderLineDecoration {
 
     /// A target TimeSeries name that we will compare with
     /// Must be in the current chart item
-    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_rgb_from_str", default)]
     pub color: Rgb,
 
     /// Transparency

@@ -202,7 +202,7 @@ impl WindowContext {
         let mut _tokio_thread: Option<std::thread::JoinHandle<()>> = None;
         let mut tokio_setup: Option<TermChartsHandle> = None;
         if let Some(charts_config) = &config.charts {
-            let charts_config = &charts_config.config.0;
+            let charts_config = &charts_config.config;
             let (tokio_setup_tmp, tokio_thread_tmp) = TermChartsHandle::new_with_thread(
                 charts_config,
                 display.size_info.into(),

@@ -522,7 +522,7 @@ impl Display {
         damage_tracker.debug = config.debug.highlight_damage;
 
         let decorations_config =
-            config.decorations.as_ref().map(|decorations| decorations.config.0.clone());
+            config.decorations.as_ref().map(|decorations| decorations.config.clone());
         let mut decorations =
             DecorationsConfig::optional_decor_to_sized(decorations_config, size_info.into());
         decorations.init_timers();
@@ -1108,7 +1108,7 @@ impl Display {
         tokio_handle: tokio::runtime::Handle,
     ) {
         if let Some(chart_config) = &config.charts {
-            let chart_config = &chart_config.config.0;
+            let chart_config = &chart_config.config;
             for chart_idx in 0..chart_config.charts.len() {
                 debug!("draw: Drawing chart: {}", chart_config.charts[chart_idx].name);
                 for decoration_idx in 0..chart_config.charts[chart_idx].decorations.len() {

@@ -1,5 +1,6 @@
 //! Hexagon Triangle Background decoration
 
+use crate::charts::deserialize_rgb_from_str;
 use crate::term::SizeInfo;
 use noise::{NoiseFn, Perlin};
 use serde::{Deserialize, Serialize};
@@ -7,7 +8,9 @@ use vte::ansi::Rgb;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct HexagonTriangleBackground {
+    #[serde(deserialize_with = "deserialize_rgb_from_str", default)]
     pub vertex_color: Rgb,
+    #[serde(deserialize_with = "deserialize_rgb_from_str", default)]
     pub center_color: Rgb,
     pub alpha: f32,
     #[serde(default)]
