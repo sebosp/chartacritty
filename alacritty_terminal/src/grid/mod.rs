@@ -5,9 +5,9 @@ use std::ops::{Bound, Deref, Index, IndexMut, Range, RangeBounds};
 
 use serde::{Deserialize, Serialize};
 
-use crate::ansi::{CharsetIndex, StandardCharset};
 use crate::index::{Column, Line, Point};
 use crate::term::cell::{Flags, ResetDiscriminant};
+use crate::vte::ansi::{CharsetIndex, StandardCharset};
 
 pub mod resize;
 mod row;
@@ -104,7 +104,7 @@ pub enum Scroll {
 ///                           ^
 ///                        columns
 /// ```
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Grid<T> {
     /// Current cursor for writing data.
     #[serde(skip)]
@@ -568,12 +568,12 @@ pub struct GridIterator<'a, T> {
 }
 
 impl<'a, T> GridIterator<'a, T> {
-    /// Current iteratior position.
+    /// Current iterator position.
     pub fn point(&self) -> Point {
         self.point
     }
 
-    /// Cell at the current iteratior position.
+    /// Cell at the current iterator position.
     pub fn cell(&self) -> &'a T {
         &self.grid[self.point]
     }

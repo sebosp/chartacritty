@@ -3,14 +3,13 @@ use std::sync::Arc;
 
 use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
-use vte::ansi::Hyperlink as VteHyperlink;
 
-use crate::ansi::{Color, NamedColor};
 use crate::grid::{self, GridCell};
 use crate::index::Column;
+use crate::vte::ansi::{Color, Hyperlink as VteHyperlink, NamedColor};
 
 bitflags! {
-    #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
     pub struct Flags: u16 {
         const INVERSE                   = 0b0000_0000_0000_0001;
         const BOLD                      = 0b0000_0000_0000_0010;
@@ -38,7 +37,7 @@ bitflags! {
 /// Counter for hyperlinks without explicit ID.
 static HYPERLINK_ID_SUFFIX: AtomicU32 = AtomicU32::new(0);
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Hyperlink {
     inner: Arc<HyperlinkInner>,
 }
@@ -70,7 +69,7 @@ impl From<Hyperlink> for VteHyperlink {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash)]
+#[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 struct HyperlinkInner {
     /// Identifier for the given hyperlink.
     id: String,
@@ -117,7 +116,7 @@ impl ResetDiscriminant<Color> for Cell {
 /// This storage is reserved for cell attributes which are rarely set. This allows reducing the
 /// allocation required ahead of time for every cell, with some additional overhead when the extra
 /// storage is actually required.
-#[derive(Serialize, Deserialize, Default, Debug, Clone, Eq, PartialEq)]
+#[derive(Default, Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct CellExtra {
     zerowidth: Vec<char>,
 
@@ -127,7 +126,7 @@ pub struct CellExtra {
 }
 
 /// Content and attributes of a single cell in the terminal grid.
-#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Cell {
     pub c: char,
     pub fg: Color,
@@ -298,7 +297,7 @@ mod tests {
         // Expected cell size on 64-bit architectures.
         const EXPECTED_CELL_SIZE: usize = 24;
 
-        // Ensure that cell size isn't growning by accident.
+        // Ensure that cell size isn't growing by accident.
         assert!(mem::size_of::<Cell>() <= EXPECTED_CELL_SIZE);
     }
 

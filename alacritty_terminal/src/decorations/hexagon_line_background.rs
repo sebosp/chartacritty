@@ -1,8 +1,8 @@
 //! Hexagon Line Background Decorations
-use crate::term::color::Rgb;
+use super::Decoration;
 use crate::term::SizeInfo;
 use serde::{Deserialize, Serialize};
-use super::Decoration;
+use vte::ansi::Rgb;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct HexagonLineBackground {
@@ -63,4 +63,3 @@ impl Decoration for HexagonLineBackground {
         hexagons
     }
 }
-

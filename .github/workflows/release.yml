@@ -14,6 +14,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v3
+      - name: Install dependencies
+        run: brew install scdoc
       - name: Install ARM target
         run: rustup update && rustup target add aarch64-apple-darwin
       - name: Test
@@ -27,37 +29,35 @@ jobs:
           mv ./target/release/osx/Chartacritty.dmg ./Chartacritty-${GITHUB_REF##*/}.dmg
           ./.github/workflows/upload_asset.sh ./Chartacritty-${GITHUB_REF##*/}.dmg $GITHUB_TOKEN
 
-#  windows:
-#    runs-on: windows-latest
-#
-#    defaults:
-#      run:
-#        shell: bash
-#
-#    steps:
-#      - uses: actions/checkout@v3
-#      - name: Test
-#        run: cargo test --release
-#      - name: Build
-#        run: cargo build --release
-#      - name: Upload portable executable
-#        run: |
-#          cp ./target/release/alacritty.exe ./Alacritty-${GITHUB_REF##*/}-portable.exe
-#          ./.github/workflows/upload_asset.sh \
-#            ./Alacritty-${GITHUB_REF##*/}-portable.exe $GITHUB_TOKEN
-#      - name: Install WiX
-#        run: nuget install WiX
-#      - name: Crate msi installer
-#        run: |
-#          ./WiX.*/tools/candle.exe -nologo -arch "x64" -ext WixUIExtension -ext WixUtilExtension \
-#            -out "./alacritty.wixobj" "alacritty/windows/wix/alacritty.wxs"
-#          ./WiX.*/tools/light.exe -nologo -ext WixUIExtension -ext WixUtilExtension \
-#            -out "./Alacritty-${GITHUB_REF##*/}-installer.msi" -sice:ICE61 -sice:ICE91 \
-#            "./alacritty.wixobj"
-#      - name: Upload msi installer
-#        run: |
-#          ./.github/workflows/upload_asset.sh \
-#            ./Alacritty-${GITHUB_REF##*/}-installer.msi $GITHUB_TOKEN
+  windows:
+    runs-on: windows-latest
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v3
+      - name: Test
+        run: cargo test --release
+      - name: Build
+        run: cargo build --release
+      - name: Upload portable executable
+        run: |
+          cp ./target/release/alacritty.exe ./Chartacritty-${GITHUB_REF##*/}-portable.exe
+          ./.github/workflows/upload_asset.sh \
+            ./Chartacritty-${GITHUB_REF##*/}-portable.exe $GITHUB_TOKEN
+      - name: Install WiX
+        run: dotnet tool install --global wix --version 4.0.1
+      - name: Crate msi installer
+        run: |
+          wix extension add WixToolset.UI.wixext WixToolset.Util.wixext
+          wix build -arch "x64" -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext \
+          -out "./Chartacritty-${GITHUB_REF##*/}-installer.msi" "Chartacritty/windows/wix/Chartacritty.wxs"
+      - name: Upload msi installer
+        run: |
+          ./.github/workflows/upload_asset.sh \
+            ./Chartacritty-${GITHUB_REF##*/}-installer.msi $GITHUB_TOKEN
 
   linux:
     runs-on: ubuntu-latest
@@ -67,16 +67,13 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get install cmake pkg-config libfreetype6-dev libfontconfig1-dev \
-            libxcb-xfixes0-dev libxkbcommon-dev python3
+            libxcb-xfixes0-dev libxkbcommon-dev python3 scdoc
       - name: Test
         run: cargo test --release
       - name: Upload Assets
         run: |
-          mv ./extra/logo/chartacritty-term.svg ./Chartacritty.svg
+          mv ./extra/logo/alacritty-term.svg ./Chartacritty.svg
           ./.github/workflows/upload_asset.sh ./Chartacritty.svg $GITHUB_TOKEN
-          ./.github/workflows/upload_asset.sh ./extra/completions/alacritty.bash $GITHUB_TOKEN
-          ./.github/workflows/upload_asset.sh ./extra/completions/alacritty.fish $GITHUB_TOKEN
-          ./.github/workflows/upload_asset.sh ./extra/completions/_alacritty $GITHUB_TOKEN
-          ./.github/workflows/upload_asset.sh ./extra/linux/Alacritty.desktop $GITHUB_TOKEN
+          ./.github/workflows/upload_asset.sh ./extra/linux/Chartacritty.desktop $GITHUB_TOKEN
+          ./.github/workflows/upload_asset.sh ./chartacritty.yml $GITHUB_TOKEN
           ./.github/workflows/upload_asset.sh ./extra/chartacritty.info $GITHUB_TOKEN
-          ./.github/workflows/upload_asset.sh ./alacritty.yml $GITHUB_TOKEN

@@ -57,7 +57,7 @@ brevity.
 | `CSI ? h`  | PARTIAL     | Supported modes:                                  |
 |            |             |   `1`, `3`, `6`, `7`, `12`, `25`, `1000`, `1002`  |
 |            |             |   `1004`, `1005`, `1006`, `1007`, `1042`, `1049`  |
-|            |             |   `2004`                                          |
+|            |             |   `2004` `2026`                                   |
 | `CSI I`    | IMPLEMENTED |                                                   |
 | `CSI J`    | IMPLEMENTED |                                                   |
 | `CSI K`    | IMPLEMENTED |                                                   |
@@ -71,6 +71,8 @@ brevity.
 |            | REJECTED    | `11`-`19`, `51`-`55`                              |
 | `CSI n`    | IMPLEMENTED |                                                   |
 | `CSI P`    | IMPLEMENTED |                                                   |
+| `CSI $ p`  | IMPLEMENTED |                                                   |
+| `CSI ? $ p`| IMPLEMENTED |                                                   |
 | `CSI SP q` | IMPLEMENTED |                                                   |
 | `CSI r`    | IMPLEMENTED |                                                   |
 | `CSI S`    | IMPLEMENTED |                                                   |
@@ -79,6 +81,10 @@ brevity.
 | `CSI t`    | PARTIAL     | Only parameters `22` and `23` are supported       |
 |            | REJECTED    | `1`-`13`, `15`, `19`-`21`, `24`                   |
 | `CSI u`    | IMPLEMENTED |                                                   |
+| `CSI ? u`  | IMPLEMENTED |                                                   |
+| `CSI = u`  | IMPLEMENTED |                                                   |
+| `CSI < u`  | IMPLEMENTED |                                                   |
+| `CSI > u`  | IMPLEMENTED |                                                   |
 | `CSI X`    | IMPLEMENTED |                                                   |
 | `CSI Z`    | IMPLEMENTED |                                                   |
 
@@ -105,4 +111,4 @@ brevity.
 
 | ESCAPE    | STATUS      | NOTE                                               |
 | --------- | ----------- | -------------------------------------------------- |
-| `DCS = s` | IMPLEMENTED |                                                    |
+| `DCS = s` | REJECTED    | CSI ? 2026 h/l are used instead                    |

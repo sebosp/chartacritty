@@ -4,11 +4,6 @@
 #![deny(clippy::all, clippy::if_not_else, clippy::enum_glob_use)]
 #![cfg_attr(feature = "cargo-clippy", deny(warnings))]
 
-pub mod ansi;
-pub mod async_utils;
-pub mod charts;
-pub mod config;
-pub mod decorations;
 pub mod event;
 pub mod event_loop;
 pub mod grid;
@@ -20,5 +15,10 @@ pub mod thread;
 pub mod tty;
 pub mod vi_mode;
 
+pub mod async_utils;
+pub mod charts;
+pub mod decorations;
+
 pub use crate::grid::Grid;
 pub use crate::term::Term;
+pub use vte;
