@@ -113,6 +113,10 @@ The goal is to make environment immerssive and learn about terminals, generative
 
 And just have fun in general...
 
+## TODO:
+- The moon phase is not working as expected when moving to Lyon. The stroke-path tesselator vs fill-tesselator needs to be worked on.
+- The toml configuration for the charts/decorations looks ugly since it's array based. As much as I hate yaml I don't know how to properly encode the same functionality there without making a mess.
+
 ## Mirror the screenshot setup
 
 ```yaml
