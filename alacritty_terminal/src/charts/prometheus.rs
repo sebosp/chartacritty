@@ -1,4 +1,5 @@
 //! `Prometheus HTTP API` data structures
+use super::deserialize_rgb_from_str;
 use crate::charts::TimeSeries;
 use crate::charts::ValueCollisionPolicy;
 use log::*;
@@ -132,7 +133,7 @@ pub struct PrometheusTimeSeries {
     pub pull_interval: usize,
 
     /// The color of the TimeSeries
-    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_rgb_from_str", default)]
     pub color: Rgb,
 
     /// The transparency of the TimeSeries
