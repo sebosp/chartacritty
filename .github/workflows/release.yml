@@ -72,7 +72,7 @@ jobs:
         run: cargo test --release
       - name: Upload Assets
         run: |
-          mv ./extra/logo/alacritty-term.svg ./Chartacritty.svg
+          mv ./extra/logo/chartacritty-term.svg ./Chartacritty.svg
           ./.github/workflows/upload_asset.sh ./Chartacritty.svg $GITHUB_TOKEN
           ./.github/workflows/upload_asset.sh ./extra/linux/Chartacritty.desktop $GITHUB_TOKEN
           ./.github/workflows/upload_asset.sh ./chartacritty.yml $GITHUB_TOKEN
