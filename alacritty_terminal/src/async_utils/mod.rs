@@ -4,8 +4,8 @@
 //! An async_coordinator is defined that receives requests over a futures mpsc
 //! channel that may contain new data, may request OpenGL data or increment
 //! internal counters.
-use crate::charts::{prometheus, ChartSizeInfo, TimeSeriesChart, TimeSeriesSource};
-use crate::config::{ChartsConfig, Config};
+use crate::charts::config::Config;
+use crate::charts::{prometheus, ChartSizeInfo, ChartsConfig, TimeSeriesChart, TimeSeriesSource};
 use crate::event::{Event, EventListener};
 use crate::term::SizeInfo;
 use log::*;

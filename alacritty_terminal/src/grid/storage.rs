@@ -27,7 +27,7 @@ const MAX_CACHE_SIZE: usize = 1_000;
 /// [`slice::rotate_left`]: https://doc.rust-lang.org/std/primitive.slice.html#method.rotate_left
 /// [`Deref`]: std::ops::Deref
 /// [`zero`]: #structfield.zero
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Storage<T> {
     inner: Vec<Row<T>>,
 
@@ -80,10 +80,10 @@ impl<T> Storage<T> {
         T: Clone + Default,
     {
         // Number of lines the buffer needs to grow.
-        let growage = next - self.visible_lines;
+        let additional_lines = next - self.visible_lines;
 
         let columns = self[Line(0)].len();
-        self.initialize(growage, columns);
+        self.initialize(additional_lines, columns);
 
         // Update visible lines.
         self.visible_lines = next;

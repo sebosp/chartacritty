@@ -22,18 +22,13 @@ pub mod config;
 pub mod decorations;
 pub mod prometheus;
 
-pub use futures;
-pub use hyper;
-pub use hyper_tls;
-pub use percent_encoding;
-pub use tokio;
-
-use crate::term::color::Rgb;
 use crate::term::SizeInfo;
+use crate::vte::ansi::Rgb;
 use decorations::*;
 use log::*;
-use serde::{Deserialize, Serialize};
+use serde::{de::Error, Deserialize, Deserializer, Serialize};
 use std::cmp::Ordering;
+use std::str::FromStr;
 use std::time::UNIX_EPOCH;
 use tracing::{event, span, Level};
 
@@ -218,12 +213,26 @@ pub struct ManualTimeSeries {
     pub granularity: u64,
 
     /// The color of the TimeSeries
-    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_rgb_from_str", default)]
     pub color: Rgb,
 
     /// The transparency of the TimeSeries
     #[serde(default)]
     pub alpha: f32,
+}
+
+pub fn deserialize_rgb_from_str<'de, D>(de: D) -> Result<Rgb, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s = String::deserialize(de)?;
+    match Rgb::from_str(&s) {
+        Ok(rgb) => Ok(rgb),
+        Err(()) => {
+            error!("Invalid Rgb value: {}", s);
+            Err(D::Error::custom(format!("Invalid Rgb value: {}", s)))
+        },
+    }
 }
 
 impl Default for ManualTimeSeries {

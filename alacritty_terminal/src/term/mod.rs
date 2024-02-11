@@ -1,20 +1,18 @@
 //! Exports the `Term` type which is a high-level API for the Grid.
 
-use serde::{Deserialize, Serialize};
 use std::ops::{Index, IndexMut, Range};
 use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 use std::{cmp, mem, ptr, slice, str};
 
+use serde::{Deserialize, Serialize};
+
+use base64::engine::general_purpose::STANDARD as Base64;
+use base64::Engine;
 use bitflags::bitflags;
 use log::{debug, error, trace};
 use unicode_width::UnicodeWidthChar;
-use vte::ansi::{Hyperlink as VteHyperlink, Rgb as VteRgb};
 
-use crate::ansi::{
-    self, Attr, CharsetIndex, Color, CursorShape, CursorStyle, Handler, NamedColor, StandardCharset,
-};
-use crate::config::{ChartsConfig, Config};
 use crate::event::{Event, EventListener};
 use crate::grid::{Dimensions, Grid, GridIterator, Scroll};
 use crate::index::{self, Boundary, Column, Direction, Line, Point, Side};
@@ -22,6 +20,13 @@ use crate::selection::{Selection, SelectionRange, SelectionType};
 use crate::term::cell::{Cell, Flags, LineLength};
 use crate::term::color::Colors;
 use crate::vi_mode::{ViModeCursor, ViMotion};
+use crate::vte::ansi::{
+    self, Attr, CharsetIndex, Color, CursorShape, CursorStyle, Handler, Hyperlink, KeyboardModes,
+    KeyboardModesApplyBehavior, NamedColor, NamedMode, NamedPrivateMode, PrivateMode, Rgb,
+    StandardCharset,
+};
+
+use crate::charts::ChartsConfig;
 use tokio::sync::mpsc as tokio_mpsc;
 
 pub mod cell;
@@ -39,33 +44,72 @@ pub const MIN_SCREEN_LINES: usize = 1;
 /// Max size of the window title stack.
 const TITLE_STACK_MAX_DEPTH: usize = 4096;
 
+/// Default semantic escape characters.
+pub const SEMANTIC_ESCAPE_CHARS: &str = ",│`|:\"' ()[]{}<>\t";
+
+/// Max size of the keyboard modes.
+const KEYBOARD_MODE_STACK_MAX_DEPTH: usize = TITLE_STACK_MAX_DEPTH;
+
 /// Default tab interval, corresponding to terminfo `it` value.
 const INITIAL_TABSTOPS: usize = 8;
 
 bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct TermMode: u32 {
-        const NONE                = 0;
-        const SHOW_CURSOR         = 0b0000_0000_0000_0000_0001;
-        const APP_CURSOR          = 0b0000_0000_0000_0000_0010;
-        const APP_KEYPAD          = 0b0000_0000_0000_0000_0100;
-        const MOUSE_REPORT_CLICK  = 0b0000_0000_0000_0000_1000;
-        const BRACKETED_PASTE     = 0b0000_0000_0000_0001_0000;
-        const SGR_MOUSE           = 0b0000_0000_0000_0010_0000;
-        const MOUSE_MOTION        = 0b0000_0000_0000_0100_0000;
-        const LINE_WRAP           = 0b0000_0000_0000_1000_0000;
-        const LINE_FEED_NEW_LINE  = 0b0000_0000_0001_0000_0000;
-        const ORIGIN              = 0b0000_0000_0010_0000_0000;
-        const INSERT              = 0b0000_0000_0100_0000_0000;
-        const FOCUS_IN_OUT        = 0b0000_0000_1000_0000_0000;
-        const ALT_SCREEN          = 0b0000_0001_0000_0000_0000;
-        const MOUSE_DRAG          = 0b0000_0010_0000_0000_0000;
-        const MOUSE_MODE          = 0b0000_0010_0000_0100_1000;
-        const UTF8_MOUSE          = 0b0000_0100_0000_0000_0000;
-        const ALTERNATE_SCROLL    = 0b0000_1000_0000_0000_0000;
-        const VI                  = 0b0001_0000_0000_0000_0000;
-        const URGENCY_HINTS       = 0b0010_0000_0000_0000_0000;
-        const ANY                 = u32::MAX;
+        const NONE                    = 0;
+        const SHOW_CURSOR             = 0b0000_0000_0000_0000_0000_0001;
+        const APP_CURSOR              = 0b0000_0000_0000_0000_0000_0010;
+        const APP_KEYPAD              = 0b0000_0000_0000_0000_0000_0100;
+        const MOUSE_REPORT_CLICK      = 0b0000_0000_0000_0000_0000_1000;
+        const BRACKETED_PASTE         = 0b0000_0000_0000_0000_0001_0000;
+        const SGR_MOUSE               = 0b0000_0000_0000_0000_0010_0000;
+        const MOUSE_MOTION            = 0b0000_0000_0000_0000_0100_0000;
+        const LINE_WRAP               = 0b0000_0000_0000_0000_1000_0000;
+        const LINE_FEED_NEW_LINE      = 0b0000_0000_0000_0001_0000_0000;
+        const ORIGIN                  = 0b0000_0000_0000_0010_0000_0000;
+        const INSERT                  = 0b0000_0000_0000_0100_0000_0000;
+        const FOCUS_IN_OUT            = 0b0000_0000_0000_1000_0000_0000;
+        const ALT_SCREEN              = 0b0000_0000_0001_0000_0000_0000;
+        const MOUSE_DRAG              = 0b0000_0000_0010_0000_0000_0000;
+        const MOUSE_MODE              = 0b0000_0000_0010_0000_0100_1000;
+        const UTF8_MOUSE              = 0b0000_0000_0100_0000_0000_0000;
+        const ALTERNATE_SCROLL        = 0b0000_0000_1000_0000_0000_0000;
+        const VI                      = 0b0000_0001_0000_0000_0000_0000;
+        const URGENCY_HINTS           = 0b0000_0010_0000_0000_0000_0000;
+        const DISAMBIGUATE_ESC_CODES  = 0b0000_0100_0000_0000_0000_0000;
+        const REPORT_EVENT_TYPES      = 0b0000_1000_0000_0000_0000_0000;
+        const REPORT_ALTERNATE_KEYS   = 0b0001_0000_0000_0000_0000_0000;
+        const REPORT_ALL_KEYS_AS_ESC  = 0b0010_0000_0000_0000_0000_0000;
+        const REPORT_ASSOCIATED_TEXT  = 0b0100_0000_0000_0000_0000_0000;
+        const KITTY_KEYBOARD_PROTOCOL = Self::DISAMBIGUATE_ESC_CODES.bits()
+                                      | Self::REPORT_EVENT_TYPES.bits()
+                                      | Self::REPORT_ALTERNATE_KEYS.bits()
+                                      | Self::REPORT_ALL_KEYS_AS_ESC.bits()
+                                      | Self::REPORT_ASSOCIATED_TEXT.bits();
+         const ANY                    = u32::MAX;
+    }
+}
+
+impl From<KeyboardModes> for TermMode {
+    fn from(value: KeyboardModes) -> Self {
+        let mut mode = Self::empty();
+
+        let disambiguate_esc_codes = value.contains(KeyboardModes::DISAMBIGUATE_ESC_CODES);
+        mode.set(TermMode::DISAMBIGUATE_ESC_CODES, disambiguate_esc_codes);
+
+        let report_event_types = value.contains(KeyboardModes::REPORT_EVENT_TYPES);
+        mode.set(TermMode::REPORT_EVENT_TYPES, report_event_types);
+
+        let report_alternate_keys = value.contains(KeyboardModes::REPORT_ALTERNATE_KEYS);
+        mode.set(TermMode::REPORT_ALTERNATE_KEYS, report_alternate_keys);
+
+        let report_all_keys_as_esc = value.contains(KeyboardModes::REPORT_ALL_KEYS_AS_ESC);
+        mode.set(TermMode::REPORT_ALL_KEYS_AS_ESC, report_all_keys_as_esc);
+
+        let report_associated_text = value.contains(KeyboardModes::REPORT_ASSOCIATED_TEXT);
+        mode.set(TermMode::REPORT_ASSOCIATED_TEXT, report_associated_text);
+
+        mode
     }
 }
 
@@ -200,6 +244,11 @@ pub struct LineDamageBounds {
 
 impl LineDamageBounds {
     #[inline]
+    pub fn new(line: usize, left: usize, right: usize) -> Self {
+        Self { line, left, right }
+    }
+
+    #[inline]
     pub fn undamaged(line: usize, num_cols: usize) -> Self {
         Self { line, left: num_cols, right: 0 }
     }
@@ -231,15 +280,19 @@ pub enum TermDamage<'a> {
     Partial(TermDamageIterator<'a>),
 }
 
-/// Iterator over the terminal's damaged lines.
+/// Iterator over the terminal's viewport damaged lines.
 #[derive(Clone, Debug)]
 pub struct TermDamageIterator<'a> {
     line_damage: slice::Iter<'a, LineDamageBounds>,
+    display_offset: usize,
 }
 
 impl<'a> TermDamageIterator<'a> {
-    fn new(line_damage: &'a [LineDamageBounds]) -> Self {
-        Self { line_damage: line_damage.iter() }
+    pub fn new(line_damage: &'a [LineDamageBounds], display_offset: usize) -> Self {
+        let num_lines = line_damage.len();
+        // Filter out invisible damage.
+        let line_damage = &line_damage[..num_lines.saturating_sub(display_offset)];
+        Self { display_offset, line_damage: line_damage.iter() }
     }
 }
 
@@ -247,26 +300,26 @@ impl<'a> Iterator for TermDamageIterator<'a> {
     type Item = LineDamageBounds;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.line_damage.find(|line| line.is_damaged()).copied()
+        self.line_damage.find_map(|line| {
+            line.is_damaged().then_some(LineDamageBounds::new(
+                line.line + self.display_offset,
+                line.left,
+                line.right,
+            ))
+        })
     }
 }
 
 /// State of the terminal damage.
 struct TermDamageState {
     /// Hint whether terminal should be damaged entirely regardless of the actual damage changes.
-    is_fully_damaged: bool,
+    full: bool,
 
     /// Information about damage on terminal lines.
     lines: Vec<LineDamageBounds>,
 
     /// Old terminal cursor point.
     last_cursor: Point,
-
-    /// Last Vi cursor point.
-    last_vi_cursor_point: Option<Point<usize>>,
-
-    /// Old selection range.
-    last_selection: Option<SelectionRange>,
 }
 
 impl TermDamageState {
@@ -274,22 +327,14 @@ impl TermDamageState {
         let lines =
             (0..num_lines).map(|line| LineDamageBounds::undamaged(line, num_cols)).collect();
 
-        Self {
-            is_fully_damaged: true,
-            lines,
-            last_cursor: Default::default(),
-            last_vi_cursor_point: Default::default(),
-            last_selection: Default::default(),
-        }
+        Self { full: true, lines, last_cursor: Default::default() }
     }
 
     #[inline]
     fn resize(&mut self, num_cols: usize, num_lines: usize) {
         // Reset point, so old cursor won't end up outside of the viewport.
         self.last_cursor = Default::default();
-        self.last_vi_cursor_point = None;
-        self.last_selection = None;
-        self.is_fully_damaged = true;
+        self.full = true;
 
         self.lines.clear();
         self.lines.reserve(num_lines);
@@ -310,32 +355,9 @@ impl TermDamageState {
         self.lines[line].expand(left, right);
     }
 
-    fn damage_selection(
-        &mut self,
-        selection: SelectionRange,
-        display_offset: usize,
-        num_cols: usize,
-    ) {
-        let display_offset = display_offset as i32;
-        let last_visible_line = self.lines.len() as i32 - 1;
-
-        // Don't damage invisible selection.
-        if selection.end.line.0 + display_offset < 0
-            || selection.start.line.0.abs() < display_offset - last_visible_line
-        {
-            return;
-        };
-
-        let start = cmp::max(selection.start.line.0 + display_offset, 0);
-        let end = (selection.end.line.0 + display_offset).clamp(0, last_visible_line);
-        for line in start as usize..=end as usize {
-            self.damage_line(line, 0, num_cols - 1);
-        }
-    }
-
     /// Reset information about terminal damage.
     fn reset(&mut self, num_cols: usize) {
-        self.is_fully_damaged = false;
+        self.full = false;
         self.lines.iter_mut().for_each(|line| line.reset(num_cols));
     }
 }
@@ -375,19 +397,11 @@ pub struct Term<T> {
     /// Range going from top to bottom of the terminal, indexed from the top of the viewport.
     scroll_region: Range<Line>,
 
-    semantic_escape_chars: String,
-
     /// Modified terminal colors.
     colors: Colors,
 
     /// Current style of the cursor.
     cursor_style: Option<CursorStyle>,
-
-    /// Default style for resetting the cursor.
-    default_cursor_style: CursorStyle,
-
-    /// Style of the vi mode cursor.
-    vi_mode_cursor_style: Option<CursorStyle>,
 
     /// Proxy for sending events to the event loop.
     event_proxy: T,
@@ -404,8 +418,73 @@ pub struct Term<T> {
 
     /// Terminal decorations enabled
     pub decorations_enabled: bool,
+
+    /// The stack for the keyboard modes.
+    keyboard_mode_stack: Vec<KeyboardModes>,
+
+    /// Currently inactive keyboard mode stack.
+    inactive_keyboard_mode_stack: Vec<KeyboardModes>,
+
     /// Information about damaged cells.
     damage: TermDamageState,
+
+    /// Config directly for the terminal.
+    config: Config,
+}
+
+/// Configuration options for the [`Term`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Config {
+    /// The maximum amount of scrolling history.
+    pub scrolling_history: usize,
+
+    /// Default cursor style to reset the cursor to.
+    pub default_cursor_style: CursorStyle,
+
+    /// Cursor style for Vi mode.
+    pub vi_mode_cursor_style: Option<CursorStyle>,
+
+    /// The characters which terminate semantic selection.
+    ///
+    /// The default value is [`SEMANTIC_ESCAPE_CHARS`].
+    pub semantic_escape_chars: String,
+
+    /// Whether to enable kitty keyboard protocol.
+    pub kitty_keyboard: bool,
+
+    /// OSC52 support mode.
+    pub osc52: Osc52,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            scrolling_history: 10000,
+            semantic_escape_chars: SEMANTIC_ESCAPE_CHARS.to_owned(),
+            default_cursor_style: Default::default(),
+            vi_mode_cursor_style: Default::default(),
+            kitty_keyboard: Default::default(),
+            osc52: Default::default(),
+        }
+    }
+}
+
+/// OSC 52 behavior.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Osc52 {
+    /// The handling of the escape sequence is disabled.
+    Disabled,
+    /// Only copy sequence is accepted.
+    ///
+    /// This option is the default as a compromise between entirely
+    /// disabling it (the most secure) and allowing `paste` (the less secure).
+    #[default]
+    OnlyCopy,
+    /// Only paste sequence is accepted.
+    OnlyPaste,
+    /// Both are accepted.
+    CopyPaste,
 }
 
 impl<T> Term<T> {
@@ -431,11 +510,11 @@ impl<T> Term<T> {
         }
     }
 
-    pub fn new<D: Dimensions>(config: &Config, dimensions: &D, event_proxy: T) -> Term<T> {
+    pub fn new<D: Dimensions>(options: Config, dimensions: &D, event_proxy: T) -> Term<T> {
         let num_cols = dimensions.columns();
         let num_lines = dimensions.screen_lines();
 
-        let history_size = config.scrolling.history() as usize;
+        let history_size = options.scrolling_history;
         let grid = Grid::new(num_lines, num_cols, history_size);
         let alt = Grid::new(num_lines, num_cols, 0);
 
@@ -455,18 +534,18 @@ impl<T> Term<T> {
             mode: Default::default(),
             scroll_region,
             colors: color::Colors::default(),
-            semantic_escape_chars: config.selection.semantic_escape_chars.to_owned(),
             cursor_style: None,
-            default_cursor_style: config.cursor.style(),
-            vi_mode_cursor_style: config.cursor.vi_mode_style(),
             event_proxy,
             is_focused: true,
             title: None,
-            title_stack: Vec::new(),
-            tokio_setup: None,
+            title_stack: Default::default(),
+            keyboard_mode_stack: Default::default(),
+            inactive_keyboard_mode_stack: Default::default(),
             selection: None,
             decorations_enabled: true,
             damage,
+            config: options,
+            tokio_setup: None,
         }
     }
 
@@ -474,37 +553,34 @@ impl<T> Term<T> {
         self.tokio_setup = Some(tokio_setup);
     }
 
+    /// Collect the information about the changes in the lines, which
+    /// could be used to minimize the amount of drawing operations.
+    ///
+    /// The user controlled elements, like `Vi` mode cursor and `Selection` are **not** part of the
+    /// collected damage state. Those could easily be tracked by comparing their old and new
+    /// value between adjacent frames.
+    ///
+    /// After reading damage [`reset_damage`] should be called.
+    ///
+    /// [`reset_damage`]: Self::reset_damage
     #[must_use]
-    pub fn damage(&mut self, selection: Option<SelectionRange>) -> TermDamage<'_> {
+    pub fn damage(&mut self) -> TermDamage<'_> {
         // Ensure the entire terminal is damaged after entering insert mode.
         // Leaving is handled in the ansi handler.
         if self.mode.contains(TermMode::INSERT) {
             self.mark_fully_damaged();
         }
 
-        // Update tracking of cursor, selection, and vi mode cursor.
-
-        let display_offset = self.grid().display_offset();
-        let vi_cursor_point = if self.mode.contains(TermMode::VI) {
-            point_to_viewport(display_offset, self.vi_mode_cursor.point)
-        } else {
-            None
-        };
-
         let previous_cursor = mem::replace(&mut self.damage.last_cursor, self.grid.cursor.point);
-        let previous_selection = mem::replace(&mut self.damage.last_selection, selection);
-        let previous_vi_cursor_point =
-            mem::replace(&mut self.damage.last_vi_cursor_point, vi_cursor_point);
 
-        // Early return if the entire terminal is damaged.
-        if self.damage.is_fully_damaged {
+        if self.damage.full {
             return TermDamage::Full;
         }
 
         // Add information about old cursor position and new one if they are not the same, so we
         // cover everything that was produced by `Term::input`.
         if self.damage.last_cursor != previous_cursor {
-            // Cursor cooridanates are always inside viewport even if you have `display_offset`.
+            // Cursor coordinates are always inside viewport even if you have `display_offset`.
             let point = Point::new(previous_cursor.line.0 as usize, previous_cursor.column);
             self.damage.damage_point(point);
         }
@@ -512,24 +588,10 @@ impl<T> Term<T> {
         // Always damage current cursor.
         self.damage_cursor();
 
-        // Vi mode doesn't update the terminal content, thus only last vi cursor position and the
-        // new one should be damaged.
-        if let Some(previous_vi_cursor_point) = previous_vi_cursor_point {
-            self.damage.damage_point(previous_vi_cursor_point)
-        }
-
-        // Damage Vi cursor if it's present.
-        if let Some(vi_cursor_point) = self.damage.last_vi_cursor_point {
-            self.damage.damage_point(vi_cursor_point);
-        }
-
-        if self.damage.last_selection != previous_selection {
-            for selection in self.damage.last_selection.into_iter().chain(previous_selection) {
-                self.damage.damage_selection(selection, display_offset, self.columns());
-            }
-        }
-
-        TermDamage::Partial(TermDamageIterator::new(&self.damage.lines))
+        // NOTE: damage which changes all the content when the display offset is non-zero (e.g.
+        // scrolling) is handled via full damage.
+        let display_offset = self.grid().display_offset();
+        TermDamage::Partial(TermDamageIterator::new(&self.damage.lines, display_offset))
     }
 
     /// Resets the terminal damage information.
@@ -538,23 +600,16 @@ impl<T> Term<T> {
     }
 
     #[inline]
-    pub fn mark_fully_damaged(&mut self) {
-        self.damage.is_fully_damaged = true;
+    fn mark_fully_damaged(&mut self) {
+        self.damage.full = true;
     }
 
-    /// Damage line in a terminal viewport.
-    #[inline]
-    pub fn damage_line(&mut self, line: usize, left: usize, right: usize) {
-        self.damage.damage_line(line, left, right);
-    }
-
-    pub fn update_config(&mut self, config: &Config)
+    /// Set new options for the [`Term`].
+    pub fn set_options(&mut self, options: Config)
     where
         T: EventListener,
     {
-        self.semantic_escape_chars = config.selection.semantic_escape_chars.to_owned();
-        self.default_cursor_style = config.cursor.style();
-        self.vi_mode_cursor_style = config.cursor.vi_mode_style();
+        let old_config = mem::replace(&mut self.config, options);
 
         let title_event = match &self.title {
             Some(title) => Event::Title(title.clone()),
@@ -564,9 +619,15 @@ impl<T> Term<T> {
         self.event_proxy.send_event(title_event);
 
         if self.mode.contains(TermMode::ALT_SCREEN) {
-            self.inactive_grid.update_history(config.scrolling.history() as usize);
+            self.inactive_grid.update_history(self.config.scrolling_history);
         } else {
-            self.grid.update_history(config.scrolling.history() as usize);
+            self.grid.update_history(self.config.scrolling_history);
+        }
+
+        if self.config.kitty_keyboard != old_config.kitty_keyboard {
+            self.keyboard_mode_stack = Vec::new();
+            self.inactive_keyboard_mode_stack = Vec::new();
+            self.mode.remove(TermMode::KITTY_KEYBOARD_PROTOCOL);
         }
 
         // Damage everything on config updates.
@@ -810,6 +871,11 @@ impl<T> Term<T> {
             self.inactive_grid.reset_region(..);
         }
 
+        mem::swap(&mut self.keyboard_mode_stack, &mut self.inactive_keyboard_mode_stack);
+        let keyboard_mode =
+            self.keyboard_mode_stack.last().copied().unwrap_or(KeyboardModes::NO_MODE).into();
+        self.set_keyboard_mode(keyboard_mode, KeyboardModesApplyBehavior::Replace);
+
         mem::swap(&mut self.grid, &mut self.inactive_grid);
         self.mode ^= TermMode::ALT_SCREEN;
         self.selection = None;
@@ -1018,7 +1084,7 @@ impl<T> Term<T> {
 
     #[inline]
     pub fn semantic_escape_chars(&self) -> &str {
-        &self.semantic_escape_chars
+        &self.config.semantic_escape_chars
     }
 
     /// Active terminal cursor style.
@@ -1026,10 +1092,10 @@ impl<T> Term<T> {
     /// While vi mode is active, this will automatically return the vi mode cursor style.
     #[inline]
     pub fn cursor_style(&self) -> CursorStyle {
-        let cursor_style = self.cursor_style.unwrap_or(self.default_cursor_style);
+        let cursor_style = self.cursor_style.unwrap_or(self.config.default_cursor_style);
 
         if self.mode.contains(TermMode::VI) {
-            self.vi_mode_cursor_style.unwrap_or(cursor_style)
+            self.config.vi_mode_cursor_style.unwrap_or(cursor_style)
         } else {
             cursor_style
         }
@@ -1109,6 +1175,19 @@ impl<T> Term<T> {
         let point =
             Point::new(self.grid.cursor.point.line.0 as usize, self.grid.cursor.point.column);
         self.damage.damage_point(point);
+    }
+
+    #[inline]
+    fn set_keyboard_mode(&mut self, mode: TermMode, apply: KeyboardModesApplyBehavior) {
+        let active_mode = self.mode & TermMode::KITTY_KEYBOARD_PROTOCOL;
+        self.mode &= !TermMode::KITTY_KEYBOARD_PROTOCOL;
+        let new_mode = match apply {
+            KeyboardModesApplyBehavior::Replace => mode,
+            KeyboardModesApplyBehavior::Union => active_mode.union(mode),
+            KeyboardModesApplyBehavior::Difference => active_mode.difference(mode),
+        };
+        trace!("Setting keyboard mode to {new_mode:?}");
+        self.mode |= new_mode;
     }
 }
 
@@ -1345,6 +1424,63 @@ impl<T: EventListener> Handler for Term<T> {
     }
 
     #[inline]
+    fn report_keyboard_mode(&mut self) {
+        if !self.config.kitty_keyboard {
+            return;
+        }
+
+        trace!("Reporting active keyboard mode");
+        let current_mode =
+            self.keyboard_mode_stack.last().unwrap_or(&KeyboardModes::NO_MODE).bits();
+        let text = format!("\x1b[?{current_mode}u");
+        self.event_proxy.send_event(Event::PtyWrite(text));
+    }
+
+    #[inline]
+    fn push_keyboard_mode(&mut self, mode: KeyboardModes) {
+        if !self.config.kitty_keyboard {
+            return;
+        }
+
+        trace!("Pushing `{mode:?}` keyboard mode into the stack");
+
+        if self.keyboard_mode_stack.len() >= KEYBOARD_MODE_STACK_MAX_DEPTH {
+            let removed = self.title_stack.remove(0);
+            trace!(
+                "Removing '{:?}' from bottom of keyboard mode stack that exceeds its maximum depth",
+                removed
+            );
+        }
+
+        self.keyboard_mode_stack.push(mode);
+        self.set_keyboard_mode(mode.into(), KeyboardModesApplyBehavior::Replace);
+    }
+
+    #[inline]
+    fn pop_keyboard_modes(&mut self, to_pop: u16) {
+        if !self.config.kitty_keyboard {
+            return;
+        }
+
+        trace!("Attemting to pop {to_pop} keyboard modes from the stack");
+        let new_len = self.keyboard_mode_stack.len().saturating_sub(to_pop as usize);
+        self.keyboard_mode_stack.truncate(new_len);
+
+        // Reload active mode.
+        let mode = self.keyboard_mode_stack.last().copied().unwrap_or(KeyboardModes::NO_MODE);
+        self.set_keyboard_mode(mode.into(), KeyboardModesApplyBehavior::Replace);
+    }
+
+    #[inline]
+    fn set_keyboard_mode(&mut self, mode: KeyboardModes, apply: KeyboardModesApplyBehavior) {
+        if !self.config.kitty_keyboard {
+            return;
+        }
+
+        self.set_keyboard_mode(mode.into(), apply);
+    }
+
+    #[inline]
     fn device_status(&mut self, arg: usize) {
         trace!("Reporting device status: {}", arg);
         match arg {
@@ -1429,7 +1565,7 @@ impl<T: EventListener> Handler for Term<T> {
         trace!("Carriage return");
         let new_col = 0;
         let line = self.grid.cursor.point.line.0 as usize;
-        self.damage_line(line, new_col, self.grid.cursor.point.column.0);
+        self.damage.damage_line(line, new_col, self.grid.cursor.point.column.0);
         self.grid.cursor.point.column = Column(new_col);
         self.grid.cursor.input_needs_wrap = false;
         // Send the line drawn increment to the tokio background thread
@@ -1599,7 +1735,7 @@ impl<T: EventListener> Handler for Term<T> {
         }
 
         let line = self.grid.cursor.point.line.0 as usize;
-        self.damage_line(line, self.grid.cursor.point.column.0, old_col);
+        self.damage.damage_line(line, self.grid.cursor.point.column.0, old_col);
     }
 
     #[inline]
@@ -1651,10 +1787,8 @@ impl<T: EventListener> Handler for Term<T> {
 
     /// Set the indexed color value.
     #[inline]
-    fn set_color(&mut self, index: usize, color: VteRgb) {
+    fn set_color(&mut self, index: usize, color: Rgb) {
         trace!("Setting color[{}] = {:?}", index, color);
-
-        let color = color.into();
 
         // Damage terminal if the color changed and it's not the cursor.
         if index != NamedColor::Cursor as usize && self.colors[index] != Some(color) {
@@ -1697,13 +1831,18 @@ impl<T: EventListener> Handler for Term<T> {
     /// Store data into clipboard.
     #[inline]
     fn clipboard_store(&mut self, clipboard: u8, base64: &[u8]) {
+        if !matches!(self.config.osc52, Osc52::OnlyCopy | Osc52::CopyPaste) {
+            debug!("Denied osc52 store");
+            return;
+        }
+
         let clipboard_type = match clipboard {
             b'c' => ClipboardType::Clipboard,
             b'p' | b's' => ClipboardType::Selection,
             _ => return,
         };
 
-        if let Ok(bytes) = base64::decode(base64) {
+        if let Ok(bytes) = Base64.decode(base64) {
             if let Ok(text) = String::from_utf8(bytes) {
                 self.event_proxy.send_event(Event::ClipboardStore(clipboard_type, text));
             }
@@ -1713,6 +1852,11 @@ impl<T: EventListener> Handler for Term<T> {
     /// Load data from clipboard.
     #[inline]
     fn clipboard_load(&mut self, clipboard: u8, terminator: &str) {
+        if !matches!(self.config.osc52, Osc52::OnlyPaste | Osc52::CopyPaste) {
+            debug!("Denied osc52 load");
+            return;
+        }
+
         let clipboard_type = match clipboard {
             b'c' => ClipboardType::Clipboard,
             b'p' | b's' => ClipboardType::Selection,
@@ -1724,7 +1868,7 @@ impl<T: EventListener> Handler for Term<T> {
         self.event_proxy.send_event(Event::ClipboardLoad(
             clipboard_type,
             Arc::new(move |text| {
-                let base64 = base64::encode(text);
+                let base64 = Base64.encode(text);
                 format!("\x1b]52;{};{}{}", clipboard as char, base64, terminator)
             }),
         ));
@@ -1830,6 +1974,8 @@ impl<T: EventListener> Handler for Term<T> {
         self.title = None;
         self.selection = None;
         self.vi_mode_cursor = Default::default();
+        self.keyboard_mode_stack = Default::default();
+        self.inactive_keyboard_mode_stack = Default::default();
 
         // Preserve vi mode across resets.
         self.mode &= TermMode::VI;
@@ -1853,7 +1999,7 @@ impl<T: EventListener> Handler for Term<T> {
     }
 
     #[inline]
-    fn set_hyperlink(&mut self, hyperlink: Option<VteHyperlink>) {
+    fn set_hyperlink(&mut self, hyperlink: Option<Hyperlink>) {
         trace!("Setting hyperlink: {:?}", hyperlink);
         self.grid.cursor.template.set_hyperlink(hyperlink.map(|e| e.into()));
     }
@@ -1913,101 +2059,221 @@ impl<T: EventListener> Handler for Term<T> {
     }
 
     #[inline]
-    fn set_mode(&mut self, mode: ansi::Mode) {
-        trace!("Setting mode: {:?}", mode);
+    fn set_private_mode(&mut self, mode: PrivateMode) {
+        let mode = match mode {
+            PrivateMode::Named(mode) => mode,
+            PrivateMode::Unknown(mode) => {
+                debug!("Ignoring unknown mode {} in set_private_mode", mode);
+                return;
+            },
+        };
+
+        trace!("Setting private mode: {:?}", mode);
         match mode {
-            ansi::Mode::UrgencyHints => self.mode.insert(TermMode::URGENCY_HINTS),
-            ansi::Mode::SwapScreenAndSetRestoreCursor => {
+            NamedPrivateMode::UrgencyHints => self.mode.insert(TermMode::URGENCY_HINTS),
+            NamedPrivateMode::SwapScreenAndSetRestoreCursor => {
                 if !self.mode.contains(TermMode::ALT_SCREEN) {
                     self.swap_alt();
                 }
             },
-            ansi::Mode::ShowCursor => self.mode.insert(TermMode::SHOW_CURSOR),
-            ansi::Mode::CursorKeys => self.mode.insert(TermMode::APP_CURSOR),
+            NamedPrivateMode::ShowCursor => self.mode.insert(TermMode::SHOW_CURSOR),
+            NamedPrivateMode::CursorKeys => self.mode.insert(TermMode::APP_CURSOR),
             // Mouse protocols are mutually exclusive.
-            ansi::Mode::ReportMouseClicks => {
+            NamedPrivateMode::ReportMouseClicks => {
                 self.mode.remove(TermMode::MOUSE_MODE);
                 self.mode.insert(TermMode::MOUSE_REPORT_CLICK);
                 self.event_proxy.send_event(Event::MouseCursorDirty);
             },
-            ansi::Mode::ReportCellMouseMotion => {
+            NamedPrivateMode::ReportCellMouseMotion => {
                 self.mode.remove(TermMode::MOUSE_MODE);
                 self.mode.insert(TermMode::MOUSE_DRAG);
                 self.event_proxy.send_event(Event::MouseCursorDirty);
             },
-            ansi::Mode::ReportAllMouseMotion => {
+            NamedPrivateMode::ReportAllMouseMotion => {
                 self.mode.remove(TermMode::MOUSE_MODE);
                 self.mode.insert(TermMode::MOUSE_MOTION);
                 self.event_proxy.send_event(Event::MouseCursorDirty);
             },
-            ansi::Mode::ReportFocusInOut => self.mode.insert(TermMode::FOCUS_IN_OUT),
-            ansi::Mode::BracketedPaste => self.mode.insert(TermMode::BRACKETED_PASTE),
+            NamedPrivateMode::ReportFocusInOut => self.mode.insert(TermMode::FOCUS_IN_OUT),
+            NamedPrivateMode::BracketedPaste => self.mode.insert(TermMode::BRACKETED_PASTE),
             // Mouse encodings are mutually exclusive.
-            ansi::Mode::SgrMouse => {
+            NamedPrivateMode::SgrMouse => {
                 self.mode.remove(TermMode::UTF8_MOUSE);
                 self.mode.insert(TermMode::SGR_MOUSE);
             },
-            ansi::Mode::Utf8Mouse => {
+            NamedPrivateMode::Utf8Mouse => {
                 self.mode.remove(TermMode::SGR_MOUSE);
                 self.mode.insert(TermMode::UTF8_MOUSE);
             },
-            ansi::Mode::AlternateScroll => self.mode.insert(TermMode::ALTERNATE_SCROLL),
-            ansi::Mode::LineWrap => self.mode.insert(TermMode::LINE_WRAP),
-            ansi::Mode::LineFeedNewLine => self.mode.insert(TermMode::LINE_FEED_NEW_LINE),
-            ansi::Mode::Origin => self.mode.insert(TermMode::ORIGIN),
-            ansi::Mode::ColumnMode => self.deccolm(),
-            ansi::Mode::Insert => self.mode.insert(TermMode::INSERT),
-            ansi::Mode::BlinkingCursor => {
-                let style = self.cursor_style.get_or_insert(self.default_cursor_style);
+            NamedPrivateMode::AlternateScroll => self.mode.insert(TermMode::ALTERNATE_SCROLL),
+            NamedPrivateMode::LineWrap => self.mode.insert(TermMode::LINE_WRAP),
+            NamedPrivateMode::Origin => self.mode.insert(TermMode::ORIGIN),
+            NamedPrivateMode::ColumnMode => self.deccolm(),
+            NamedPrivateMode::BlinkingCursor => {
+                let style = self.cursor_style.get_or_insert(self.config.default_cursor_style);
                 style.blinking = true;
                 self.event_proxy.send_event(Event::CursorBlinkingChange);
             },
+            NamedPrivateMode::SyncUpdate => (),
+        }
+    }
+
+    #[inline]
+    fn unset_private_mode(&mut self, mode: PrivateMode) {
+        let mode = match mode {
+            PrivateMode::Named(mode) => mode,
+            PrivateMode::Unknown(mode) => {
+                debug!("Ignoring unknown mode {} in unset_private_mode", mode);
+                return;
+            },
+        };
+
+        trace!("Unsetting private mode: {:?}", mode);
+        match mode {
+            NamedPrivateMode::UrgencyHints => self.mode.remove(TermMode::URGENCY_HINTS),
+            NamedPrivateMode::SwapScreenAndSetRestoreCursor => {
+                if self.mode.contains(TermMode::ALT_SCREEN) {
+                    self.swap_alt();
+                }
+            },
+            NamedPrivateMode::ShowCursor => self.mode.remove(TermMode::SHOW_CURSOR),
+            NamedPrivateMode::CursorKeys => self.mode.remove(TermMode::APP_CURSOR),
+            NamedPrivateMode::ReportMouseClicks => {
+                self.mode.remove(TermMode::MOUSE_REPORT_CLICK);
+                self.event_proxy.send_event(Event::MouseCursorDirty);
+            },
+            NamedPrivateMode::ReportCellMouseMotion => {
+                self.mode.remove(TermMode::MOUSE_DRAG);
+                self.event_proxy.send_event(Event::MouseCursorDirty);
+            },
+            NamedPrivateMode::ReportAllMouseMotion => {
+                self.mode.remove(TermMode::MOUSE_MOTION);
+                self.event_proxy.send_event(Event::MouseCursorDirty);
+            },
+            NamedPrivateMode::ReportFocusInOut => self.mode.remove(TermMode::FOCUS_IN_OUT),
+            NamedPrivateMode::BracketedPaste => self.mode.remove(TermMode::BRACKETED_PASTE),
+            NamedPrivateMode::SgrMouse => self.mode.remove(TermMode::SGR_MOUSE),
+            NamedPrivateMode::Utf8Mouse => self.mode.remove(TermMode::UTF8_MOUSE),
+            NamedPrivateMode::AlternateScroll => self.mode.remove(TermMode::ALTERNATE_SCROLL),
+            NamedPrivateMode::LineWrap => self.mode.remove(TermMode::LINE_WRAP),
+            NamedPrivateMode::Origin => self.mode.remove(TermMode::ORIGIN),
+            NamedPrivateMode::ColumnMode => self.deccolm(),
+            NamedPrivateMode::BlinkingCursor => {
+                let style = self.cursor_style.get_or_insert(self.config.default_cursor_style);
+                style.blinking = false;
+                self.event_proxy.send_event(Event::CursorBlinkingChange);
+            },
+            NamedPrivateMode::SyncUpdate => (),
+        }
+    }
+
+    #[inline]
+    fn report_private_mode(&mut self, mode: PrivateMode) {
+        trace!("Reporting private mode {mode:?}");
+        let state = match mode {
+            PrivateMode::Named(mode) => match mode {
+                NamedPrivateMode::CursorKeys => self.mode.contains(TermMode::APP_CURSOR).into(),
+                NamedPrivateMode::Origin => self.mode.contains(TermMode::ORIGIN).into(),
+                NamedPrivateMode::LineWrap => self.mode.contains(TermMode::LINE_WRAP).into(),
+                NamedPrivateMode::BlinkingCursor => {
+                    let style = self.cursor_style.get_or_insert(self.config.default_cursor_style);
+                    style.blinking.into()
+                },
+                NamedPrivateMode::ShowCursor => self.mode.contains(TermMode::SHOW_CURSOR).into(),
+                NamedPrivateMode::ReportMouseClicks => {
+                    self.mode.contains(TermMode::MOUSE_REPORT_CLICK).into()
+                },
+                NamedPrivateMode::ReportCellMouseMotion => {
+                    self.mode.contains(TermMode::MOUSE_DRAG).into()
+                },
+                NamedPrivateMode::ReportAllMouseMotion => {
+                    self.mode.contains(TermMode::MOUSE_MOTION).into()
+                },
+                NamedPrivateMode::ReportFocusInOut => {
+                    self.mode.contains(TermMode::FOCUS_IN_OUT).into()
+                },
+                NamedPrivateMode::Utf8Mouse => self.mode.contains(TermMode::UTF8_MOUSE).into(),
+                NamedPrivateMode::SgrMouse => self.mode.contains(TermMode::SGR_MOUSE).into(),
+                NamedPrivateMode::AlternateScroll => {
+                    self.mode.contains(TermMode::ALTERNATE_SCROLL).into()
+                },
+                NamedPrivateMode::UrgencyHints => {
+                    self.mode.contains(TermMode::URGENCY_HINTS).into()
+                },
+                NamedPrivateMode::SwapScreenAndSetRestoreCursor => {
+                    self.mode.contains(TermMode::ALT_SCREEN).into()
+                },
+                NamedPrivateMode::BracketedPaste => {
+                    self.mode.contains(TermMode::BRACKETED_PASTE).into()
+                },
+                NamedPrivateMode::SyncUpdate => ModeState::Reset,
+                NamedPrivateMode::ColumnMode => ModeState::NotSupported,
+            },
+            PrivateMode::Unknown(_) => ModeState::NotSupported,
+        };
+
+        self.event_proxy.send_event(Event::PtyWrite(format!(
+            "\x1b[?{};{}$y",
+            mode.raw(),
+            state as u8,
+        )));
+    }
+
+    #[inline]
+    fn set_mode(&mut self, mode: ansi::Mode) {
+        let mode = match mode {
+            ansi::Mode::Named(mode) => mode,
+            ansi::Mode::Unknown(mode) => {
+                debug!("Ignoring unknown mode {} in set_mode", mode);
+                return;
+            },
+        };
+
+        trace!("Setting public mode: {:?}", mode);
+        match mode {
+            NamedMode::Insert => self.mode.insert(TermMode::INSERT),
+            NamedMode::LineFeedNewLine => self.mode.insert(TermMode::LINE_FEED_NEW_LINE),
         }
     }
 
     #[inline]
     fn unset_mode(&mut self, mode: ansi::Mode) {
-        trace!("Unsetting mode: {:?}", mode);
+        let mode = match mode {
+            ansi::Mode::Named(mode) => mode,
+            ansi::Mode::Unknown(mode) => {
+                debug!("Ignorning unknown mode {} in unset_mode", mode);
+                return;
+            },
+        };
+
+        trace!("Setting public mode: {:?}", mode);
         match mode {
-            ansi::Mode::UrgencyHints => self.mode.remove(TermMode::URGENCY_HINTS),
-            ansi::Mode::SwapScreenAndSetRestoreCursor => {
-                if self.mode.contains(TermMode::ALT_SCREEN) {
-                    self.swap_alt();
-                }
-            },
-            ansi::Mode::ShowCursor => self.mode.remove(TermMode::SHOW_CURSOR),
-            ansi::Mode::CursorKeys => self.mode.remove(TermMode::APP_CURSOR),
-            ansi::Mode::ReportMouseClicks => {
-                self.mode.remove(TermMode::MOUSE_REPORT_CLICK);
-                self.event_proxy.send_event(Event::MouseCursorDirty);
-            },
-            ansi::Mode::ReportCellMouseMotion => {
-                self.mode.remove(TermMode::MOUSE_DRAG);
-                self.event_proxy.send_event(Event::MouseCursorDirty);
-            },
-            ansi::Mode::ReportAllMouseMotion => {
-                self.mode.remove(TermMode::MOUSE_MOTION);
-                self.event_proxy.send_event(Event::MouseCursorDirty);
-            },
-            ansi::Mode::ReportFocusInOut => self.mode.remove(TermMode::FOCUS_IN_OUT),
-            ansi::Mode::BracketedPaste => self.mode.remove(TermMode::BRACKETED_PASTE),
-            ansi::Mode::SgrMouse => self.mode.remove(TermMode::SGR_MOUSE),
-            ansi::Mode::Utf8Mouse => self.mode.remove(TermMode::UTF8_MOUSE),
-            ansi::Mode::AlternateScroll => self.mode.remove(TermMode::ALTERNATE_SCROLL),
-            ansi::Mode::LineWrap => self.mode.remove(TermMode::LINE_WRAP),
-            ansi::Mode::LineFeedNewLine => self.mode.remove(TermMode::LINE_FEED_NEW_LINE),
-            ansi::Mode::Origin => self.mode.remove(TermMode::ORIGIN),
-            ansi::Mode::ColumnMode => self.deccolm(),
-            ansi::Mode::Insert => {
+            NamedMode::Insert => {
                 self.mode.remove(TermMode::INSERT);
                 self.mark_fully_damaged();
             },
-            ansi::Mode::BlinkingCursor => {
-                let style = self.cursor_style.get_or_insert(self.default_cursor_style);
-                style.blinking = false;
-                self.event_proxy.send_event(Event::CursorBlinkingChange);
-            },
+            NamedMode::LineFeedNewLine => self.mode.remove(TermMode::LINE_FEED_NEW_LINE),
         }
+    }
+
+    #[inline]
+    fn report_mode(&mut self, mode: ansi::Mode) {
+        trace!("Reporting mode {mode:?}");
+        let state = match mode {
+            ansi::Mode::Named(mode) => match mode {
+                NamedMode::Insert => self.mode.contains(TermMode::INSERT).into(),
+                NamedMode::LineFeedNewLine => {
+                    self.mode.contains(TermMode::LINE_FEED_NEW_LINE).into()
+                },
+            },
+            ansi::Mode::Unknown(_) => ModeState::NotSupported,
+        };
+
+        self.event_proxy.send_event(Event::PtyWrite(format!(
+            "\x1b[{};{}$y",
+            mode.raw(),
+            state as u8,
+        )));
     }
 
     #[inline]
@@ -2072,7 +2338,7 @@ impl<T: EventListener> Handler for Term<T> {
     fn set_cursor_shape(&mut self, shape: CursorShape) {
         trace!("Setting cursor shape {:?}", shape);
 
-        let style = self.cursor_style.get_or_insert(self.default_cursor_style);
+        let style = self.cursor_style.get_or_insert(self.config.default_cursor_style);
         style.shape = shape;
     }
 
@@ -2128,6 +2394,28 @@ impl<T: EventListener> Handler for Term<T> {
     fn text_area_size_chars(&mut self) {
         let text = format!("\x1b[8;{};{}t", self.screen_lines(), self.columns());
         self.event_proxy.send_event(Event::PtyWrite(text));
+    }
+}
+
+/// The state of the [`Mode`] and [`PrivateMode`].
+#[repr(u8)]
+#[derive(Debug, Clone, Copy)]
+enum ModeState {
+    /// The mode is not supported.
+    NotSupported = 0,
+    /// The mode is currently set.
+    Set = 1,
+    /// The mode is currently not set.
+    Reset = 2,
+}
+
+impl From<bool> for ModeState {
+    fn from(value: bool) -> Self {
+        if value {
+            Self::Set
+        } else {
+            Self::Reset
+        }
     }
 }
 
@@ -2261,7 +2549,6 @@ pub mod test {
     use serde::{Deserialize, Serialize};
     use unicode_width::UnicodeWidthChar;
 
-    use crate::config::Config;
     use crate::event::VoidListener;
     use crate::index::Column;
 
@@ -2320,7 +2607,7 @@ pub mod test {
 
         // Create terminal with the appropriate dimensions.
         let size = TermSize::new(num_cols, lines.len());
-        let mut term = Term::new(&Config::default(), &size, VoidListener);
+        let mut term = Term::new(Config::default(), &size, VoidListener);
 
         // Fill terminal with content.
         for (line, text) in lines.iter().enumerate() {
@@ -2354,19 +2641,18 @@ mod tests {
 
     use std::mem;
 
-    use crate::ansi::{self, CharsetIndex, Handler, StandardCharset};
-    use crate::config::Config;
     use crate::event::VoidListener;
     use crate::grid::{Grid, Scroll};
     use crate::index::{Column, Point, Side};
     use crate::selection::{Selection, SelectionType};
     use crate::term::cell::{Cell, Flags};
     use crate::term::test::TermSize;
+    use crate::vte::ansi::{self, CharsetIndex, Handler, StandardCharset};
 
     #[test]
     fn scroll_display_page_up() {
         let size = TermSize::new(5, 10);
-        let mut term = Term::new(&Config::default(), &size, VoidListener);
+        let mut term = Term::new(Config::default(), &size, VoidListener);
 
         // Create 11 lines of scrollback.
         for _ in 0..20 {
@@ -2392,7 +2678,7 @@ mod tests {
     #[test]
     fn scroll_display_page_down() {
         let size = TermSize::new(5, 10);
-        let mut term = Term::new(&Config::default(), &size, VoidListener);
+        let mut term = Term::new(Config::default(), &size, VoidListener);
 
         // Create 11 lines of scrollback.
         for _ in 0..20 {
@@ -2422,7 +2708,7 @@ mod tests {
     #[test]
     fn simple_selection_works() {
         let size = TermSize::new(5, 5);
-        let mut term = Term::new(&Config::default(), &size, VoidListener);
+        let mut term = Term::new(Config::default(), &size, VoidListener);
         let grid = term.grid_mut();
         for i in 0..4 {
             if i == 1 {
@@ -2468,7 +2754,7 @@ mod tests {
     #[test]
     fn semantic_selection_works() {
         let size = TermSize::new(5, 3);
-        let mut term = Term::new(&Config::default(), &size, VoidListener);
+        let mut term = Term::new(Config::default(), &size, VoidListener);
         let mut grid: Grid<Cell> = Grid::new(3, 5, 0);
         for i in 0..5 {
             for j in 0..2 {
@@ -2483,7 +2769,7 @@ mod tests {
         let mut escape_chars = String::from("\"");
 
         mem::swap(&mut term.grid, &mut grid);
-        mem::swap(&mut term.semantic_escape_chars, &mut escape_chars);
+        mem::swap(&mut term.config.semantic_escape_chars, &mut escape_chars);
 
         {
             term.selection = Some(Selection::new(
@@ -2516,7 +2802,7 @@ mod tests {
     #[test]
     fn line_selection_works() {
         let size = TermSize::new(5, 1);
-        let mut term = Term::new(&Config::default(), &size, VoidListener);
+        let mut term = Term::new(Config::default(), &size, VoidListener);
         let mut grid: Grid<Cell> = Grid::new(1, 5, 0);
         for i in 0..5 {
             grid[Line(0)][Column(i)].c = 'a';
@@ -2537,7 +2823,7 @@ mod tests {
     #[test]
     fn block_selection_works() {
         let size = TermSize::new(5, 5);
-        let mut term = Term::new(&Config::default(), &size, VoidListener);
+        let mut term = Term::new(Config::default(), &size, VoidListener);
         let grid = term.grid_mut();
         for i in 1..4 {
             grid[Line(i)][Column(0)].c = '"';
@@ -2593,7 +2879,7 @@ mod tests {
     #[test]
     fn input_line_drawing_character() {
         let size = TermSize::new(7, 17);
-        let mut term = Term::new(&Config::default(), &size, VoidListener);
+        let mut term = Term::new(Config::default(), &size, VoidListener);
         let cursor = Point::new(Line(0), Column(0));
         term.configure_charset(CharsetIndex::G0, StandardCharset::SpecialCharacterAndLineDrawing);
         term.input('a');
@@ -2604,7 +2890,7 @@ mod tests {
     #[test]
     fn clearing_viewport_keeps_history_position() {
         let size = TermSize::new(10, 20);
-        let mut term = Term::new(&Config::default(), &size, VoidListener);
+        let mut term = Term::new(Config::default(), &size, VoidListener);
 
         // Create 10 lines of scrollback.
         for _ in 0..29 {
@@ -2625,7 +2911,7 @@ mod tests {
     #[test]
     fn clearing_viewport_with_vi_mode_keeps_history_position() {
         let size = TermSize::new(10, 20);
-        let mut term = Term::new(&Config::default(), &size, VoidListener);
+        let mut term = Term::new(Config::default(), &size, VoidListener);
 
         // Create 10 lines of scrollback.
         for _ in 0..29 {
@@ -2651,7 +2937,7 @@ mod tests {
     #[test]
     fn clearing_scrollback_resets_display_offset() {
         let size = TermSize::new(10, 20);
-        let mut term = Term::new(&Config::default(), &size, VoidListener);
+        let mut term = Term::new(Config::default(), &size, VoidListener);
 
         // Create 10 lines of scrollback.
         for _ in 0..29 {
@@ -2672,7 +2958,7 @@ mod tests {
     #[test]
     fn clearing_scrollback_sets_vi_cursor_into_viewport() {
         let size = TermSize::new(10, 20);
-        let mut term = Term::new(&Config::default(), &size, VoidListener);
+        let mut term = Term::new(Config::default(), &size, VoidListener);
 
         // Create 10 lines of scrollback.
         for _ in 0..29 {
@@ -2698,7 +2984,7 @@ mod tests {
     #[test]
     fn clear_saved_lines() {
         let size = TermSize::new(7, 17);
-        let mut term = Term::new(&Config::default(), &size, VoidListener);
+        let mut term = Term::new(Config::default(), &size, VoidListener);
 
         // Add one line of scrollback.
         term.grid.scroll_up(&(Line(0)..Line(1)), 1);
@@ -2720,7 +3006,7 @@ mod tests {
     #[test]
     fn vi_cursor_keep_pos_on_scrollback_buffer() {
         let size = TermSize::new(5, 10);
-        let mut term = Term::new(&Config::default(), &size, VoidListener);
+        let mut term = Term::new(Config::default(), &size, VoidListener);
 
         // Create 11 lines of scrollback.
         for _ in 0..20 {
@@ -2740,7 +3026,7 @@ mod tests {
     #[test]
     fn grow_lines_updates_active_cursor_pos() {
         let mut size = TermSize::new(100, 10);
-        let mut term = Term::new(&Config::default(), &size, VoidListener);
+        let mut term = Term::new(Config::default(), &size, VoidListener);
 
         // Create 10 lines of scrollback.
         for _ in 0..19 {
@@ -2760,7 +3046,7 @@ mod tests {
     #[test]
     fn grow_lines_updates_inactive_cursor_pos() {
         let mut size = TermSize::new(100, 10);
-        let mut term = Term::new(&Config::default(), &size, VoidListener);
+        let mut term = Term::new(Config::default(), &size, VoidListener);
 
         // Create 10 lines of scrollback.
         for _ in 0..19 {
@@ -2770,14 +3056,14 @@ mod tests {
         assert_eq!(term.grid.cursor.point, Point::new(Line(9), Column(0)));
 
         // Enter alt screen.
-        term.set_mode(ansi::Mode::SwapScreenAndSetRestoreCursor);
+        term.set_private_mode(NamedPrivateMode::SwapScreenAndSetRestoreCursor.into());
 
         // Increase visible lines.
         size.screen_lines = 30;
         term.resize(size);
 
         // Leave alt screen.
-        term.unset_mode(ansi::Mode::SwapScreenAndSetRestoreCursor);
+        term.unset_private_mode(NamedPrivateMode::SwapScreenAndSetRestoreCursor.into());
 
         assert_eq!(term.history_size(), 0);
         assert_eq!(term.grid.cursor.point, Point::new(Line(19), Column(0)));
@@ -2786,7 +3072,7 @@ mod tests {
     #[test]
     fn shrink_lines_updates_active_cursor_pos() {
         let mut size = TermSize::new(100, 10);
-        let mut term = Term::new(&Config::default(), &size, VoidListener);
+        let mut term = Term::new(Config::default(), &size, VoidListener);
 
         // Create 10 lines of scrollback.
         for _ in 0..19 {
@@ -2806,7 +3092,7 @@ mod tests {
     #[test]
     fn shrink_lines_updates_inactive_cursor_pos() {
         let mut size = TermSize::new(100, 10);
-        let mut term = Term::new(&Config::default(), &size, VoidListener);
+        let mut term = Term::new(Config::default(), &size, VoidListener);
 
         // Create 10 lines of scrollback.
         for _ in 0..19 {
@@ -2816,14 +3102,14 @@ mod tests {
         assert_eq!(term.grid.cursor.point, Point::new(Line(9), Column(0)));
 
         // Enter alt screen.
-        term.set_mode(ansi::Mode::SwapScreenAndSetRestoreCursor);
+        term.set_private_mode(NamedPrivateMode::SwapScreenAndSetRestoreCursor.into());
 
         // Increase visible lines.
         size.screen_lines = 5;
         term.resize(size);
 
         // Leave alt screen.
-        term.unset_mode(ansi::Mode::SwapScreenAndSetRestoreCursor);
+        term.unset_private_mode(NamedPrivateMode::SwapScreenAndSetRestoreCursor.into());
 
         assert_eq!(term.history_size(), 15);
         assert_eq!(term.grid.cursor.point, Point::new(Line(4), Column(0)));
@@ -2832,7 +3118,7 @@ mod tests {
     #[test]
     fn damage_public_usage() {
         let size = TermSize::new(10, 10);
-        let mut term = Term::new(&Config::default(), &size, VoidListener);
+        let mut term = Term::new(Config::default(), &size, VoidListener);
         // Reset terminal for partial damage tests since it's initialized as fully damaged.
         term.reset_damage();
 
@@ -2847,7 +3133,7 @@ mod tests {
         term.input('e');
         let right = term.grid.cursor.point.column.0;
 
-        let mut damaged_lines = match term.damage(None) {
+        let mut damaged_lines = match term.damage() {
             TermDamage::Full => panic!("Expected partial damage, however got Full"),
             TermDamage::Partial(damaged_lines) => damaged_lines,
         };
@@ -2855,77 +3141,58 @@ mod tests {
         assert_eq!(damaged_lines.next(), None);
         term.reset_damage();
 
-        // Check that selection we've passed was properly damaged.
+        // Create scrollback.
+        for _ in 0..20 {
+            term.newline();
+        }
 
-        let line = 1;
-        let left = 0;
-        let right = term.columns() - 1;
-        let mut selection =
-            Selection::new(SelectionType::Block, Point::new(Line(line), Column(3)), Side::Left);
-        selection.update(Point::new(Line(line), Column(5)), Side::Left);
-        let selection_range = selection.to_range(&term);
+        match term.damage() {
+            TermDamage::Full => (),
+            TermDamage::Partial(_) => panic!("Expected Full damage, however got Partial "),
+        };
+        term.reset_damage();
 
-        let mut damaged_lines = match term.damage(selection_range) {
+        term.scroll_display(Scroll::Delta(10));
+        term.reset_damage();
+
+        // No damage when scrolled into viewport.
+        for idx in 0..term.columns() {
+            term.goto(idx as i32, idx);
+        }
+        let mut damaged_lines = match term.damage() {
             TermDamage::Full => panic!("Expected partial damage, however got Full"),
             TermDamage::Partial(damaged_lines) => damaged_lines,
         };
-        let line = line as usize;
-        // Skip cursor damage information, since we're just testing selection.
-        damaged_lines.next();
-        assert_eq!(damaged_lines.next(), Some(LineDamageBounds { line, left, right }));
-        assert_eq!(damaged_lines.next(), None);
-        term.reset_damage();
-
-        // Check that existing selection gets damaged when it is removed.
-
-        let mut damaged_lines = match term.damage(None) {
-            TermDamage::Full => panic!("Expected partial damage, however got Full"),
-            TermDamage::Partial(damaged_lines) => damaged_lines,
-        };
-        // Skip cursor damage information, since we're just testing selection clearing.
-        damaged_lines.next();
-        assert_eq!(damaged_lines.next(), Some(LineDamageBounds { line, left, right }));
-        assert_eq!(damaged_lines.next(), None);
-        term.reset_damage();
-
-        // Check that `Vi` cursor in vi mode is being always damaged.
-
-        term.toggle_vi_mode();
-        // Put Vi cursor to a different location than normal cursor.
-        term.vi_goto_point(Point::new(Line(5), Column(5)));
-        // Reset damage, so the damage information from `vi_goto_point` won't affect test.
-        term.reset_damage();
-        let vi_cursor_point = term.vi_mode_cursor.point;
-        let line = vi_cursor_point.line.0 as usize;
-        let left = vi_cursor_point.column.0;
-        let right = left;
-
-        let mut damaged_lines = match term.damage(None) {
-            TermDamage::Full => panic!("Expected partial damage, however got Full"),
-            TermDamage::Partial(damaged_lines) => damaged_lines,
-        };
-        // Skip cursor damage information, since we're just testing Vi cursor.
-        damaged_lines.next();
-        assert_eq!(damaged_lines.next(), Some(LineDamageBounds { line, left, right }));
         assert_eq!(damaged_lines.next(), None);
 
-        // Ensure that old Vi cursor got damaged as well.
+        // Scroll back into the viewport, so we have 2 visible lines which terminal can write
+        // to.
+        term.scroll_display(Scroll::Delta(-2));
         term.reset_damage();
-        term.toggle_vi_mode();
-        let mut damaged_lines = match term.damage(None) {
+
+        term.goto(0, 0);
+        term.goto(1, 0);
+        term.goto(2, 0);
+        let display_offset = term.grid().display_offset();
+        let mut damaged_lines = match term.damage() {
             TermDamage::Full => panic!("Expected partial damage, however got Full"),
             TermDamage::Partial(damaged_lines) => damaged_lines,
         };
-        // Skip cursor damage information, since we're just testing Vi cursor.
-        damaged_lines.next();
-        assert_eq!(damaged_lines.next(), Some(LineDamageBounds { line, left, right }));
+        assert_eq!(
+            damaged_lines.next(),
+            Some(LineDamageBounds { line: display_offset, left: 0, right: 0 })
+        );
+        assert_eq!(
+            damaged_lines.next(),
+            Some(LineDamageBounds { line: display_offset + 1, left: 0, right: 0 })
+        );
         assert_eq!(damaged_lines.next(), None);
     }
 
     #[test]
     fn damage_cursor_movements() {
         let size = TermSize::new(10, 10);
-        let mut term = Term::new(&Config::default(), &size, VoidListener);
+        let mut term = Term::new(Config::default(), &size, VoidListener);
         let num_cols = term.columns();
         // Reset terminal for partial damage tests since it's initialized as fully damaged.
         term.reset_damage();
@@ -3023,93 +3290,93 @@ mod tests {
     #[test]
     fn full_damage() {
         let size = TermSize::new(100, 10);
-        let mut term = Term::new(&Config::default(), &size, VoidListener);
+        let mut term = Term::new(Config::default(), &size, VoidListener);
 
-        assert!(term.damage.is_fully_damaged);
+        assert!(term.damage.full);
         for _ in 0..20 {
             term.newline();
         }
         term.reset_damage();
 
         term.clear_screen(ansi::ClearMode::Above);
-        assert!(term.damage.is_fully_damaged);
+        assert!(term.damage.full);
         term.reset_damage();
 
         term.scroll_display(Scroll::Top);
-        assert!(term.damage.is_fully_damaged);
+        assert!(term.damage.full);
         term.reset_damage();
 
         // Sequential call to scroll display without doing anything shouldn't damage.
         term.scroll_display(Scroll::Top);
-        assert!(!term.damage.is_fully_damaged);
+        assert!(!term.damage.full);
         term.reset_damage();
 
-        term.update_config(&Config::default());
-        assert!(term.damage.is_fully_damaged);
+        term.set_options(Config::default());
+        assert!(term.damage.full);
         term.reset_damage();
 
         term.scroll_down_relative(Line(5), 2);
-        assert!(term.damage.is_fully_damaged);
+        assert!(term.damage.full);
         term.reset_damage();
 
         term.scroll_up_relative(Line(3), 2);
-        assert!(term.damage.is_fully_damaged);
+        assert!(term.damage.full);
         term.reset_damage();
 
         term.deccolm();
-        assert!(term.damage.is_fully_damaged);
+        assert!(term.damage.full);
         term.reset_damage();
 
         term.decaln();
-        assert!(term.damage.is_fully_damaged);
+        assert!(term.damage.full);
         term.reset_damage();
 
-        term.set_mode(ansi::Mode::Insert);
+        term.set_mode(NamedMode::Insert.into());
         // Just setting `Insert` mode shouldn't mark terminal as damaged.
-        assert!(!term.damage.is_fully_damaged);
+        assert!(!term.damage.full);
         term.reset_damage();
 
         let color_index = 257;
-        term.set_color(color_index, VteRgb::default());
-        assert!(term.damage.is_fully_damaged);
+        term.set_color(color_index, Rgb::default());
+        assert!(term.damage.full);
         term.reset_damage();
 
         // Setting the same color once again shouldn't trigger full damage.
-        term.set_color(color_index, VteRgb::default());
-        assert!(!term.damage.is_fully_damaged);
+        term.set_color(color_index, Rgb::default());
+        assert!(!term.damage.full);
 
         term.reset_color(color_index);
-        assert!(term.damage.is_fully_damaged);
+        assert!(term.damage.full);
         term.reset_damage();
 
         // We shouldn't trigger fully damage when cursor gets update.
-        term.set_color(NamedColor::Cursor as usize, VteRgb::default());
-        assert!(!term.damage.is_fully_damaged);
+        term.set_color(NamedColor::Cursor as usize, Rgb::default());
+        assert!(!term.damage.full);
 
         // However requesting terminal damage should mark terminal as fully damaged in `Insert`
         // mode.
-        let _ = term.damage(None);
-        assert!(term.damage.is_fully_damaged);
+        let _ = term.damage();
+        assert!(term.damage.full);
         term.reset_damage();
 
-        term.unset_mode(ansi::Mode::Insert);
-        assert!(term.damage.is_fully_damaged);
+        term.unset_mode(NamedMode::Insert.into());
+        assert!(term.damage.full);
         term.reset_damage();
 
         // Keep this as a last check, so we don't have to deal with restoring from alt-screen.
         term.swap_alt();
-        assert!(term.damage.is_fully_damaged);
+        assert!(term.damage.full);
         term.reset_damage();
 
         let size = TermSize::new(10, 10);
         term.resize(size);
-        assert!(term.damage.is_fully_damaged);
+        assert!(term.damage.full);
     }
 
     #[test]
     fn window_title() {
         let size = TermSize::new(7, 17);
-        let mut term = Term::new(&Config::default(), &size, VoidListener);
+        let mut term = Term::new(Config::default(), &size, VoidListener);
 
         // Title None by default.
         assert_eq!(term.title, None);
@@ -3122,7 +3389,7 @@ mod tests {
         term.push_title();
         term.set_title(Some("Next".into()));
         assert_eq!(term.title, Some("Next".into()));
-        assert_eq!(term.title_stack.get(0).unwrap(), &Some("Test".into()));
+        assert_eq!(term.title_stack.first().unwrap(), &Some("Test".into()));
 
         // Title can be popped from stack and set as the window title.
         term.pop_title();

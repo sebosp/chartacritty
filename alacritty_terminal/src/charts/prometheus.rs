@@ -1,15 +1,13 @@
 //! `Prometheus HTTP API` data structures
+use super::deserialize_rgb_from_str;
 use crate::charts::TimeSeries;
 use crate::charts::ValueCollisionPolicy;
-use crate::term::color::Rgb;
-use hyper::client::connect::HttpConnector;
-use hyper::Client;
-use hyper_tls::HttpsConnector;
 use log::*;
 use percent_encoding::{utf8_percent_encode, CONTROLS};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, UNIX_EPOCH};
+use vte::ansi::Rgb;
 // The below data structures for parsing something like:
 //  {
 //   "data": {
@@ -117,7 +115,7 @@ pub struct PrometheusTimeSeries {
 
     /// The URL were Prometheus metrics may be acquaired
     #[serde(skip)]
-    pub url: hyper::Uri,
+    pub url: String,
 
     /// A response may be vector, matrix, scalar or string
     #[serde(default)]
@@ -135,7 +133,7 @@ pub struct PrometheusTimeSeries {
     pub pull_interval: usize,
 
     /// The color of the TimeSeries
-    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_rgb_from_str", default)]
     pub color: Rgb,
 
     /// The transparency of the TimeSeries
@@ -153,7 +151,7 @@ impl Default for PrometheusTimeSeries {
             },
             data: HTTPResponseData::default(),
             source: String::from(""),
-            url: hyper::Uri::default(),
+            url: String::from(""),
             pull_interval: 15,
             data_type: String::from("vector"),
             required_labels: HashMap::new(),
@@ -180,7 +178,7 @@ impl PrometheusTimeSeries {
             },
             data: HTTPResponseData::default(),
             source: url_param,
-            url: hyper::Uri::default(),
+            url: String::from(""),
             pull_interval,
             data_type,
             required_labels,
@@ -200,10 +198,10 @@ impl PrometheusTimeSeries {
         self.series.collision_policy = ValueCollisionPolicy::Overwrite;
     }
 
-    /// `prepare_url` loads self.source into a hyper::Uri
+    /// `prepare_url` loads self.source into a String
     /// It also adds a epoch-start and epoch-end to the
     /// URL depending on the metrics capacity
-    pub fn prepare_url(source: &str, metrics_capacity: u64) -> Result<hyper::Uri, String> {
+    pub fn prepare_url(source: &str, metrics_capacity: u64) -> Result<String, String> {
         // url should be like ("http://localhost:9090/api/v1/query?{}",query)
         // We split self.source into url_base_path?params
         // XXX: We only support one param, if more params are added with &
@@ -227,13 +225,11 @@ impl PrometheusTimeSeries {
             let step = "1"; // Maybe we can change granularity later
             encoded_url = format!("{}&start={}&end={}&step={}", encoded_url, start, end, step);
         }
-        match encoded_url.parse::<hyper::Uri>() {
+        match encoded_url.parse::<reqwest::Url>() {
             Ok(url) => {
-                if url.scheme() == Some(&hyper::http::uri::Scheme::HTTP)
-                    || url.scheme() == Some(&hyper::http::uri::Scheme::HTTPS)
-                {
+                if url.scheme() == "http" || url.scheme() == "https" {
                     debug!("Setting url to: {:?}", url);
-                    Ok(url)
+                    Ok(url.to_string())
                 } else {
                     error!("Only HTTP and HTTPS protocols are supported");
                     Err(format!("Unsupported protocol: {:?}", url.scheme()))
@@ -346,25 +342,27 @@ impl PrometheusTimeSeries {
 /// `get_from_prometheus` is an async operation that returns an Optional
 /// PrometheusResponse
 pub async fn get_from_prometheus(
-    url: hyper::Uri,
+    url: String,
     connect_timeout: Option<Duration>,
-) -> Result<hyper::body::Bytes, (hyper::Uri, hyper::Error)> {
+) -> Result<bytes::Bytes, (String, reqwest::Error)> {
     debug!("get_from_prometheus: Loading Prometheus URL: {}", url);
-    let request = if url.scheme() == Some(&hyper::http::uri::Scheme::HTTP) {
-        Client::builder()
-            .pool_idle_timeout(connect_timeout) // Is this the same as connect_timeout in Client?
-            .build::<_, hyper::Body>(HttpConnector::new())
-            .get(url.clone())
-    } else {
-        let https = HttpsConnector::new();
-        Client::builder().build::<_, hyper::Body>(https).get(url.clone())
-    };
     let url_copy = url.clone();
-    match request.await {
+    // use the timeout:
+    let client = match reqwest::Client::builder()
+        .timeout(connect_timeout.unwrap_or(Duration::from_secs(10)))
+        .build()
+    {
+        Ok(res) => res,
+        Err(err) => {
+            error!("get_from_prometheus: Error creating client: {:?}", err);
+            return Err((url_copy, err));
+        },
+    };
+    match client.get(url).send().await {
         // Since we don't know the end yet, we can't simply stream
         // the chunks as they arrive as we did with the above uppercase endpoint.
         // So here we do `.await` on the future, waiting on concatenating the full body,
-        Ok(res) => match hyper::body::to_bytes(res.into_body()).await {
+        Ok(res) => match res.bytes().await {
             Ok(body) => Ok(body),
             Err(err) => Err((url_copy, err)),
         },
@@ -374,9 +372,10 @@ pub async fn get_from_prometheus(
         },
     }
 }
+
 /// `parse_json` transforms a hyper body chunk into a possible
 /// PrometheusResponse, mostly used for testing
-pub fn parse_json(url: &str, body: &hyper::body::Bytes) -> Option<HTTPResponse> {
+pub fn parse_json(url: &str, body: &bytes::Bytes) -> Option<HTTPResponse> {
     let prom_res: Result<HTTPResponse, serde_json::Error> = serde_json::from_slice(body);
     match prom_res {
         Ok(v) => {
@@ -422,7 +421,7 @@ mod tests {
         );
         assert!(test0_res.is_ok());
         // A json returned by prometheus
-        let test0_json = hyper::body::Bytes::from(
+        let test0_json = bytes::Bytes::from(
             r#"
             {
               "status": "error",
@@ -433,7 +432,7 @@ mod tests {
         );
         let res0_json = parse_json(&String::from("http://test"), &test0_json);
         assert!(res0_json.is_none());
-        let test1_json = hyper::body::Bytes::from("Internal Server Error");
+        let test1_json = bytes::Bytes::from("Internal Server Error");
         let res1_json = parse_json(&String::from("http://test"), &test1_json);
         assert!(res1_json.is_none());
     }
@@ -449,7 +448,7 @@ mod tests {
         assert!(test0_res.is_ok());
         let mut test0 = test0_res.unwrap();
         // A json returned by prometheus
-        let test0_json = hyper::body::Bytes::from(
+        let test0_json = bytes::Bytes::from(
             r#"
             { "status":"success",
               "data":{
@@ -464,7 +463,7 @@ mod tests {
         // 1 items should have been loaded
         assert_eq!(res0_load, Ok(1usize));
         // This json is missing the value after the epoch
-        let test1_json = hyper::body::Bytes::from(
+        let test1_json = bytes::Bytes::from(
             r#"
             { "status":"success",
               "data":{
@@ -494,7 +493,7 @@ mod tests {
         // Let's create space for 15, but we will receive 11 records:
         test0.series = test0.series.with_capacity(15usize);
         // A json returned by prometheus
-        let test0_json = hyper::body::Bytes::from(
+        let test0_json = bytes::Bytes::from(
             r#"
             {
               "status": "success",
@@ -529,7 +528,7 @@ mod tests {
         assert_eq!(loaded_data[1], (1558253470, Some(1.70f64)));
         assert_eq!(loaded_data[5], (1558253474, Some(1.74f64)));
         // Let's add one more item and subtract one item from the array
-        let test1_json = hyper::body::Bytes::from(
+        let test1_json = bytes::Bytes::from(
             r#"
             {
               "status": "success",
@@ -575,7 +574,7 @@ mod tests {
         assert_eq!(loaded_data[3], (1558253472, Some(1.72f64)));
         assert_eq!(loaded_data[5], (1558253474, Some(1.74f64)));
         // This json is missing the value after the epoch
-        let test2_json = hyper::body::Bytes::from(
+        let test2_json = bytes::Bytes::from(
             r#"
             {
               "status": "success",
@@ -614,7 +613,7 @@ mod tests {
         );
         assert!(test0_res.is_ok());
         let mut test0 = test0_res.unwrap();
-        let test1_json = hyper::body::Bytes::from(
+        let test1_json = bytes::Bytes::from(
             r#"
             {
               "status": "success",
@@ -663,45 +662,51 @@ mod tests {
         let res1_load = test0.load_prometheus_response(res1_json.unwrap());
         // 1 items should have been loaded
         assert_eq!(res1_load, Ok(24usize));
-        assert_eq!(test0.series.as_vec(), vec![
-            (1566918913, Some(4.5)),
-            (1566918914, Some(4.5)),
-            (1566918915, Some(4.5)),
-            (1566918916, Some(4.5)),
-            (1566918917, Some(4.5)),
-            (1566918918, Some(4.5)),
-            (1566918919, Some(4.25)),
-            (1566918920, Some(4.25)),
-            (1566918921, Some(4.25)),
-            (1566918922, Some(4.25)),
-            (1566918923, Some(4.25)),
-            (1566918924, Some(4.25)),
-            (1566918925, Some(4.)),
-            (1566918926, Some(4.)),
-            (1566918927, Some(4.)),
-            (1566918928, Some(4.)),
-            (1566918929, Some(4.)),
-            (1566918930, Some(4.)),
-            (1566918931, Some(4.75)),
-            (1566918932, Some(4.75)),
-            (1566918933, Some(4.75)),
-            (1566918934, Some(4.75)),
-            (1566918935, Some(4.75)),
-            (1566918936, Some(4.75))
-        ]);
+        assert_eq!(
+            test0.series.as_vec(),
+            vec![
+                (1566918913, Some(4.5)),
+                (1566918914, Some(4.5)),
+                (1566918915, Some(4.5)),
+                (1566918916, Some(4.5)),
+                (1566918917, Some(4.5)),
+                (1566918918, Some(4.5)),
+                (1566918919, Some(4.25)),
+                (1566918920, Some(4.25)),
+                (1566918921, Some(4.25)),
+                (1566918922, Some(4.25)),
+                (1566918923, Some(4.25)),
+                (1566918924, Some(4.25)),
+                (1566918925, Some(4.)),
+                (1566918926, Some(4.)),
+                (1566918927, Some(4.)),
+                (1566918928, Some(4.)),
+                (1566918929, Some(4.)),
+                (1566918930, Some(4.)),
+                (1566918931, Some(4.75)),
+                (1566918932, Some(4.75)),
+                (1566918933, Some(4.75)),
+                (1566918934, Some(4.75)),
+                (1566918935, Some(4.75)),
+                (1566918936, Some(4.75))
+            ]
+        );
         test0.series.calculate_stats();
         let test0_sum = 4.5 * 6. + 4.25 * 6. + 4. * 6. + 4.75 * 6.;
-        assert_eq!(test0.series.stats, TimeSeriesStats {
-            first: 4.5,
-            last: 4.75,
-            count: 24,
-            is_dirty: false,
-            max: 4.75,
-            min: 4.,
-            sum: test0_sum,
-            avg: test0_sum / 24.,
-            last_epoch: 1566918936,
-        });
+        assert_eq!(
+            test0.series.stats,
+            TimeSeriesStats {
+                first: 4.5,
+                last: 4.75,
+                count: 24,
+                is_dirty: false,
+                max: 4.75,
+                min: 4.,
+                sum: test0_sum,
+                avg: test0_sum / 24.,
+                last_epoch: 1566918936,
+            }
+        );
     }
 
     #[test]
@@ -717,7 +722,7 @@ mod tests {
         assert!(test0_res.is_ok());
         let mut test0 = test0_res.unwrap();
         // A json returned by prometheus
-        let test0_json = hyper::body::Bytes::from(
+        let test0_json = bytes::Bytes::from(
             r#"
             {
               "status": "success",
@@ -756,12 +761,12 @@ mod tests {
         // 2 items should have been loaded, one for Prometheus Server and the
         // other for Prometheus Node Exporter
         assert_eq!(res0_load, Ok(2usize));
-        assert_eq!(test0.series.as_vec(), vec![
-            (1557571137u64, Some(1.)),
-            (1557571138u64, Some(1.))
-        ]);
+        assert_eq!(
+            test0.series.as_vec(),
+            vec![(1557571137u64, Some(1.)), (1557571138u64, Some(1.))]
+        );
 
-        let test1_json = hyper::body::Bytes::from(
+        let test1_json = bytes::Bytes::from(
             r#"
             {
               "status": "success",
@@ -804,13 +809,12 @@ mod tests {
         let res1_load = test0.load_prometheus_response(res1_json.unwrap());
         // Only the prometheus: localhost:9090 should have been loaded with epoch 1557571139
         assert_eq!(res1_load, Ok(1usize));
-        assert_eq!(test0.series.as_vec(), vec![
-            (1557571137u64, Some(1.)),
-            (1557571138u64, Some(1.)),
-            (1557571139u64, Some(1.))
-        ]);
+        assert_eq!(
+            test0.series.as_vec(),
+            vec![(1557571137u64, Some(1.)), (1557571138u64, Some(1.)), (1557571139u64, Some(1.))]
+        );
 
-        let test2_json = hyper::body::Bytes::from(
+        let test2_json = bytes::Bytes::from(
             r#"
             {
               "status": "success",
@@ -850,13 +854,12 @@ mod tests {
         test0.required_labels = metric_labels;
         let res2_load = test0.load_prometheus_response(res2_json.unwrap());
         assert_eq!(res2_load, Ok(0usize));
-        assert_eq!(test0.series.as_vec(), vec![
-            (1557571137u64, Some(1.)),
-            (1557571138u64, Some(1.)),
-            (1557571139u64, Some(1.))
-        ]);
+        assert_eq!(
+            test0.series.as_vec(),
+            vec![(1557571137u64, Some(1.)), (1557571138u64, Some(1.)), (1557571139u64, Some(1.))]
+        );
         // This json is missing the value after the epoch
-        let test3_json = hyper::body::Bytes::from(
+        let test3_json = bytes::Bytes::from(
             r#"
             {
               "status": "success",
@@ -979,15 +982,15 @@ mod tests {
             source: String::from(
                 "http://localhost:9090/api/v1/query_range?query=node_memory_bytes_total",
             ),
-            url: "/".parse::<hyper::Uri>().unwrap(),
+            url: String::from("/"),
             data_type: String::from(""),
             required_labels: test_labels,
             pull_interval: 15,
-            color: Rgb::new(207, 102, 121),
+            color: Rgb { r: 207, g: 102, b: 121 },
             alpha: 1.0,
         };
         // This should result in adding 15 more items
-        let test1_json = hyper::body::Bytes::from(
+        let test1_json = bytes::Bytes::from(
             r#"{
               "status":"success",
               "data":{
@@ -1020,18 +1023,21 @@ mod tests {
         // 5 items should have been loaded, 5 already existed.
         assert_eq!(res1_load, Ok(5usize));
         assert_eq!(test.series.active_items, 10usize);
-        assert_eq!(test.series.as_vec(), vec![
-            (1571511822, Some(1.8359322)),
-            (1571511823, Some(1.8359323)),
-            (1571511824, Some(1.8359324)),
-            (1571511825, Some(1.8359325)),
-            (1571511826, Some(1.8359326)),
-            (1571511827, Some(1.8359327)),
-            (1571511828, Some(1.8359328)),
-            (1571511829, Some(1.8359329)),
-            (1571511830, Some(1.8359330)),
-            (1571511831, Some(1.8359331))
-        ]);
+        assert_eq!(
+            test.series.as_vec(),
+            vec![
+                (1571511822, Some(1.8359322)),
+                (1571511823, Some(1.8359323)),
+                (1571511824, Some(1.8359324)),
+                (1571511825, Some(1.8359325)),
+                (1571511826, Some(1.8359326)),
+                (1571511827, Some(1.8359327)),
+                (1571511828, Some(1.8359328)),
+                (1571511829, Some(1.8359329)),
+                (1571511830, Some(1.8359330)),
+                (1571511831, Some(1.8359331))
+            ]
+        );
     }
 
     #[test]
@@ -1369,15 +1375,15 @@ mod tests {
             source: String::from(
                 "http://localhost:9090/api/v1/query_range?query=node_memory_bytes_total",
             ),
-            url: "/".parse::<hyper::Uri>().unwrap(),
+            url: String::from("/"),
             data_type: String::from(""),
             required_labels: test_labels,
             pull_interval: 15,
-            color: Rgb::new(207, 102, 121),
+            color: Rgb { r: 207, g: 102, b: 121 },
             alpha: 1.0,
         };
         assert_eq!(test.series.metrics.len(), 300usize);
-        let test1_json = hyper::body::Bytes::from(
+        let test1_json = bytes::Bytes::from(
             r#"{
               "status":"success",
               "data":{
@@ -1407,10 +1413,13 @@ mod tests {
         assert_eq!(test.series.metrics[298], (1583092652, Some(5.0283203125)));
         assert_eq!(test.series.first_idx, 298usize);
         assert_eq!(test.series.active_items, 3usize);
-        assert_eq!(test.series.as_vec(), vec![
-            (1583092652, Some(5.0283203125)),
-            (1583092653, Some(5.0283203125)),
-            (1583092654, Some(5.0283203125))
-        ]);
+        assert_eq!(
+            test.series.as_vec(),
+            vec![
+                (1583092652, Some(5.0283203125)),
+                (1583092653, Some(5.0283203125)),
+                (1583092654, Some(5.0283203125))
+            ]
+        );
     }
 }

@@ -16,17 +16,17 @@ _alacritty() {
     local context curcontext="$curcontext" state line
     _arguments "${_arguments_options[@]}" \
 '--embed=[X11 window ID to embed Alacritty within (decimal or hexadecimal with "0x" prefix)]:EMBED: ' \
-'--config-file=[Specify alternative configuration file \[default\: \$XDG_CONFIG_HOME/alacritty/alacritty.yml\]]:CONFIG_FILE:_files' \
+'--config-file=[Specify alternative configuration file \[default\: \$XDG_CONFIG_HOME/alacritty/alacritty.toml\]]:CONFIG_FILE:_files' \
 '--socket=[Path for IPC socket creation]:SOCKET:_files' \
-'*-o+[Override configuration file options \[example\: cursor.style=Beam\]]:OPTION: ' \
-'*--option=[Override configuration file options \[example\: cursor.style=Beam\]]:OPTION: ' \
 '--working-directory=[Start the shell in the specified working directory]:WORKING_DIRECTORY:_files' \
 '*-e+[Command and args to execute (must be last argument)]:COMMAND: ' \
 '*--command=[Command and args to execute (must be last argument)]:COMMAND: ' \
 '-T+[Defines the window title \[default\: Alacritty\]]:TITLE: ' \
 '--title=[Defines the window title \[default\: Alacritty\]]:TITLE: ' \
 '--class=[Defines window class/app_id on X11/Wayland \[default\: Alacritty\]]:general> | <general>,<instance: ' \
-'--print-events[Print all events to stdout]' \
+'*-o+[Override configuration file options \[example\: '\''cursor.style="Beam"'\''\]]:OPTION: ' \
+'*--option=[Override configuration file options \[example\: '\''cursor.style="Beam"'\''\]]:OPTION: ' \
+'--print-events[Print all events to STDOUT]' \
 '--ref-test[Generates ref test]' \
 '(-v)*-q[Reduces the level of verbosity (the min level is -qq)]' \
 '(-q)*-v[Increases the level of verbosity (the max level is -vvv)]' \
@@ -68,6 +68,8 @@ _arguments "${_arguments_options[@]}" \
 '-T+[Defines the window title \[default\: Alacritty\]]:TITLE: ' \
 '--title=[Defines the window title \[default\: Alacritty\]]:TITLE: ' \
 '--class=[Defines window class/app_id on X11/Wayland \[default\: Alacritty\]]:general> | <general>,<instance: ' \
+'*-o+[Override configuration file options \[example\: '\''cursor.style="Beam"'\''\]]:OPTION: ' \
+'*--option=[Override configuration file options \[example\: '\''cursor.style="Beam"'\''\]]:OPTION: ' \
 '--hold[Remain open after child process exit]' \
 '-h[Print help]' \
 '--help[Print help]' \
@@ -81,7 +83,7 @@ _arguments "${_arguments_options[@]}" \
 '()--reset[Clear all runtime configuration changes]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
-'*::options -- Configuration file options \[example\: cursor.style=Beam\]:' \
+'*::options -- Configuration file options \[example\: '\''cursor.style="Beam"'\''\]:' \
 && ret=0
 ;;
 (help)
@@ -115,6 +117,21 @@ esac
         esac
     ;;
 esac
+;;
+(migrate)
+_arguments "${_arguments_options[@]}" \
+'-c+[Path to the configuration file]:CONFIG_FILE:_files' \
+'--config-file=[Path to the configuration file]:CONFIG_FILE:_files' \
+'-d[Only output TOML config to STDOUT]' \
+'--dry-run[Only output TOML config to STDOUT]' \
+'-i[Do not recurse over imports]' \
+'--skip-imports[Do not recurse over imports]' \
+'--skip-renames[Do not move renamed fields to their new location]' \
+'-s[Do not output to STDOUT]' \
+'--silent[Do not output to STDOUT]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
 ;;
 (help)
 _arguments "${_arguments_options[@]}" \
@@ -152,6 +169,10 @@ _arguments "${_arguments_options[@]}" \
     ;;
 esac
 ;;
+(migrate)
+_arguments "${_arguments_options[@]}" \
+&& ret=0
+;;
 (help)
 _arguments "${_arguments_options[@]}" \
 && ret=0
@@ -169,6 +190,7 @@ esac
 _alacritty_commands() {
     local commands; commands=(
 'msg:Send a message to the Alacritty socket' \
+'migrate:Migrate the configuration file' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'alacritty commands' commands "$@"
@@ -207,6 +229,7 @@ _alacritty__msg__help__create-window_commands() {
 _alacritty__help_commands() {
     local commands; commands=(
 'msg:Send a message to the Alacritty socket' \
+'migrate:Migrate the configuration file' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'alacritty help commands' commands "$@"
@@ -229,6 +252,16 @@ _alacritty__msg__help_commands() {
 _alacritty__msg__help__help_commands() {
     local commands; commands=()
     _describe -t commands 'alacritty msg help help commands' commands "$@"
+}
+(( $+functions[_alacritty__help__migrate_commands] )) ||
+_alacritty__help__migrate_commands() {
+    local commands; commands=()
+    _describe -t commands 'alacritty help migrate commands' commands "$@"
+}
+(( $+functions[_alacritty__migrate_commands] )) ||
+_alacritty__migrate_commands() {
+    local commands; commands=()
+    _describe -t commands 'alacritty migrate commands' commands "$@"
 }
 (( $+functions[_alacritty__help__msg_commands] )) ||
 _alacritty__help__msg_commands() {

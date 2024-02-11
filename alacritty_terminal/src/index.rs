@@ -7,8 +7,6 @@ use std::ops::{Add, AddAssign, Deref, Sub, SubAssign};
 
 use serde::{Deserialize, Serialize};
 
-use alacritty_config_derive::SerdeReplace;
-
 use crate::grid::Dimensions;
 
 /// The side of a cell.
@@ -46,7 +44,7 @@ pub enum Boundary {
 }
 
 /// Index in the grid using row, column notation.
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, Default, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Point<L = Line, C = Column> {
     pub line: L,
     pub column: C,
@@ -131,7 +129,7 @@ impl<L: Ord, C: Ord> Ord for Point<L, C> {
 /// A line.
 ///
 /// Newtype to avoid passing values incorrectly.
-#[derive(Serialize, Deserialize, Debug, Copy, Clone, Eq, PartialEq, Default, Ord, PartialOrd)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Default, Ord, PartialOrd, Serialize, Deserialize)]
 pub struct Line(pub i32);
 
 impl Line {
@@ -224,19 +222,7 @@ impl PartialEq<usize> for Line {
 /// A column.
 ///
 /// Newtype to avoid passing values incorrectly.
-#[derive(
-    SerdeReplace,
-    Serialize,
-    Deserialize,
-    Debug,
-    Copy,
-    Clone,
-    Eq,
-    PartialEq,
-    Default,
-    Ord,
-    PartialOrd,
-)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Default, Ord, PartialOrd, Serialize, Deserialize)]
 pub struct Column(pub usize);
 
 impl fmt::Display for Column {

@@ -1,26 +1,26 @@
-TARGET = chartacritty
+TARGET = alacritty
 
 ASSETS_DIR = extra
 RELEASE_DIR = target/release
-MANPAGE = $(ASSETS_DIR)/chartacritty.man
-MANPAGE-MSG = $(ASSETS_DIR)/chartacritty-msg.man
-CONFIGFILE = alacritty.yml
-TERMINFO = $(ASSETS_DIR)/chartacritty.info
+MANPAGE = $(ASSETS_DIR)/man/alacritty.1.scd
+MANPAGE-MSG = $(ASSETS_DIR)/man/alacritty-msg.1.scd
+MANPAGE-CONFIG = $(ASSETS_DIR)/man/alacritty.5.scd
+MANPAGE-CONFIG-BINDINGS = $(ASSETS_DIR)/man/alacritty-bindings.5.scd
+TERMINFO = $(ASSETS_DIR)/alacritty.info
 COMPLETIONS_DIR = $(ASSETS_DIR)/completions
 COMPLETIONS = $(COMPLETIONS_DIR)/_alacritty \
 	$(COMPLETIONS_DIR)/alacritty.bash \
 	$(COMPLETIONS_DIR)/alacritty.fish
 
-APP_NAME = Chartacritty.app
+APP_NAME = Alacritty.app
 APP_TEMPLATE = $(ASSETS_DIR)/osx/$(APP_NAME)
 APP_DIR = $(RELEASE_DIR)/osx
-# cargo build generates this binary
-APP_BINARY = $(RELEASE_DIR)/alacritty
+APP_BINARY = $(RELEASE_DIR)/$(TARGET)
 APP_BINARY_DIR = $(APP_DIR)/$(APP_NAME)/Contents/MacOS
 APP_EXTRAS_DIR = $(APP_DIR)/$(APP_NAME)/Contents/Resources
 APP_COMPLETIONS_DIR = $(APP_EXTRAS_DIR)/completions
 
-DMG_NAME = Chartacritty.dmg
+DMG_NAME = Alacritty.dmg
 DMG_DIR = $(RELEASE_DIR)/osx
 
 vpath $(TARGET) $(RELEASE_DIR)
@@ -41,31 +41,32 @@ $(TARGET)-universal:
 	MACOSX_DEPLOYMENT_TARGET="10.11" cargo build --release --target=aarch64-apple-darwin
 	@lipo target/{x86_64,aarch64}-apple-darwin/release/$(TARGET) -create -output $(APP_BINARY)
 
-app: $(APP_NAME)-native ## Create an Chartacritty.app
-app-universal: $(APP_NAME)-universal ## Create a universal Chartacritty.app
+app: $(APP_NAME)-native ## Create an Alacritty.app
+app-universal: $(APP_NAME)-universal ## Create a universal Alacritty.app
 $(APP_NAME)-%: $(TARGET)-%
 	@mkdir -p $(APP_BINARY_DIR)
 	@mkdir -p $(APP_EXTRAS_DIR)
 	@mkdir -p $(APP_COMPLETIONS_DIR)
-	@gzip -c $(MANPAGE) > $(APP_EXTRAS_DIR)/chartacritty.1.gz
-	@gzip -c $(MANPAGE-MSG) > $(APP_EXTRAS_DIR)/chartacritty-msg.1.gz
-	@tic -xe chartacritty,chartacritty-direct -o $(APP_EXTRAS_DIR) $(TERMINFO)
+	@scdoc < $(MANPAGE) | gzip -c > $(APP_EXTRAS_DIR)/alacritty.1.gz
+	@scdoc < $(MANPAGE-MSG) | gzip -c > $(APP_EXTRAS_DIR)/alacritty-msg.1.gz
+	@scdoc < $(MANPAGE-CONFIG) | gzip -c > $(APP_EXTRAS_DIR)/alacritty.5.gz
+	@scdoc < $(MANPAGE-CONFIG-BINDINGS) | gzip -c > $(APP_EXTRAS_DIR)/alacritty-bindings.5.gz
+	@tic -xe alacritty,alacritty-direct -o $(APP_EXTRAS_DIR) $(TERMINFO)
 	@cp -fRp $(APP_TEMPLATE) $(APP_DIR)
 	@cp -fp $(APP_BINARY) $(APP_BINARY_DIR)
-	@cp -fp $(CONFIGFILE) $(APP_EXTRAS_DIR)/
 	@cp -fp $(COMPLETIONS) $(APP_COMPLETIONS_DIR)
 	@touch -r "$(APP_BINARY)" "$(APP_DIR)/$(APP_NAME)"
 	@codesign --remove-signature "$(APP_DIR)/$(APP_NAME)"
 	@codesign --force --deep --sign - "$(APP_DIR)/$(APP_NAME)"
 	@echo "Created '$(APP_NAME)' in '$(APP_DIR)'"
 
-dmg: $(DMG_NAME)-native ## Create an Chartacritty.dmg
-dmg-universal: $(DMG_NAME)-universal ## Create a universal Chartacritty.dmg
+dmg: $(DMG_NAME)-native ## Create an Alacritty.dmg
+dmg-universal: $(DMG_NAME)-universal ## Create a universal Alacritty.dmg
 $(DMG_NAME)-%: $(APP_NAME)-%
 	@echo "Packing disk image..."
 	@ln -sf /Applications $(DMG_DIR)/Applications
 	@hdiutil create $(DMG_DIR)/$(DMG_NAME) \
-		-volname "Chartacritty" \
+		-volname "Alacritty" \
 		-fs HFS+ \
 		-srcfolder $(APP_DIR) \
 		-ov -format UDZO
