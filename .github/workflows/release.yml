@@ -44,7 +44,7 @@ jobs:
         run: cargo build --release
       - name: Upload portable executable
         run: |
-          cp ./target/release/alacritty.exe ./Chartacritty-${GITHUB_REF##*/}-portable.exe
+          cp ./target/release/chartacritty.exe ./Chartacritty-${GITHUB_REF##*/}-portable.exe
           ./.github/workflows/upload_asset.sh \
             ./Chartacritty-${GITHUB_REF##*/}-portable.exe $GITHUB_TOKEN
       - name: Install WiX

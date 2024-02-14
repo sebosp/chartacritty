@@ -40,45 +40,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "alacritty"
-version = "0.14.0-dev"
-dependencies = [
- "ahash",
- "alacritty_config",
- "alacritty_config_derive",
- "alacritty_terminal",
- "bitflags 2.4.1",
- "clap",
- "clap_complete",
- "cocoa",
- "copypasta",
- "crossfont",
- "dirs",
- "embed-resource",
- "futures",
- "gl_generator",
- "glutin",
- "home",
- "libc",
- "log",
- "lyon",
- "notify",
- "objc",
- "parking_lot",
- "png",
- "raw-window-handle",
- "serde",
- "serde_json",
- "serde_yaml",
- "tokio",
- "toml",
- "unicode-width",
- "windows-sys 0.48.0",
- "winit",
- "xdg",
-]
-
-[[package]]
 name = "alacritty_config"
 version = "0.2.1-dev"
 dependencies = [
@@ -422,6 +383,45 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0ced0551234e87afee12411d535648dd89d2e7f34c78b753395567aff3d447ff"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "chartacritty"
+version = "0.14.0-dev"
+dependencies = [
+ "ahash",
+ "alacritty_config",
+ "alacritty_config_derive",
+ "alacritty_terminal",
+ "bitflags 2.4.1",
+ "clap",
+ "clap_complete",
+ "cocoa",
+ "copypasta",
+ "crossfont",
+ "dirs",
+ "embed-resource",
+ "futures",
+ "gl_generator",
+ "glutin",
+ "home",
+ "libc",
+ "log",
+ "lyon",
+ "notify",
+ "objc",
+ "parking_lot",
+ "png",
+ "raw-window-handle",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tokio",
+ "toml",
+ "unicode-width",
+ "windows-sys 0.48.0",
+ "winit",
+ "xdg",
 ]
 
 [[package]]

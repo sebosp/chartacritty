@@ -1,11 +1,11 @@
 [package]
-name = "alacritty"
+name = "chartacritty"
 version = "0.14.0-dev"
-authors = ["Christian Duerr <contact@christianduerr.com>", "Joe Wilm <joe@jwilm.com>"]
+authors = ["Christian Duerr <contact@christianduerr.com>", "Joe Wilm <joe@jwilm.com>", "Seb Ospina <kraige@gmail.com>"]
 license = "Apache-2.0"
-description = "A fast, cross-platform, OpenGL terminal emulator"
+description = "Alacritty plus prometheus metrics, charts and decorations"
 readme = "README.md"
-homepage = "https://github.com/alacritty/alacritty"
+homepage = "https://github.com/sebosp/chartacritty"
 edition = "2021"
 rust-version = "1.70.0"
 
