@@ -520,35 +520,4 @@ mod tests {
         let value = parse_hex_or_decimal("0xa0xx0d");
         assert_eq!(value, None);
     }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn completions() {
-        let mut clap = Options::command();
-
-        for (shell, file) in &[
-            (Shell::Bash, "alacritty.bash"),
-            (Shell::Fish, "alacritty.fish"),
-            (Shell::Zsh, "_alacritty"),
-        ] {
-            let mut generated = Vec::new();
-            clap_complete::generate(*shell, &mut clap, "alacritty", &mut generated);
-            let generated = String::from_utf8_lossy(&generated);
-
-            let mut completion = String::new();
-            let mut file = File::open(format!("../extra/completions/{}", file)).unwrap();
-            file.read_to_string(&mut completion).unwrap();
-
-            assert_eq!(generated, completion);
-        }
-
-        // NOTE: Use this to generate new completions.
-        //
-        // let mut file = File::create("../extra/completions/alacritty.bash").unwrap();
-        // clap_complete::generate(Shell::Bash, &mut clap, "alacritty", &mut file);
-        // let mut file = File::create("../extra/completions/alacritty.fish").unwrap();
-        // clap_complete::generate(Shell::Fish, &mut clap, "alacritty", &mut file);
-        // let mut file = File::create("../extra/completions/_alacritty").unwrap();
-        // clap_complete::generate(Shell::Zsh, &mut clap, "alacritty", &mut file);
-    }
 }

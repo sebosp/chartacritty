@@ -10,7 +10,6 @@ APP_DIR = $(RELEASE_DIR)/osx
 APP_BINARY = $(RELEASE_DIR)/$(TARGET)
 APP_BINARY_DIR = $(APP_DIR)/$(APP_NAME)/Contents/MacOS
 APP_EXTRAS_DIR = $(APP_DIR)/$(APP_NAME)/Contents/Resources
-APP_COMPLETIONS_DIR = $(APP_EXTRAS_DIR)/completions
 
 DMG_NAME = Chartacritty.dmg
 DMG_DIR = $(RELEASE_DIR)/osx
@@ -38,7 +37,6 @@ app-universal: $(APP_NAME)-universal ## Create a universal Chartacritty.app
 $(APP_NAME)-%: $(TARGET)-%
 	@mkdir -p $(APP_BINARY_DIR)
 	@mkdir -p $(APP_EXTRAS_DIR)
-	@mkdir -p $(APP_COMPLETIONS_DIR)
 	@tic -xe chartacritty,chartacritty-direct -o $(APP_EXTRAS_DIR) $(TERMINFO)
 	@cp -fRp $(APP_TEMPLATE) $(APP_DIR)
 	@cp -fp $(APP_BINARY) $(APP_BINARY_DIR)
