@@ -15,13 +15,13 @@
       <!-- Application binaries -->
       <DirectoryRef Id="AlacrittyProgramFiles">
          <Component Id="AlacrittyExe">
-            <File Id="AlacrittyExeFile" Source=".\target\release\alacritty.exe" Name="alacritty.exe" KeyPath="yes" />
+            <File Id="AlacrittyExeFile" Source=".\target\release\chartacritty.exe" Name="chartacritty.exe" KeyPath="yes" />
          </Component>
       </DirectoryRef>
       <DirectoryRef Id="AlacrittyProgramMenu">
          <!-- Application shortcut -->
          <Component Id="AlacrittyShortcut" Guid="aa36e61a-23cd-4383-b744-2f78e912f0dc">
-            <Shortcut Id="AlacrittyShortcutFile" Name="Alacritty" Description="A cross-platform, GPU-accelerated terminal emulator" Target="[AlacrittyProgramFiles]alacritty.exe" />
+            <Shortcut Id="AlacrittyShortcutFile" Name="Alacritty" Description="A cross-platform, GPU-accelerated terminal emulator" Target="[AlacrittyProgramFiles]chartacritty.exe" />
             <RemoveFolder Id="AlacrittyProgramMenu" On="uninstall" />
             <RegistryValue Root="HKCU" Key="Software\Microsoft\Alacritty" Name="installed" Type="integer" Value="1" KeyPath="yes" />
          </Component>
@@ -41,10 +41,10 @@
       <!-- Add context menu -->
       <Component Id="ContextMenu" Guid="449f9121-f7b9-41fe-82da-52349ea8ff91" Directory="TARGETDIR">
          <RegistryKey Root="HKCU" Key="Software\Classes\Directory\Background\shell\Open Alacritty here\command">
-            <RegistryValue Type="string" Value="[AlacrittyProgramFiles]alacritty.exe" KeyPath="yes" />
+            <RegistryValue Type="string" Value="[AlacrittyProgramFiles]chartacritty.exe" KeyPath="yes" />
          </RegistryKey>
          <RegistryKey Root="HKCU" Key="Software\Classes\Directory\Background\shell\Open Alacritty here">
-            <RegistryValue Type="string" Name="Icon" Value="[AlacrittyProgramFiles]alacritty.exe" />
+            <RegistryValue Type="string" Name="Icon" Value="[AlacrittyProgramFiles]chartacritty.exe" />
          </RegistryKey>
       </Component>
    </Package>
