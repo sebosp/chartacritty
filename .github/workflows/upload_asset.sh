@@ -79,7 +79,7 @@ fi
 
 # Upload the file to the tag's release.
 file_name=${file_path##*/}
-echo "Uploading asset $file_name to $upload_url..."
+echo "Uploading asset $file_name to $upload_url ..."
 curl -f \
     --http1.1 \
     -X POST \
