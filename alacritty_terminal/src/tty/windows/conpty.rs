@@ -1,5 +1,8 @@
-use log::info;
-use std::io::Error;
+use log::{info, warn};
+use std::collections::{HashMap, HashSet};
+use std::ffi::OsStr;
+use std::io::{Error, Result};
+use std::os::windows::ffi::OsStrExt;
 use std::os::windows::io::IntoRawHandle;
 use std::{mem, ptr};
 
@@ -13,8 +16,8 @@ use windows_sys::{s, w};
 
 use windows_sys::Win32::System::Threading::{
     CreateProcessW, InitializeProcThreadAttributeList, UpdateProcThreadAttribute,
-    EXTENDED_STARTUPINFO_PRESENT, PROCESS_INFORMATION, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
-    STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW,
+    CREATE_UNICODE_ENVIRONMENT, EXTENDED_STARTUPINFO_PRESENT, PROCESS_INFORMATION,
+    PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW,
 };
 
 use crate::event::{OnResize, WindowSize};
@@ -69,7 +72,7 @@ impl ConptyApi {
         type LoadedFn = unsafe extern "system" fn() -> isize;
         unsafe {
             let hmodule = LoadLibraryW(w!("conpty.dll"));
-            if hmodule == 0 {
+            if hmodule.is_null() {
                 return None;
             }
             let create_fn = GetProcAddress(hmodule, s!("CreatePseudoConsole"))?;
@@ -104,7 +107,7 @@ impl Drop for Conpty {
 // The ConPTY handle can be sent between threads.
 unsafe impl Send for Conpty {}
 
-pub fn new(config: &Options, window_size: WindowSize) -> Option<Pty> {
+pub fn new(config: &Options, window_size: WindowSize) -> Result<Pty> {
     let api = ConptyApi::new();
     let mut pty_handle: HPCON = 0;
 
@@ -112,8 +115,8 @@ pub fn new(config: &Options, window_size: WindowSize) -> Option<Pty> {
     // size to be used. There may be small performance and memory advantages
     // to be gained by tuning this in the future, but it's likely a reasonable
     // start point.
-    let (conout, conout_pty_handle) = miow::pipe::anonymous(0).unwrap();
-    let (conin_pty_handle, conin) = miow::pipe::anonymous(0).unwrap();
+    let (conout, conout_pty_handle) = miow::pipe::anonymous(0)?;
+    let (conin_pty_handle, conin) = miow::pipe::anonymous(0)?;
 
     // Create the Pseudo Console, using the pipes.
     let result = unsafe {
@@ -151,7 +154,7 @@ pub fn new(config: &Options, window_size: WindowSize) -> Option<Pty> {
 
         // This call was expected to return false.
         if failure {
-            panic_shell_spawn();
+            return Err(Error::last_os_error());
         }
     }
 
@@ -177,7 +180,7 @@ pub fn new(config: &Options, window_size: WindowSize) -> Option<Pty> {
         ) > 0;
 
         if !success {
-            panic_shell_spawn();
+            return Err(Error::last_os_error());
         }
     }
 
@@ -194,12 +197,22 @@ pub fn new(config: &Options, window_size: WindowSize) -> Option<Pty> {
         ) > 0;
 
         if !success {
-            panic_shell_spawn();
+            return Err(Error::last_os_error());
         }
     }
 
+    // Prepare child process creation arguments.
     let cmdline = win32_string(&cmdline(config));
     let cwd = config.working_directory.as_ref().map(win32_string);
+    let mut creation_flags = EXTENDED_STARTUPINFO_PRESENT;
+    let custom_env_block = convert_custom_env(&config.env);
+    let custom_env_block_pointer = match &custom_env_block {
+        Some(custom_env_block) => {
+            creation_flags |= CREATE_UNICODE_ENVIRONMENT;
+            custom_env_block.as_ptr() as *mut std::ffi::c_void
+        },
+        None => ptr::null_mut(),
+    };
 
     let mut proc_info: PROCESS_INFORMATION = unsafe { mem::zeroed() };
     unsafe {
@@ -209,30 +222,82 @@ pub fn new(config: &Options, window_size: WindowSize) -> Option<Pty> {
             ptr::null_mut(),
             ptr::null_mut(),
             false as i32,
-            EXTENDED_STARTUPINFO_PRESENT,
-            ptr::null_mut(),
+            creation_flags,
+            custom_env_block_pointer,
             cwd.as_ref().map_or_else(ptr::null, |s| s.as_ptr()),
             &mut startup_info_ex.StartupInfo as *mut STARTUPINFOW,
             &mut proc_info as *mut PROCESS_INFORMATION,
         ) > 0;
 
         if !success {
-            panic_shell_spawn();
+            return Err(Error::last_os_error());
         }
     }
 
     let conin = UnblockedWriter::new(conin, PIPE_CAPACITY);
     let conout = UnblockedReader::new(conout, PIPE_CAPACITY);
 
-    let child_watcher = ChildExitWatcher::new(proc_info.hProcess).unwrap();
+    let child_watcher = ChildExitWatcher::new(proc_info.hProcess)?;
     let conpty = Conpty { handle: pty_handle as HPCON, api };
 
-    Some(Pty::new(conpty, conout, conin, child_watcher))
+    Ok(Pty::new(conpty, conout, conin, child_watcher))
 }
 
-// Panic with the last os error as message.
-fn panic_shell_spawn() {
-    panic!("Unable to spawn shell: {}", Error::last_os_error());
+// Windows environment variables are case-insensitive, and the caller is responsible for
+// deduplicating environment variables, so do that here while converting.
+//
+// https://learn.microsoft.com/en-us/previous-versions/troubleshoot/windows/win32/createprocess-cannot-eliminate-duplicate-variables#environment-variables
+fn convert_custom_env(custom_env: &HashMap<String, String>) -> Option<Vec<u16>> {
+    // Windows inherits parent's env when no `lpEnvironment` parameter is specified.
+    if custom_env.is_empty() {
+        return None;
+    }
+
+    let mut converted_block = Vec::new();
+    let mut all_env_keys = HashSet::new();
+    for (custom_key, custom_value) in custom_env {
+        let custom_key_os = OsStr::new(custom_key);
+        if all_env_keys.insert(custom_key_os.to_ascii_uppercase()) {
+            add_windows_env_key_value_to_block(
+                &mut converted_block,
+                custom_key_os,
+                OsStr::new(&custom_value),
+            );
+        } else {
+            warn!(
+                "Omitting environment variable pair with duplicate key: \
+                 '{custom_key}={custom_value}'"
+            );
+        }
+    }
+
+    // Pull the current process environment after, to avoid overwriting the user provided one.
+    for (inherited_key, inherited_value) in std::env::vars_os() {
+        if all_env_keys.insert(inherited_key.to_ascii_uppercase()) {
+            add_windows_env_key_value_to_block(
+                &mut converted_block,
+                &inherited_key,
+                &inherited_value,
+            );
+        }
+    }
+
+    converted_block.push(0);
+    Some(converted_block)
+}
+
+// According to the `lpEnvironment` parameter description:
+// https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessa#parameters
+//
+// > An environment block consists of a null-terminated block of null-terminated strings. Each
+// string is in the following form:
+// >
+// > name=value\0
+fn add_windows_env_key_value_to_block(block: &mut Vec<u16>, key: &OsStr, value: &OsStr) {
+    block.extend(key.encode_wide());
+    block.push('=' as u16);
+    block.extend(value.encode_wide());
+    block.push(0);
 }
 
 impl OnResize for Conpty {
