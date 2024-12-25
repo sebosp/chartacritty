@@ -18,20 +18,20 @@ default = ["serde"]
 serde = ["dep:serde", "bitflags/serde", "vte/serde"]
 
 [dependencies]
-base64 = "0.22.0"
-bitflags = "2.4.1"
-home = "0.5.5"
-libc = "0.2"
-log = "0.4"
-parking_lot = "0.12.0"
-polling = "3.0.0"
-regex-automata = "0.4.3"
-unicode-width = "0.1"
+base64 = "0.22.1"
+bitflags = "2.6.0"
+home = "0.5.11"
+libc = "0.2.169"
+log = "0.4.22"
+parking_lot = "0.12.3"
+polling = "3.7.4"
+regex-automata = "0.4.9"
+unicode-width = "0.2.0"
 vte = { version = "0.13.0", default-features = false, features = ["ansi"] }
 serde = { version = "1", features = ["derive", "rc"], optional = true }
-reqwest = { version = "0.11", features = ["json"] }
-tokio = { version = "1.36", features = ["full"] }
-futures = "0.3.28"
+reqwest = { version = "0.12", features = ["json"] }
+tokio = { version = "1", features = ["full"] }
+futures = "0.3.31"
 tokio-native-tls = "0.3"
 tower-service = "0.3"
 serde_derive = "1.0"
@@ -40,21 +40,21 @@ serde_yaml = "0.9"
 env_logger = "0.11"
 tracing = { version = "0.1", features = ["log", "log-always"] }
 tracing-log = { version = "0.2" }
-percent-encoding = "2.2"
+percent-encoding = "2.3"
 rand = "0.8.5"
 lyon = { version = "1.0", features = ["serialization"] }
-chrono = { version = "0.4.31", features = ["serde"] }
+chrono = { version = "0.4.39", features = ["serde"] }
 moon-phase = "0.1.0"
-noise = "0.8.2"
-palette = { version = "0.7.3", features = ["serializing", "named"] }
-bytes = "1.5"
+noise = "0.9.0"
+palette = { version = "0.7.6", features = ["serializing", "named"] }
+bytes = "1.9"
 
 [target.'cfg(unix)'.dependencies]
 rustix-openpty = "0.1.1"
-signal-hook = "0.3.10"
+signal-hook = "0.3.17"
 
 [target.'cfg(windows)'.dependencies]
-piper = "0.2.1"
+piper = "0.2.4"
 miow = "0.6.0"
 windows-sys = { version = "0.59.0", features = [
     "Win32_System_Console",

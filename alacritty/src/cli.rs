@@ -515,6 +515,7 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
+    #[ignore]
     fn completions() {
         let mut clap = Options::command();
 

@@ -13,15 +13,20 @@ rust-version = "1.74.0"
 proc-macro = true
 
 [dependencies]
-proc-macro2 = "1.0.24"
-quote = "1.0.7"
-syn = { version = "2.0.16", features = ["derive", "parsing", "proc-macro", "printing"], default-features = false }
+proc-macro2 = "1.0.92"
+quote = "1.0.37"
+syn = { version = "2.0.91", features = [
+    "derive",
+    "parsing",
+    "proc-macro",
+    "printing",
+], default-features = false }
 
 [dev-dependencies.alacritty_config]
 path = "../alacritty_config"
 version = "0.2.3-dev"
 
 [dev-dependencies]
-log = "0.4.11"
-serde = { version = "1.0.117", features = ["derive"] }
-toml = "0.8.2"
+log = "0.4.22"
+serde = { version = "1.0.216", features = ["derive"] }
+toml = "0.8.19"
