@@ -10,16 +10,16 @@ env:
 
 jobs:
   macos:
-    runs-on: macos-11
+    runs-on: macos-latest
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Install dependencies
         run: brew install scdoc
       - name: Install ARM target
-        run: rustup update && rustup target add aarch64-apple-darwin
+        run: rustup update && rustup target add aarch64-apple-darwin && rustup target add x86_64-apple-darwin
       - name: Test
-        run: cargo test --release
+        run: cargo test --release --target=x86_64-apple-darwin
       - name: Build ARM
         run: cargo build --release --target=aarch64-apple-darwin
       - name: Make DMG
@@ -37,7 +37,7 @@ jobs:
         shell: bash
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Test
         run: cargo test --release
       - name: Build
@@ -48,10 +48,10 @@ jobs:
           ./.github/workflows/upload_asset.sh \
             ./Chartacritty-${GITHUB_REF##*/}-portable.exe $GITHUB_TOKEN
       - name: Install WiX
-        run: dotnet tool install --global wix --version 4.0.1
-      - name: Crate msi installer
+        run: dotnet tool install --global wix --version 4.0.5
+      - name: Create msi installer
         run: |
-          wix extension add WixToolset.UI.wixext WixToolset.Util.wixext
+          wix extension add WixToolset.UI.wixext/4.0.5 WixToolset.Util.wixext/4.0.5
           wix build -arch "x64" -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext \
           -out "./Chartacritty-${GITHUB_REF##*/}-installer.msi" "alacritty/windows/wix/alacritty.wxs"
       - name: Upload msi installer
@@ -63,7 +63,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Install dependencies
         run: |
           sudo apt-get install cmake pkg-config libfreetype6-dev libfontconfig1-dev \

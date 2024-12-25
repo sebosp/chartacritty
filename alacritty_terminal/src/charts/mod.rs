@@ -606,8 +606,8 @@ impl TimeSeriesChart {
         let span = span!(Level::TRACE, "calculate_stats", name = self.name.clone().as_str());
         let _enter = span.enter();
         event!(Level::TRACE, "TimeSeriesChart::calculate_stats start");
-        let mut max_metric_value = std::f64::MIN;
-        let mut min_metric_value = std::f64::MAX;
+        let mut max_metric_value = f64::MIN;
+        let mut min_metric_value = f64::MAX;
         let mut sum_metric_values = 0f64;
         let mut total_count = 0usize;
         let mut max_epoch = 0u64;
@@ -788,8 +788,8 @@ impl TimeSeries {
         // Recalculating seems to be necessary because we are constantly
         // moving items out of the Vec<> so our cache can easily get out of
         // sync
-        let mut max_metric_value = std::f64::MIN;
-        let mut min_metric_value = std::f64::MAX;
+        let mut max_metric_value = f64::MIN;
+        let mut min_metric_value = f64::MAX;
         let mut sum_metric_values = 0f64;
         let mut filled_metrics = 0usize;
         // XXX What is it the vec is empty? what should `first` and `last` be?

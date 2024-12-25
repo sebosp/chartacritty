@@ -1,5 +1,5 @@
 use std::ffi::OsStr;
-use std::io::{self, Error, ErrorKind, Result};
+use std::io::{self, Result};
 use std::iter::once;
 use std::os::windows::ffi::OsStrExt;
 use std::sync::mpsc::TryRecvError;
@@ -35,7 +35,6 @@ pub struct Pty {
 
 pub fn new(config: &Options, window_size: WindowSize, _window_id: u64) -> Result<Pty> {
     conpty::new(config, window_size)
-        .ok_or_else(|| Error::new(ErrorKind::Other, "failed to spawn conpty"))
 }
 
 impl Pty {
@@ -46,6 +45,10 @@ impl Pty {
         child_watcher: ChildExitWatcher,
     ) -> Self {
         Self { backend: backend.into(), conout: conout.into(), conin: conin.into(), child_watcher }
+    }
+
+    pub fn child_watcher(&self) -> &ChildExitWatcher {
+        &self.child_watcher
     }
 }
 
@@ -111,7 +114,7 @@ impl EventedPty for Pty {
         match self.child_watcher.event_rx().try_recv() {
             Ok(ev) => Some(ev),
             Err(TryRecvError::Empty) => None,
-            Err(TryRecvError::Disconnected) => Some(ChildEvent::Exited),
+            Err(TryRecvError::Disconnected) => Some(ChildEvent::Exited(None)),
         }
     }
 }

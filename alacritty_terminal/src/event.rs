@@ -53,6 +53,9 @@ pub enum Event {
     /// Shutdown request.
     Exit,
 
+    /// Child process exited with an error code.
+    ChildExit(i32),
+
     /// A decoration may request an update to draw the terminal$
     DecorEvent, // a decoration may request an update to draw the terminal
 
@@ -75,6 +78,7 @@ impl Debug for Event {
             Event::Wakeup => write!(f, "Wakeup"),
             Event::Bell => write!(f, "Bell"),
             Event::Exit => write!(f, "Exit"),
+            Event::ChildExit(code) => write!(f, "ChildExit({code})"),
             Event::DecorEvent => write!(f, "DecorEvent"),
             Event::ChartEvent => write!(f, "ChartEvent"),
         }
