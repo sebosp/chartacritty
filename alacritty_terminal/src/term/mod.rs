@@ -57,30 +57,30 @@ bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct TermMode: u32 {
         const NONE                    = 0;
-        const SHOW_CURSOR             = 0b0000_0000_0000_0000_0000_0001;
-        const APP_CURSOR              = 0b0000_0000_0000_0000_0000_0010;
-        const APP_KEYPAD              = 0b0000_0000_0000_0000_0000_0100;
-        const MOUSE_REPORT_CLICK      = 0b0000_0000_0000_0000_0000_1000;
-        const BRACKETED_PASTE         = 0b0000_0000_0000_0000_0001_0000;
-        const SGR_MOUSE               = 0b0000_0000_0000_0000_0010_0000;
-        const MOUSE_MOTION            = 0b0000_0000_0000_0000_0100_0000;
-        const LINE_WRAP               = 0b0000_0000_0000_0000_1000_0000;
-        const LINE_FEED_NEW_LINE      = 0b0000_0000_0000_0001_0000_0000;
-        const ORIGIN                  = 0b0000_0000_0000_0010_0000_0000;
-        const INSERT                  = 0b0000_0000_0000_0100_0000_0000;
-        const FOCUS_IN_OUT            = 0b0000_0000_0000_1000_0000_0000;
-        const ALT_SCREEN              = 0b0000_0000_0001_0000_0000_0000;
-        const MOUSE_DRAG              = 0b0000_0000_0010_0000_0000_0000;
-        const MOUSE_MODE              = 0b0000_0000_0010_0000_0100_1000;
-        const UTF8_MOUSE              = 0b0000_0000_0100_0000_0000_0000;
-        const ALTERNATE_SCROLL        = 0b0000_0000_1000_0000_0000_0000;
-        const VI                      = 0b0000_0001_0000_0000_0000_0000;
-        const URGENCY_HINTS           = 0b0000_0010_0000_0000_0000_0000;
-        const DISAMBIGUATE_ESC_CODES  = 0b0000_0100_0000_0000_0000_0000;
-        const REPORT_EVENT_TYPES      = 0b0000_1000_0000_0000_0000_0000;
-        const REPORT_ALTERNATE_KEYS   = 0b0001_0000_0000_0000_0000_0000;
-        const REPORT_ALL_KEYS_AS_ESC  = 0b0010_0000_0000_0000_0000_0000;
-        const REPORT_ASSOCIATED_TEXT  = 0b0100_0000_0000_0000_0000_0000;
+        const SHOW_CURSOR             = 1;
+        const APP_CURSOR              = 1 << 1;
+        const APP_KEYPAD              = 1 << 2;
+        const MOUSE_REPORT_CLICK      = 1 << 3;
+        const BRACKETED_PASTE         = 1 << 4;
+        const SGR_MOUSE               = 1 << 5;
+        const MOUSE_MOTION            = 1 << 6;
+        const LINE_WRAP               = 1 << 7;
+        const LINE_FEED_NEW_LINE      = 1 << 8;
+        const ORIGIN                  = 1 << 9;
+        const INSERT                  = 1 << 10;
+        const FOCUS_IN_OUT            = 1 << 11;
+        const ALT_SCREEN              = 1 << 12;
+        const MOUSE_DRAG              = 1 << 13;
+        const UTF8_MOUSE              = 1 << 14;
+        const ALTERNATE_SCROLL        = 1 << 15;
+        const VI                      = 1 << 16;
+        const URGENCY_HINTS           = 1 << 17;
+        const DISAMBIGUATE_ESC_CODES  = 1 << 18;
+        const REPORT_EVENT_TYPES      = 1 << 19;
+        const REPORT_ALTERNATE_KEYS   = 1 << 20;
+        const REPORT_ALL_KEYS_AS_ESC  = 1 << 21;
+        const REPORT_ASSOCIATED_TEXT  = 1 << 22;
+        const MOUSE_MODE              = Self::MOUSE_REPORT_CLICK.bits() | Self::MOUSE_MOTION.bits() | Self::MOUSE_DRAG.bits();
         const KITTY_KEYBOARD_PROTOCOL = Self::DISAMBIGUATE_ESC_CODES.bits()
                                       | Self::REPORT_EVENT_TYPES.bits()
                                       | Self::REPORT_ALTERNATE_KEYS.bits()
@@ -296,7 +296,7 @@ impl<'a> TermDamageIterator<'a> {
     }
 }
 
-impl<'a> Iterator for TermDamageIterator<'a> {
+impl Iterator for TermDamageIterator<'_> {
     type Item = LineDamageBounds;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -510,13 +510,13 @@ impl<T> Term<T> {
         }
     }
 
-    pub fn new<D: Dimensions>(options: Config, dimensions: &D, event_proxy: T) -> Term<T> {
+    pub fn new<D: Dimensions>(config: Config, dimensions: &D, event_proxy: T) -> Term<T> {
         let num_cols = dimensions.columns();
         let num_lines = dimensions.screen_lines();
 
-        let history_size = options.scrolling_history;
+        let history_size = config.scrolling_history;
         let grid = Grid::new(num_lines, num_cols, history_size);
-        let alt = Grid::new(num_lines, num_cols, 0);
+        let inactive_grid = Grid::new(num_lines, num_cols, 0);
 
         let tabs = TabStops::new(grid.columns());
 
@@ -526,25 +526,25 @@ impl<T> Term<T> {
         let damage = TermDamageState::new(num_cols, num_lines);
 
         Term {
+            inactive_grid,
+            scroll_region,
+            event_proxy,
+            damage,
+            config,
             grid,
-            inactive_grid: alt,
+            tabs,
+            inactive_keyboard_mode_stack: Default::default(),
+            keyboard_mode_stack: Default::default(),
             active_charset: Default::default(),
             vi_mode_cursor: Default::default(),
-            tabs,
-            mode: Default::default(),
-            scroll_region,
+            cursor_style: Default::default(),
             colors: color::Colors::default(),
-            cursor_style: None,
-            event_proxy,
-            is_focused: true,
-            title: None,
             title_stack: Default::default(),
-            keyboard_mode_stack: Default::default(),
-            inactive_keyboard_mode_stack: Default::default(),
-            selection: None,
+            is_focused: Default::default(),
+            selection: Default::default(),
+            title: Default::default(),
+            mode: Default::default(),
             decorations_enabled: true,
-            damage,
-            config: options,
             tokio_setup: None,
         }
     }
@@ -1087,6 +1087,11 @@ impl<T> Term<T> {
         &self.config.semantic_escape_chars
     }
 
+    #[cfg(test)]
+    pub(crate) fn set_semantic_escape_chars(&mut self, semantic_escape_chars: &str) {
+        self.config.semantic_escape_chars = semantic_escape_chars.into();
+    }
+
     /// Active terminal cursor style.
     ///
     /// While vi mode is active, this will automatically return the vi mode cursor style.
@@ -1462,7 +1467,7 @@ impl<T: EventListener> Handler for Term<T> {
             return;
         }
 
-        trace!("Attemting to pop {to_pop} keyboard modes from the stack");
+        trace!("Attempting to pop {to_pop} keyboard modes from the stack");
         let new_len = self.keyboard_mode_stack.len().saturating_sub(to_pop as usize);
         self.keyboard_mode_stack.truncate(new_len);
 
@@ -1604,15 +1609,15 @@ impl<T: EventListener> Handler for Term<T> {
     /// edition, in LINE FEED mode,
     ///
     /// > The execution of the formatter functions LINE FEED (LF), FORM FEED
-    /// (FF), LINE TABULATION (VT) cause only movement of the active position in
-    /// the direction of the line progression.
+    /// > (FF), LINE TABULATION (VT) cause only movement of the active position in
+    /// > the direction of the line progression.
     ///
     /// In NEW LINE mode,
     ///
     /// > The execution of the formatter functions LINE FEED (LF), FORM FEED
-    /// (FF), LINE TABULATION (VT) cause movement to the line home position on
-    /// the following line, the following form, etc. In the case of LF this is
-    /// referred to as the New Line (NL) option.
+    /// > (FF), LINE TABULATION (VT) cause movement to the line home position on
+    /// > the following line, the following form, etc. In the case of LF this is
+    /// > referred to as the New Line (NL) option.
     ///
     /// Additionally, ECMA-48 4th edition says that this option is deprecated.
     /// ECMA-48 5th edition only mentions this option (without explanation)
@@ -2241,7 +2246,7 @@ impl<T: EventListener> Handler for Term<T> {
         let mode = match mode {
             ansi::Mode::Named(mode) => mode,
             ansi::Mode::Unknown(mode) => {
-                debug!("Ignorning unknown mode {} in unset_mode", mode);
+                debug!("Ignoring unknown mode {} in unset_mode", mode);
                 return;
             },
         };
@@ -2346,7 +2351,7 @@ impl<T: EventListener> Handler for Term<T> {
     fn set_title(&mut self, title: Option<String>) {
         trace!("Setting title to '{:?}'", title);
 
-        self.title = title.clone();
+        self.title.clone_from(&title);
 
         let title_event = match title {
             Some(title) => Event::Title(title),
@@ -2547,10 +2552,8 @@ pub mod test {
     use super::*;
 
     use serde::{Deserialize, Serialize};
-    use unicode_width::UnicodeWidthChar;
 
     use crate::event::VoidListener;
-    use crate::index::Column;
 
     #[derive(Serialize, Deserialize)]
     pub struct TermSize {

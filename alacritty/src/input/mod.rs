@@ -19,10 +19,11 @@ use winit::dpi::PhysicalPosition;
 use winit::event::{
     ElementState, Modifiers, MouseButton, MouseScrollDelta, Touch as TouchEvent, TouchPhase,
 };
-use winit::event_loop::EventLoopWindowTarget;
+#[cfg(target_os = "macos")]
+use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::ModifiersState;
 #[cfg(target_os = "macos")]
-use winit::platform::macos::EventLoopWindowTargetExtMacOS;
+use winit::platform::macos::ActiveEventLoopExtMacOS;
 use winit::window::CursorIcon;
 
 use alacritty_terminal::event::EventListener;
@@ -35,6 +36,8 @@ use alacritty_terminal::vi_mode::ViMotion;
 use alacritty_terminal::vte::ansi::{ClearMode, Handler};
 
 use crate::clipboard::Clipboard;
+#[cfg(target_os = "macos")]
+use crate::config::window::Decorations;
 use crate::config::{Action, BindingMode, MouseAction, SearchAction, UiConfig, ViAction};
 use crate::display::hint::HintMatch;
 use crate::display::window::Window;
@@ -103,7 +106,8 @@ pub trait ActionContext<T: EventListener> {
     fn pop_message(&mut self) {}
     fn message(&self) -> Option<&Message>;
     fn config(&self) -> &UiConfig;
-    fn event_loop(&self) -> &EventLoopWindowTarget<Event>;
+    #[cfg(target_os = "macos")]
+    fn event_loop(&self) -> &ActiveEventLoop;
     fn mouse_mode(&self) -> bool;
     fn clipboard_mut(&mut self) -> &mut Clipboard;
     fn scheduler_mut(&mut self) -> &mut Scheduler;
@@ -123,6 +127,7 @@ pub trait ActionContext<T: EventListener> {
     fn inline_search_state(&mut self) -> &mut InlineSearchState;
     fn start_inline_search(&mut self, _direction: Direction, _stop_short: bool) {}
     fn inline_search_next(&mut self) {}
+    fn inline_search_input(&mut self, _text: &str) {}
     fn inline_search_previous(&mut self) {}
     fn hint_input(&mut self, _character: char) {}
     fn trigger_hint(&mut self, _hint: &HintMatch) {}
@@ -384,8 +389,11 @@ impl<T: EventListener> Execute<T> for Action {
             Action::CreateNewWindow => ctx.create_new_window(None),
             #[cfg(target_os = "macos")]
             Action::CreateNewTab => {
-                let tabbing_id = Some(ctx.window().tabbing_id());
-                ctx.create_new_window(tabbing_id);
+                // Tabs on macOS are not possible without decorations.
+                if ctx.config().window.decorations != Decorations::None {
+                    let tabbing_id = Some(ctx.window().tabbing_id());
+                    ctx.create_new_window(tabbing_id);
+                }
             },
             #[cfg(target_os = "macos")]
             Action::SelectNextTab => ctx.window().select_next_tab(),
@@ -803,7 +811,7 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
         if self.ctx.terminal().mode().contains(TermMode::FOCUS_IN_OUT) {
             let chr = if is_focused { "I" } else { "O" };
 
-            let msg = format!("\x1b[{}", chr);
+            let msg = format!("\x1b[{chr}");
             self.ctx.write_to_pty(msg.into_bytes());
         }
     }
@@ -998,17 +1006,18 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
         let mouse_bindings = self.ctx.config().mouse_bindings().to_owned();
 
         // If mouse mode is active, also look for bindings without shift.
-        let mut check_fallback = mouse_mode && mods.contains(ModifiersState::SHIFT);
+        let fallback_allowed = mouse_mode && mods.contains(ModifiersState::SHIFT);
+        let mut exact_match_found = false;
 
         for binding in &mouse_bindings {
             // Don't trigger normal bindings in mouse mode unless Shift is pressed.
-            if binding.is_triggered_by(mode, mods, &button) && (check_fallback || !mouse_mode) {
+            if binding.is_triggered_by(mode, mods, &button) && (fallback_allowed || !mouse_mode) {
                 binding.action.execute(&mut self.ctx);
-                check_fallback = false;
+                exact_match_found = true;
             }
         }
 
-        if check_fallback {
+        if fallback_allowed && !exact_match_found {
             let fallback_mods = mods & !ModifiersState::SHIFT;
             for binding in &mouse_bindings {
                 if binding.is_triggered_by(mode, fallback_mods, &button) {
@@ -1128,7 +1137,7 @@ mod tests {
         inline_search_state: &'a mut InlineSearchState,
     }
 
-    impl<'a, T: EventListener> super::ActionContext<T> for ActionContext<'a, T> {
+    impl<T: EventListener> super::ActionContext<T> for ActionContext<'_, T> {
         fn search_next(
             &mut self,
             _origin: Point,
@@ -1217,7 +1226,8 @@ mod tests {
             self.clipboard
         }
 
-        fn event_loop(&self) -> &EventLoopWindowTarget<Event> {
+        #[cfg(target_os = "macos")]
+        fn event_loop(&self) -> &ActiveEventLoop {
             unimplemented!();
         }
 
@@ -1319,9 +1329,9 @@ mod tests {
             event: WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 button: MouseButton::Left,
-                device_id: unsafe { DeviceId::dummy() },
+                device_id: DeviceId::dummy(),
             },
-            window_id: unsafe { WindowId::dummy() },
+            window_id: WindowId::dummy(),
         },
         end_state: ClickState::Click,
         input_delay: Duration::ZERO,
@@ -1335,9 +1345,9 @@ mod tests {
             event: WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 button: MouseButton::Right,
-                device_id: unsafe { DeviceId::dummy() },
+                device_id: DeviceId::dummy(),
             },
-            window_id: unsafe { WindowId::dummy() },
+            window_id: WindowId::dummy(),
         },
         end_state: ClickState::Click,
         input_delay: Duration::ZERO,
@@ -1351,9 +1361,9 @@ mod tests {
             event: WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 button: MouseButton::Middle,
-                device_id: unsafe { DeviceId::dummy() },
+                device_id: DeviceId::dummy(),
             },
-            window_id: unsafe { WindowId::dummy() },
+            window_id: WindowId::dummy(),
         },
         end_state: ClickState::Click,
         input_delay: Duration::ZERO,
@@ -1367,9 +1377,9 @@ mod tests {
             event: WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 button: MouseButton::Left,
-                device_id: unsafe { DeviceId::dummy() },
+                device_id: DeviceId::dummy(),
             },
-            window_id: unsafe { WindowId::dummy() },
+            window_id: WindowId::dummy(),
         },
         end_state: ClickState::DoubleClick,
         input_delay: Duration::ZERO,
@@ -1383,9 +1393,9 @@ mod tests {
             event: WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 button: MouseButton::Left,
-                device_id: unsafe { DeviceId::dummy() },
+                device_id: DeviceId::dummy(),
             },
-            window_id: unsafe { WindowId::dummy() },
+            window_id: WindowId::dummy(),
         },
         end_state: ClickState::Click,
         input_delay: CLICK_THRESHOLD,
@@ -1399,9 +1409,9 @@ mod tests {
             event: WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 button: MouseButton::Left,
-                device_id: unsafe { DeviceId::dummy() },
+                device_id:  DeviceId::dummy(),
             },
-            window_id: unsafe { WindowId::dummy() },
+            window_id:  WindowId::dummy(),
         },
         end_state: ClickState::TripleClick,
         input_delay: Duration::ZERO,
@@ -1415,9 +1425,9 @@ mod tests {
             event: WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 button: MouseButton::Left,
-                device_id: unsafe { DeviceId::dummy() },
+                device_id: DeviceId::dummy(),
             },
-            window_id: unsafe { WindowId::dummy() },
+            window_id: WindowId::dummy(),
         },
         end_state: ClickState::Click,
         input_delay: CLICK_THRESHOLD,
@@ -1431,9 +1441,9 @@ mod tests {
             event: WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 button: MouseButton::Right,
-                device_id: unsafe { DeviceId::dummy() },
+                device_id: DeviceId::dummy(),
             },
-            window_id: unsafe { WindowId::dummy() },
+            window_id: WindowId::dummy(),
         },
         end_state: ClickState::Click,
         input_delay: Duration::ZERO,

@@ -1,5 +1,4 @@
 use std::borrow::Cow;
-use std::mem;
 
 use winit::event::{ElementState, KeyEvent};
 #[cfg(target_os = "macos")]
@@ -30,6 +29,9 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
         let mods = self.ctx.modifiers().state();
 
         if key.state == ElementState::Released {
+            if self.ctx.inline_search_state().char_pending {
+                self.ctx.window().set_ime_allowed(true);
+            }
             self.key_release(key, mode, mods);
             return;
         }
@@ -46,15 +48,8 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
 
         // First key after inline search is captured.
         let inline_state = self.ctx.inline_search_state();
-        if mem::take(&mut inline_state.char_pending) {
-            if let Some(c) = text.chars().next() {
-                inline_state.character = Some(c);
-
-                // Immediately move to the captured character.
-                self.ctx.inline_search_next();
-            }
-
-            // Ignore all other characters in `text`.
+        if inline_state.char_pending {
+            self.ctx.inline_search_input(text);
             return;
         }
 
@@ -127,7 +122,7 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
                     self.ctx.modifiers().state().alt_key()
                 }
             },
-            _ => text.len() == 1 && alt_send_esc,
+            _ => alt_send_esc && text.chars().count() == 1,
         }
     }
 
@@ -231,7 +226,7 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
             _ if mode.contains(TermMode::REPORT_ALL_KEYS_AS_ESC) => {
                 build_sequence(key, mods, mode).into()
             },
-            // Winit uses different keys for `Backspace` so we expliictly specify the
+            // Winit uses different keys for `Backspace` so we explicitly specify the
             // values, instead of using what was passed to us from it.
             Key::Named(NamedKey::Tab) => [b'\t'].as_slice().into(),
             Key::Named(NamedKey::Enter) => [b'\r'].as_slice().into(),
@@ -286,7 +281,7 @@ fn build_sequence(key: KeyEvent, mods: ModifiersState, mode: TermMode) -> Vec<u8
     let sequence_base = context
         .try_build_numpad(&key)
         .or_else(|| context.try_build_named_kitty(&key))
-        .or_else(|| context.try_build_named_normal(&key))
+        .or_else(|| context.try_build_named_normal(&key, associated_text.is_some()))
         .or_else(|| context.try_build_control_char_or_mod(&key, &mut modifiers))
         .or_else(|| context.try_build_textual(&key, associated_text));
 
@@ -295,7 +290,7 @@ fn build_sequence(key: KeyEvent, mods: ModifiersState, mode: TermMode) -> Vec<u8
         _ => return Vec::new(),
     };
 
-    let mut payload = format!("\x1b[{}", payload);
+    let mut payload = format!("\x1b[{payload}");
 
     // Add modifiers information.
     if kitty_event_type || !modifiers.is_empty() || associated_text.is_some() {
@@ -348,7 +343,7 @@ impl SequenceBuilder {
         associated_text: Option<&str>,
     ) -> Option<SequenceBase> {
         let character = match key.logical_key.as_ref() {
-            Key::Character(character) => character,
+            Key::Character(character) if self.kitty_seq => character,
             _ => return None,
         };
 
@@ -374,7 +369,7 @@ impl SequenceBuilder {
             {
                 format!("{unicode_key_code}:{alternate_key_code}")
             } else {
-                alternate_key_code.to_string()
+                unicode_key_code.to_string()
             };
 
             Some(SequenceBase::new(payload.into(), SequenceTerminator::Kitty))
@@ -489,14 +484,23 @@ impl SequenceBuilder {
     }
 
     /// Try building from [`NamedKey`].
-    fn try_build_named_normal(&self, key: &KeyEvent) -> Option<SequenceBase> {
+    fn try_build_named_normal(
+        &self,
+        key: &KeyEvent,
+        has_associated_text: bool,
+    ) -> Option<SequenceBase> {
         let named = match key.logical_key {
             Key::Named(named) => named,
             _ => return None,
         };
 
         // The default parameter is 1, so we can omit it.
-        let one_based = if self.modifiers.is_empty() && !self.kitty_event_type { "" } else { "1" };
+        let one_based =
+            if self.modifiers.is_empty() && !self.kitty_event_type && !has_associated_text {
+                ""
+            } else {
+                "1"
+            };
         let (base, terminator) = match named {
             NamedKey::PageUp => ("5", SequenceTerminator::Normal('~')),
             NamedKey::PageDown => ("6", SequenceTerminator::Normal('~')),

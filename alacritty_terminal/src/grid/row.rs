@@ -28,7 +28,7 @@ impl<T: PartialEq> PartialEq for Row<T> {
     }
 }
 
-impl<T: Clone + Default> Row<T> {
+impl<T: Default> Row<T> {
     /// Create a new terminal row.
     ///
     /// Ideally the `template` should be `Copy` in all performance sensitive scenarios.
@@ -289,7 +289,7 @@ impl<T> Index<RangeToInclusive<Column>> for Row<T> {
 impl<T> IndexMut<RangeToInclusive<Column>> for Row<T> {
     #[inline]
     fn index_mut(&mut self, index: RangeToInclusive<Column>) -> &mut [T] {
-        self.occ = max(self.occ, *index.end);
+        self.occ = max(self.occ, *index.end + 1);
         &mut self.inner[..=(index.end.0)]
     }
 }

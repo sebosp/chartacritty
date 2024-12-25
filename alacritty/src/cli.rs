@@ -1,11 +1,12 @@
 use std::cmp::max;
+use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
 use std::rc::Rc;
 
 use alacritty_config::SerdeReplace;
 use clap::{ArgAction, Args, Parser, Subcommand, ValueHint};
-use log::{self, error, LevelFilter};
+use log::{error, LevelFilter};
 use serde::{Deserialize, Serialize};
 use toml::Value;
 
@@ -25,7 +26,7 @@ pub struct Options {
     pub print_events: bool,
 
     /// Generates ref test.
-    #[clap(long)]
+    #[clap(long, conflicts_with("daemon"))]
     pub ref_test: bool,
 
     /// X11 window ID to embed Alacritty within (decimal or hexadecimal with "0x" prefix).
@@ -61,6 +62,10 @@ pub struct Options {
     #[clap(short, conflicts_with("quiet"), action = ArgAction::Count)]
     verbose: u8,
 
+    /// Do not spawn an initial window.
+    #[clap(long)]
+    pub daemon: bool,
+
     /// CLI options for config overrides.
     #[clap(skip)]
     pub config_options: ParsedOptions,
@@ -87,11 +92,10 @@ impl Options {
     /// Override configuration file with options from the CLI.
     pub fn override_config(&mut self, config: &mut UiConfig) {
         #[cfg(unix)]
-        {
-            config.ipc_socket |= self.socket.is_some();
+        if self.socket.is_some() {
+            config.ipc_socket = Some(true);
         }
 
-        config.window.dynamic_title &= self.window_options.window_identity.title.is_none();
         config.window.embed = self.embed.as_ref().and_then(|embed| parse_hex_or_decimal(embed));
         config.debug.print_events |= self.print_events;
         config.debug.log_level = max(config.debug.log_level, self.log_level());
@@ -195,6 +199,7 @@ impl From<TerminalOptions> for PtyOptions {
             working_directory: options.working_directory.take(),
             shell: options.command().map(Into::into),
             hold: options.hold,
+            env: HashMap::new(),
         }
     }
 }
@@ -215,10 +220,10 @@ impl WindowIdentity {
     /// Override the [`WindowIdentity`]'s fields with the [`WindowOptions`].
     pub fn override_identity_config(&self, identity: &mut Identity) {
         if let Some(title) = &self.title {
-            identity.title = title.clone();
+            identity.title.clone_from(title);
         }
         if let Some(class) = &self.class {
-            identity.class = class.clone();
+            identity.class.clone_from(class);
         }
     }
 }
@@ -424,19 +429,6 @@ mod tests {
     }
 
     #[test]
-    fn dynamic_title_overridden_by_options() {
-        let mut config = UiConfig::default();
-
-        let title = Some(String::from("foo"));
-        let window_identity = WindowIdentity { title, ..WindowIdentity::default() };
-        let new_window_options = WindowOptions { window_identity, ..WindowOptions::default() };
-        let mut options = Options { window_options: new_window_options, ..Options::default() };
-        options.override_config(&mut config);
-
-        assert!(!config.window.dynamic_title);
-    }
-
-    #[test]
     fn dynamic_title_not_overridden_by_config() {
         let mut config = UiConfig::default();
 
@@ -519,5 +511,36 @@ mod tests {
     fn invalid_hex_to_decimal() {
         let value = parse_hex_or_decimal("0xa0xx0d");
         assert_eq!(value, None);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn completions() {
+        let mut clap = Options::command();
+
+        for (shell, file) in &[
+            (Shell::Bash, "alacritty.bash"),
+            (Shell::Fish, "alacritty.fish"),
+            (Shell::Zsh, "_alacritty"),
+        ] {
+            let mut generated = Vec::new();
+            clap_complete::generate(*shell, &mut clap, "alacritty", &mut generated);
+            let generated = String::from_utf8_lossy(&generated);
+
+            let mut completion = String::new();
+            let mut file = File::open(format!("../extra/completions/{file}")).unwrap();
+            file.read_to_string(&mut completion).unwrap();
+
+            assert_eq!(generated, completion);
+        }
+
+        // NOTE: Use this to generate new completions.
+        //
+        // let mut file = File::create("../extra/completions/alacritty.bash").unwrap();
+        // clap_complete::generate(Shell::Bash, &mut clap, "alacritty", &mut file);
+        // let mut file = File::create("../extra/completions/alacritty.fish").unwrap();
+        // clap_complete::generate(Shell::Fish, &mut clap, "alacritty", &mut file);
+        // let mut file = File::create("../extra/completions/_alacritty").unwrap();
+        // clap_complete::generate(Shell::Zsh, &mut clap, "alacritty", &mut file);
     }
 }

@@ -9,6 +9,7 @@ use crate::renderer::{self, cstr};
 static HXBG_SHADER_F: &str = include_str!("../../res/hex_bg.f.glsl");
 static HXBG_SHADER_V: &str = include_str!("../../res/hex_bg.v.glsl");
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct HexBgRenderer {
     // GL buffer objects.
