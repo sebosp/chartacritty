@@ -534,7 +534,7 @@ impl Display {
         damage_tracker.debug = config.debug.highlight_damage;
 
         let decorations_config =
-            config.decorations.as_ref().map(|decorations| decorations.config.clone());
+            config.decorations.as_ref().map(|decorations| decorations.config.0.clone());
         let mut decorations =
             DecorationsConfig::optional_decor_to_sized(decorations_config, size_info.into());
         decorations.init_timers();
@@ -1212,7 +1212,7 @@ impl Display {
         //
         // TODO:
         // - Move to the decorations module and implement with tick()
-        // - Use lyon and perlin noise
+        // - Use perlin noise
         let seconds_cycle = 15f32;
         let epoch =
             std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH).unwrap();
@@ -1257,11 +1257,11 @@ impl Display {
                             elapsed_secs_with_millis,
                         );
                     },
-                    DecorationTriangles::Lyon(lyon_tris) => {
-                        for decor_vertex in &lyon_tris.vertices {
+                    DecorationTriangles::Nannou(nannou_tris) => {
+                        for decor_vertex in &nannou_tris.vertices {
                             self.renderer.draw_xyzrgba_vertices(
                                 size_info,
-                                decor_vertex,
+                                &decor_vertex.vecs,
                                 // decor_vertex.draw_array_mode.clone().into(), It seems we cannot
                                 // use mixed types of draw array modes, maybe they overwrite each
                                 // other or we end up seeing lines where there were none?

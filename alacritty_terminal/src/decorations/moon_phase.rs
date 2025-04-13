@@ -1,14 +1,14 @@
 //! Moon Phase Nannou decoration
 
 use crate::term::SizeInfo;
-use lyon::math::point;
-use lyon::path::Path;
-use lyon::tessellation::*;
 use moon_phase::MoonPhase;
-use palette::named::*;
-use palette::rgb::Rgba;
+use nannou::draw;
+use nannou::geom::path::Builder;
+use nannou::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
+
+use super::nannou::NannouVertices;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct MoonPhaseState {
@@ -18,7 +18,7 @@ pub struct MoonPhaseState {
     /// The radius of the moon shown on the screen
     radius: f32,
     /// The vertices for the current state
-    pub vecs: Vec<f32>,
+    pub vecs: Vec<NannouVertices>,
     /// Keep track of the last time the vertices needed to be calculated.
     /// This should only happen once a day.
     #[serde(skip, default = "current_system_time")]
@@ -57,6 +57,34 @@ impl PartialEq for MoonPhaseState {
     }
 }
 
+fn build_moon_arc_fraction(x: f32, y: f32, radius: f32, phase: f32) -> nannou::geom::Path {
+    // phase is 0.5 full
+    let illuminated_percent = 1. - ((phase - 0.5).abs() * 2.);
+    let mut builder = Builder::new().with_svg();
+    // Start from the top
+    builder.move_to(lyon::math::point(x, y + radius));
+    // For some reason I have to multiply the control point's x for 1.33 to get a shape similar to
+    // a circle... I'm kindof trying to build half a circle with bezier curves... Maybe not the
+    // right way.
+    builder.cubic_bezier_to(
+        lyon::math::point(x + radius * 1.33, y + radius),
+        lyon::math::point(x + radius * 1.33, y - radius),
+        lyon::math::point(x, y - radius),
+    );
+    builder.cubic_bezier_to(
+        lyon::math::point(
+            x + radius * 1.33 - radius * (illuminated_percent * 2.) * 1.33,
+            y - radius,
+        ),
+        lyon::math::point(
+            x + radius * 1.33 - radius * (illuminated_percent * 2.) * 1.33,
+            y + radius,
+        ),
+        lyon::math::point(x, y + radius),
+    );
+    builder.build()
+}
+
 impl MoonPhaseState {
     /// Creates a new MoonPhaseState.
     /// After `new()`, the caller must call `tick()` to populate the vertices
@@ -89,54 +117,33 @@ impl MoonPhaseState {
     }
 
     /// Creates vertices for the Polar Clock Arc
-    fn gen_vertices(&self, x: f32, y: f32, size_info: SizeInfo) -> Vec<f32> {
+    fn gen_vertices(&self, x: f32, y: f32, size_info: SizeInfo) -> Vec<NannouVertices> {
         log::info!("MoonPhase::gen_vertices, phase: {:?}", self.moon_phase);
+        let draw = draw::Draw::default().triangle_mode();
         let ellipse_color = LIGHTSKYBLUE.into_format::<f32>();
-        let ellipse_color =
-            Rgba::new(ellipse_color.red, ellipse_color.green, ellipse_color.blue, 0.02f32);
+        let ellipse_stroke_color =
+            rgba(ellipse_color.red, ellipse_color.green, ellipse_color.blue, 0.01f32);
         let x_60_degrees_offset = super::COS_60 * self.radius;
         let y_60_degrees_offset = super::SIN_60 * self.radius;
-        let tolerance = 0.5; // maximum distance between a curve and its approximation.
-        let mut builder = Path::builder().flattened(tolerance);
-        // TODO: Add the ellipse stroke.
-
-        // phase 0.5 is full
-        let illuminated_percent = 1. - ((self.moon_phase.phase as f32 - 0.5).abs() * 2.);
-        let moon_center_x = x + x_60_degrees_offset;
-        let moon_center_y = y + y_60_degrees_offset;
-        let moon_radius = self.radius * 0.4;
-
-        let moon_radius = moon_radius.abs();
-
-        // https://spencermortensen.com/articles/bezier-circle/
-        //  const CONSTANT_FACTOR: f32 = 0.55191505;
-        // TODO: Winding, and use CONSTANT_FACTOR
-
-        builder.begin(point(moon_center_x, moon_center_y + moon_radius));
-        // For some reason I have to multiply the control point's x for 1.33 to get a shape similar to
-        // a circle... I'm kindof trying to build half a circle with bezier curves... Maybe not the
-        // right way.
-        builder.cubic_bezier_to(
-            point(moon_center_x + moon_radius * 1.33, moon_center_y + moon_radius),
-            point(moon_center_x + moon_radius * 1.33, moon_center_y - moon_radius),
-            point(moon_center_x, moon_center_y - moon_radius),
-        );
-        builder.cubic_bezier_to(
-            point(
-                moon_center_x + moon_radius * 1.33
-                    - moon_radius * (illuminated_percent * 2.) * 1.33,
-                moon_center_y - moon_radius,
-            ),
-            point(
-                moon_center_x + moon_radius * 1.33
-                    - moon_radius * (illuminated_percent * 2.) * 1.33,
-                moon_center_y + moon_radius,
-            ),
-            point(moon_center_x, moon_center_y + moon_radius),
-        );
-        builder.end(true);
-        let path = builder.build();
-        super::LyonDecoration::gen_vertices_from_lyon_path(&path, size_info, ellipse_color)
+        let alpha = 0.07;
+        draw.ellipse()
+            .x_y(x + x_60_degrees_offset, y + y_60_degrees_offset)
+            .radius(self.radius * 0.4)
+            .stroke(ellipse_stroke_color)
+            .rgba(ellipse_color.red, ellipse_color.green, ellipse_color.blue, alpha);
+        draw.path()
+            .fill()
+            .rgba(ellipse_color.red, ellipse_color.green, ellipse_color.blue, alpha * 2.)
+            .events(
+                build_moon_arc_fraction(
+                    x + x_60_degrees_offset,
+                    y + y_60_degrees_offset,
+                    self.radius * 0.4,
+                    self.moon_phase.phase as f32,
+                )
+                .iter(),
+            );
+        super::NannouDecoration::gen_vertices_from_nannou_draw(draw, size_info)
     }
 
     pub fn mark_as_dirty(&mut self) {
