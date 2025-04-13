@@ -28,7 +28,10 @@ parking_lot = "0.12.0"
 polling = "3.0.0"
 regex-automata = "0.4.3"
 unicode-width = "0.1"
-vte = { version = "0.15.0", default-features = false, features = ["std", "ansi"] }
+vte = { version = "0.15.0", default-features = false, features = [
+    "std",
+    "ansi",
+] }
 serde = { version = "1", features = ["derive", "rc"], optional = true }
 reqwest = { version = "0.12", features = ["json"] }
 tokio = { version = "1", features = ["full"] }
@@ -42,8 +45,9 @@ env_logger = "0.11"
 tracing = { version = "0.1", features = ["log", "log-always"] }
 tracing-log = { version = "0.2" }
 percent-encoding = "2.3"
-rand = "0.8.5"
+rand = "0.9.0"
 lyon = { version = "1.0", features = ["serialization"] }
+nannou = { version = "0.19.0", path = "../../sebosp_nannou/nannou" }
 chrono = { version = "0.4.39", features = ["serde"] }
 moon-phase = "0.1.0"
 noise = "0.9.0"

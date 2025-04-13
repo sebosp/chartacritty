@@ -131,10 +131,10 @@ impl HexagonPointBackground {
         // Testing, TODO: remove
         // self.chosen_vertices = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
         // 18]; return;
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let mut current_vertex = 0;
         while current_vertex <= random_vertices_to_choose {
-            let new_vertex = rng.gen_range(0..total_hexagons);
+            let new_vertex = rng.random_range(0..total_hexagons);
             if self.chosen_vertices.contains(&new_vertex) {
                 continue;
             }
