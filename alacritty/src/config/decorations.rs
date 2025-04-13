@@ -1,28 +1,18 @@
-use serde::{de, Deserialize, Deserializer};
-use toml::Value;
+use serde::{self, Deserialize, Serialize};
 
-use alacritty_config_derive::{ConfigDeserialize, SerdeReplace};
 use alacritty_terminal::decorations::DecorationsConfig;
 
-use crate::config::ui_config::StringVisitor;
-
-#[derive(ConfigDeserialize, Default, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
 pub struct Decorations {
-    /// Chart configuration
-    pub config: SerdeDecorationsConfig,
+    /// Decorations configuration
+    #[serde(flatten)]
+    pub config: DecorationsConfig,
 }
 
-#[derive(SerdeReplace, Default, Clone, Debug, PartialEq)]
-pub struct SerdeDecorationsConfig(pub DecorationsConfig);
+impl alacritty_config::SerdeReplace for Decorations {
+    fn replace(&mut self, value: toml::Value) -> Result<(), Box<dyn std::error::Error>> {
+        *self = serde::Deserialize::deserialize(value)?;
 
-impl<'de> Deserialize<'de> for SerdeDecorationsConfig {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = deserializer.deserialize_str(StringVisitor)?;
-        DecorationsConfig::deserialize(Value::String(value))
-            .map(SerdeDecorationsConfig)
-            .map_err(de::Error::custom)
+        Ok(())
     }
 }

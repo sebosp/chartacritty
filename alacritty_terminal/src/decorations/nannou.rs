@@ -1,5 +1,6 @@
 //! Nannou-based decorations for Alacritty
 
+use crate::charts::deserialize_rgb_from_str;
 use super::PolarClockState;
 use vte::ansi::Rgb;
 use crate::term::SizeInfo;
@@ -55,6 +56,7 @@ pub struct NannouVertices {
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct NannouDecoration {
+    #[serde(deserialize_with = "deserialize_rgb_from_str", default)]
     pub color: Rgb,
     pub alpha: f32,
     #[serde(default)]

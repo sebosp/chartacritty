@@ -534,7 +534,7 @@ impl Display {
         damage_tracker.debug = config.debug.highlight_damage;
 
         let decorations_config =
-            config.decorations.as_ref().map(|decorations| decorations.config.0.clone());
+            config.decorations.as_ref().map(|decorations| decorations.config.clone());
         let mut decorations =
             DecorationsConfig::optional_decor_to_sized(decorations_config, size_info.into());
         decorations.init_timers();
