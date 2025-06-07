@@ -1,128 +1,271 @@
+window:
+  padding:
+    x: 0
+  opacity: 0.8
+
+# Font configuration
+font:
+  # Normal (roman) font face
+  # normal:
+    # Font family
+    #
+    # Default:
+    #   - (macOS) Menlo
+    #   - (Linux/BSD) monospace
+    #   - (Windows) Consolas
+    # family: Source Code Pro
+
+    # The `style` can be specified to pick a specific face.
+    # style: Regular
+
+  # Bold font face
+  # bold:
+    # Font family
+    #
+    # If the bold family is not specified, it will fall back to the
+    # value specified for the normal font.
+    # family: Source Code Pro
+
+    # The `style` can be specified to pick a specific face.
+    # style: Bold
+
+  # Italic font face
+  # italic:
+    # Font family
+    #
+    # If the italic family is not specified, it will fall back to the
+    # value specified for the normal font.
+    # family: Source Code Pro
+
+    # The `style` can be specified to pick a specific face.
+    # style: Italic
+
+  # Point size
+  size: 10.0
+
+
+
+# Colors (Tomorrow Night Bright)
+colors:
+  # If `true`, bold text is drawn using the bright color variants.
+  draw_bold_text_with_bright_colors: true
+  # Default colors
+  primary:
+    background: '0x1a1b26'
+    foreground: '0xc0caf5'
+  # Cursor colors
+  #
+  # Colors which should be used to draw the terminal cursor. If these are unset,
+  # the cursor color will be the inverse of the cell color.
+  cursor:
+    text: '0xA1B0B8'
+    cursor: '0xffffff'
+
+  # Freya Colors
+  normal:
+    black:   '0x252525'
+    red:     '0xf61053'
+    green:   '0x10f8a6'
+    yellow:  '0xfad656'
+    blue:    '0x31b5f8'
+    magenta: '0xD81B60'
+    cyan:    '0x00ACC1'
+    white:   '0xF5F5F5'
+
+  # Material Black
+  #normal:
+  #  black:   '0x252525'
+  #  red:     '0xFF443E'
+  #  green:   '0xC3D82C'
+  #  yellow:  '0xFFC135'
+  #  blue:    '0x42A5F5'
+  #  magenta: '0xD81B60'
+  #  cyan:    '0x00ACC1'
+  #  white:   '0xF5F5F5'
+
+  # Bright colors
+  bright:
+    black:   '0x666666'
+    red:     '0xff3334'
+    green:   '0x9ec400'
+    yellow:  '0xe7c547'
+    blue:    '0x7aa6da'
+    magenta: '0xb77ee0'
+    cyan:    '0x54ced6'
+    white:   '0xffffff'
+
+
+
+selection:
+  semantic_escape_chars: ",│`|:\"' ()[]{}<>="
+
+  # When set to `true`, selected text will be copied to the primary clipboard.
+  save_to_clipboard: true
+
+
+general:
+  # Live config reload (changes require restart)
+  live_config_reload: true
+
+# Shell
+#
+# You can set `shell.program` to the path of your favorite shell, e.g. `/bin/fish`.
+# Entries in `shell.args` are passed unmodified as arguments to the shell.
+#
+# Default:
+#   - (Linux/macOS) /bin/bash --login
+#   - (Linux/BSD) user login shell
+#   - (Windows) powershell
+terminal:
+  shell:
+    program: /usr/bin/fish
+  #  args:
+  #    - --login
+
+#mouse:
+  #url:
+  # launcher: None
+    # program: None
+    # args: []
+# Bindings are always filled by default, but will be replaced when a new
+# binding with the same triggers is defined. To unset a default binding, it can
+# be mapped to the `ReceiveChar` action. Alternatively, you can use `None` for
+# a no-op if you do not wish to receive input characters for that binding.
+keyboard:
+  bindings:
+    - { key: Comma,    mods: Alt,     action: ToggleChartShow                  }
+    - { key: Period,   mods: Alt,     chars: "\x1b."                           }
 charts:
-  position:
-    x: 200
-    y: 0
   default_dimensions:
-    x: 100
+    x: 50
     y: 25
+  position:
+    x: 1000
   spacing: 10
   charts:
-  - name: async loaded items
-    position:
-      x: 780
-    series:
-    - name: Number of input items for TimeSeries
-      type: async_items_loaded
-      refresh: 1
-      color: "0x00ff00"
-      alpha: 1.0
-  - name: output newlines
-    position:
-      x: 890
-    series:
-    - name: output
-      type: alacritty_output
-      color: "0x00ff00"
-      alpha: 1.0
-      missing_values_policy: last
-      collision_policy: Increment
-  - name: input newlines
-    position:
-      x: 900
-    series:
-    - name: input
-      type: alacritty_input
-      color: "0xff0000"
-      alpha: 1.0
-      missing_values_policy: last
-      collision_policy: Increment
-  - name: load
-    position:
-      x: 1010
-    decorations:
-    - type: reference
-      value: 4.0             # Show a reference point at 4 CPU marks
-      color: "0x00ff00"
-      alpha: 0.3
-      height_multiplier: 0.05
-    - type: alert
-      target: prometheus alerts # ties to below series of the same name
-      threshold: 0
-      comparator: '>'
-      color: "0xff0000"
-    series:
-    - name: load average 1 min
-      type: prometheus
-      refresh: 15
-      source: 'http://localhost:9090/api/v1/query_range?query=node_load1'
-      color: "0xbb86cf"
-      alpha: 0.9
-      missing_values_policy: Fixeed(1) # Example on how to use a Fixed value for the policy
-      collision_policy: Overwrite
-    - name: load average 5 min
-      type: prometheus
-      refresh: 15
-      source: 'http://localhost:9090/api/v1/query_range?query=node_load5'
-      color: "0xba68c8"
-      alpha: 0.6
-      missing_values_policy: avg
-      collision_policy: Overwrite
-    - name: load average 15 min
-      type: prometheus
-      refresh: 15
-      source: 'http://localhost:9090/api/v1/query_range?query=node_load15'
-      color: "0xee98fb"
-      alpha: 0.3
-      missing_values_policy: avg
-      collision_policy: Overwrite
-    - name: prometheus alerts
-      type: prometheus
-      refresh: 15
-      source: 'http://localhost:9090/api/v1/query_range?query=ALERTS'
-      color: "0xff0000"
-      collision_policy: Overwrite
-      missing_values_policy: zero  # The ALERT type queries tend to disappear, so making them zero by default
-      alpha: 0.0                   # This is meant only for alerting, so it will be set to transparent
-  - name: cpu
-    position:
-      x: 1140
-    series:
-    - name: cpu
-      type: prometheus
-      refresh: 15
-      # This actually returns many CPUs, XXX: split into lines
-      source: 'http://localhost:9090/api/v1/query_range?query=100 - (avg by (instance) (irate(node_cpu_seconds_total{job="node_exporter",mode="idle"}[5m])) * 100)'
-      color: "0xc8b900"
-      alpha: 1.0
-  - name: prom status
-    position:
-      x: 1340
-    series:
-    - name: prometheus_up
-      type: prometheus
-      refresh: 15
-      source: 'http://localhost:9090/api/v1/query?query=up'
-      labels:
-        job: node_exporter
-      color: "0xc8b900"
-      alpha: 1.0
-  - name: memory
-    position:
-      x: 1250
-    series:
-    - name: memory used
-      type: prometheus
-      refresh: 15
-      source: 'http://localhost:9090/api/v1/query_range?query=node_memory_Active_bytes'
-      color: "0xcf6679"
-      alpha: 1.0
-      missing_values_policy: avg
-      collision_policy: Overwrite
-    - name: memory total
-      type: prometheus
-      refresh: 15
-      source: 'http://localhost:9090/api/v1/query_range?query=node_memory_MemTotal_bytes'
-      color: "0xe1f5fe"
-      alpha: 1.0
-      missing_values_policy: avg
-      collision_policy: Overwrite
+    - name: async loaded items
+      series:
+        - name: Number of input items for TimeSeries
+          type: async_items_loaded
+          refresh: 1
+          color: "0x9c27b0"
+          alpha: 1.0
+    - name: output newlines
+      series:
+        - name: output
+          type: alacritty_output
+          color: "0x00ff00"
+          alpha: 1.0
+          missing_values_policy: last
+          collision_policy: Increment
+    - name: input newlines
+      series:
+        - name: input
+          type: alacritty_input
+          color: "0xff0000"
+          alpha: 1.0
+          missing_values_policy: last
+          collision_policy: Increment
+    - name: load
+      decorations:
+        - type: reference
+          value: 16.0
+          color: "0x03dac6"
+          alpha: 0.3
+          height_multiplier: 0.05
+        - type: alert
+          target: prometheus alerts # ties to below series of the same name
+          threshold: 0
+          comparator: '>'
+          color: "0xff0000"
+      series:
+        - name: load average 1 min
+          type: prometheus
+          refresh: 15
+          source: 'http://localhost:9090/api/v1/query_range?query=node_load1'
+          color: "0xbb86cf"
+          alpha: 0.9
+          missing_values_policy: avg
+          collision_policy: Overwrite
+          metrics_capacity: 30
+        - name: load average 5 min
+          type: prometheus
+          refresh: 15
+          source: 'http://localhost:9090/api/v1/query_range?query=node_load5'
+          color: "0xba68c8"
+          alpha: 0.6
+          missing_values_policy: avg
+          collision_policy: Overwrite
+          metrics_capacity: 30
+        - name: load average 15 min
+          type: prometheus
+          refresh: 15
+          source: 'http://localhost:9090/api/v1/query_range?query=node_load15'
+          color: "0xee98fb"
+          alpha: 0.3
+          missing_values_policy: avg
+          collision_policy: Overwrite
+          metrics_capacity: 30
+        - name: prometheus alerts
+          type: prometheus
+          refresh: 15
+          source: 'http://localhost:9090/api/v1/query_range?query=ALERTS'
+          color: "0xff0000"
+          collision_policy: Overwrite
+          missing_values_policy: zero  # The ALERT type queries tend to disappear, so making them zero by default
+          alpha: 0.0                   # This is meant only for alerting, so it will be set to transparent
+    - name: memory
+      series:
+        - name: memory used
+          type: prometheus
+          refresh: 15
+          source: 'http://localhost:9090/api/v1/query_range?query=node_memory_Active_bytes'
+          color: "0xcf6679"
+          alpha: 1.0
+          missing_values_policy: avg
+          collision_policy: Overwrite
+          metrics_capacity: 30
+        - name: memory total
+          type: prometheus
+          refresh: 15
+          source: 'http://localhost:9090/api/v1/query_range?query=node_memory_MemTotal_bytes'
+          color: "0xe1f5fe"
+          alpha: 1.0
+          missing_values_policy: avg
+          collision_policy: Overwrite
+          metrics_capacity: 30
+decorations:
+  decorators:
+    - type: Triangles
+      props:
+        type: Hexagon
+        props:
+          vertex_color: "0x1958a7"
+          center_color: "0x000000"
+          alpha: 0.05
+          radius: 100
+    - type: Triangles
+      props:
+        type: Nannou
+        props:
+          color: "0x1958a7"
+          alpha: 0.2
+          radius: 100 # This needs to be the same as the above radius or the hexs won't match
+#    - type: Points
+#      props:
+#        type: Hexagon
+#        props:
+#          animated: true
+#          color: "0x1958a7"
+#          alpha: 0.4
+#          radius: 100
+#          update_interval: 15
+#    - type: Lines
+#      props:
+#        type: Hexagon
+#        props:
+#          color: "0x1958a7"
+#          alpha: 0.3
+#          radius: 100
+#debug:
+#  print_events: true
