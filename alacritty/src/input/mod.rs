@@ -324,7 +324,10 @@ impl<T: EventListener> Execute<T> for Action {
             #[cfg(not(target_os = "macos"))]
             Action::Hide => ctx.window().set_visible(false),
             Action::Minimize => ctx.window().set_minimized(true),
-            Action::Quit => ctx.terminal_mut().exit(),
+            Action::Quit => {
+                ctx.window().hold = false;
+                ctx.terminal_mut().exit();
+            },
             Action::IncreaseFontSize => ctx.change_font_size(FONT_SIZE_STEP),
             Action::DecreaseFontSize => ctx.change_font_size(-FONT_SIZE_STEP),
             Action::ResetFontSize => ctx.reset_font_size(),
@@ -638,6 +641,7 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
     /// Handle left click selection and vi mode cursor movement.
     fn on_left_click(&mut self, point: Point) {
         let side = self.ctx.mouse().cell_side;
+        let control = self.ctx.modifiers().state().control_key();
 
         match self.ctx.mouse().click_state {
             ClickState::Click => {
@@ -647,21 +651,21 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
                 self.ctx.clear_selection();
 
                 // Start new empty selection.
-                if self.ctx.modifiers().state().control_key() {
+                if control {
                     self.ctx.start_selection(SelectionType::Block, point, side);
                 } else {
                     self.ctx.start_selection(SelectionType::Simple, point, side);
                 }
             },
-            ClickState::DoubleClick => {
+            ClickState::DoubleClick if !control => {
                 self.ctx.mouse_mut().block_hint_launcher = true;
                 self.ctx.start_selection(SelectionType::Semantic, point, side);
             },
-            ClickState::TripleClick => {
+            ClickState::TripleClick if !control => {
                 self.ctx.mouse_mut().block_hint_launcher = true;
                 self.ctx.start_selection(SelectionType::Lines, point, side);
             },
-            ClickState::None => (),
+            _ => (),
         };
 
         // Move vi mode cursor to mouse click position.

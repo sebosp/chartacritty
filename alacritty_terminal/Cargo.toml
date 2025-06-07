@@ -1,9 +1,10 @@
 [package]
 name = "alacritty_terminal"
-version = "0.24.2-dev"
+version = "0.25.1-dev"
 authors = [
     "Christian Duerr <contact@christianduerr.com>",
     "Joe Wilm <joe@jwilm.com>",
+    "Seb Ospina <kraige@gmail.com>",
 ]
 license = "Apache-2.0"
 description = "Library for writing terminal emulators"
@@ -18,16 +19,19 @@ default = ["serde"]
 serde = ["dep:serde", "bitflags/serde", "vte/serde"]
 
 [dependencies]
-base64 = "0.22.1"
-bitflags = "2.6.0"
-home = "0.5.11"
-libc = "0.2.169"
-log = "0.4.22"
-parking_lot = "0.12.3"
-polling = "3.7.4"
-regex-automata = "0.4.9"
-unicode-width = "0.2.0"
-vte = { version = "0.13.0", default-features = false, features = ["ansi"] }
+base64 = "0.22.0"
+bitflags = "2.4.1"
+home = "0.5.5"
+libc = "0.2"
+log = "0.4"
+parking_lot = "0.12.0"
+polling = "3.0.0"
+regex-automata = "0.4.3"
+unicode-width = "0.1"
+vte = { version = "0.15.0", default-features = false, features = [
+    "std",
+    "ansi",
+] }
 serde = { version = "1", features = ["derive", "rc"], optional = true }
 reqwest = { version = "0.12", features = ["json"] }
 tokio = { version = "1", features = ["full"] }
@@ -41,8 +45,9 @@ env_logger = "0.11"
 tracing = { version = "0.1", features = ["log", "log-always"] }
 tracing-log = { version = "0.2" }
 percent-encoding = "2.3"
-rand = "0.8.5"
+rand = "0.9.0"
 lyon = { version = "1.0", features = ["serialization"] }
+nannou = { version = "0.19.0", path = "../../sebosp_nannou/nannou" }
 chrono = { version = "0.4.39", features = ["serde"] }
 moon-phase = "0.1.0"
 noise = "0.9.0"

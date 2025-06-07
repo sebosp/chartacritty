@@ -1,22 +1,24 @@
 //! Decorations for the Alacritty Terminal.
 //!
+pub use self::nannou::NannouDecoration;
+pub use self::nannou::NannouDrawArrayMode;
 use crate::term::SizeInfo;
 pub use hexagon_line_background::HexagonLineBackground;
 pub use hexagon_point_background::HexagonPointBackground;
 pub use hexagon_triangle_background::HexagonTriangleBackground;
 use log::*;
-use lyon::math::point;
-pub use lyon_decor::LyonDecoration;
 pub use polar_clock::PolarClockState;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
+use ::nannou::geom::point::pt3;
+use ::nannou::prelude::Point3;
 
 pub mod hexagon_line_background;
 pub mod hexagon_point_background;
 pub mod hexagon_triangle_background;
-pub mod lyon_decor;
-pub mod moon_phase;
+pub mod nannou;
 pub mod polar_clock;
+pub mod moon_phase;
 
 // TODO: Use const init that calculates these magic numbers at compile time
 pub const COS_60: f32 = 0.49999997f32;
@@ -204,7 +206,7 @@ impl DecorationPoints {
 #[serde(tag = "type", content = "props")]
 pub enum DecorationTriangles {
     Hexagon(Box<HexagonTriangleBackground>),
-    Lyon(Box<LyonDecoration>),
+    Nannou(Box<NannouDecoration>),
 }
 
 impl DecorationTriangles {
@@ -214,8 +216,8 @@ impl DecorationTriangles {
             DecorationTriangles::Hexagon(ref mut hex_triangles) => {
                 hex_triangles.set_size_info(size_info);
             },
-            DecorationTriangles::Lyon(ref mut lyon_triangles) => {
-                lyon_triangles.set_size_info(size_info);
+            DecorationTriangles::Nannou(ref mut nannou_triangles) => {
+                nannou_triangles.set_size_info(size_info);
             },
         }
     }
@@ -224,9 +226,9 @@ impl DecorationTriangles {
         match self {
             DecorationTriangles::Hexagon(ref mut hex_triangles) => {
                 hex_triangles.tick(time);
-            },
-            DecorationTriangles::Lyon(ref mut lyon_decor) => {
-                lyon_decor.tick(time);
+            }
+            DecorationTriangles::Nannou(ref mut nannou) => {
+                nannou.tick(time);
             },
         }
     }
@@ -268,7 +270,7 @@ pub fn gen_2d_hexagon_vertices(size_info: SizeInfo, x: f32, y: f32, radius: f32)
 }
 
 /// Creates a vector with x,y,z coordinates in which new hexagons can be drawn
-fn gen_hex_grid_positions(size: SizeInfo, radius: f32) -> Vec<lyon::math::Point> {
+fn gen_hex_grid_positions(size: SizeInfo, radius: f32) -> Vec<Point3> {
     // We only care for the 60 degrees X,Y,Z, the rest we can calculate from this distance.
     // For the degrees at 0, X is the radius, and Y is 0.
     // let angle = 60.0f32; // Hexagon degrees
@@ -286,7 +288,7 @@ fn gen_hex_grid_positions(size: SizeInfo, radius: f32) -> Vec<lyon::math::Point>
         let current_y_position = 0f32;
         let mut temp_y = current_y_position;
         while temp_y <= (size.height + y_offset) {
-            res.push(point(
+            res.push(pt3(
                 current_x_position,
                 // shift the y position in alternate fashion that the positions look like:
                 // x   x   x   x
@@ -295,6 +297,7 @@ fn gen_hex_grid_positions(size: SizeInfo, radius: f32) -> Vec<lyon::math::Point>
                     true => temp_y + y_offset,
                     false => temp_y,
                 },
+                0.0f32,
             ));
             temp_y += y_offset * 2f32;
         }
@@ -309,11 +312,7 @@ fn gen_hex_grid_positions(size: SizeInfo, radius: f32) -> Vec<lyon::math::Point>
 /// There is a background of hexagons, a sort of grid, this function finds the center-most in the
 /// array of hexagons, they are organized top to bottom, then interleaved a bit to avoid vertex
 /// overlapping.
-fn find_hexagon_grid_center_idx(
-    coords: &[lyon::math::Point],
-    size_info: SizeInfo,
-    radius: f32,
-) -> usize {
+fn find_hexagon_grid_center_idx(coords: &[Point3], size_info: SizeInfo, radius: f32) -> usize {
     // We need to find the center hexagon.
     let hex_height = SIN_60 * radius * 2.;
     // We'll draw half a hexagon more than needed so that we can interleave them while having the
@@ -332,7 +331,7 @@ fn find_hexagon_grid_center_idx(
         // the odd/even column
         center_idx = (center_idx - 1) % coords.len();
     }
-    // tracing::info!("LyonDecoration::update_opengl_vecs(size_info) size_info.height: {}, total_height: {total_height}, hex_height: {hex_height}, y_hex_n: {y_hex_n}, x_hex_n: {x_hex_n}, coords.len(): {}, center_idx: {center_idx}, coords: {coords:?}", size_info.height, coords.len());
+    // tracing::info!("NannouDecoration::update_opengl_vecs(size_info) size_info.height: {}, total_height: {total_height}, hex_height: {hex_height}, y_hex_n: {y_hex_n}, x_hex_n: {x_hex_n}, coords.len(): {}, center_idx: {center_idx}, coords: {coords:?}", size_info.height, coords.len());
     // ((x_hex_n as f32 / 2.).floor() * y_hex_n as f32 + (y_hex_n as f32 / 2.).floor()) as usize
     center_idx
 }

@@ -8,7 +8,23 @@ sections should follow the order `Added`, `Changed`, `Deprecated`, `Fixed` and
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## 0.24.2-dev
+## 0.25.1-dev
+
+### Changed
+
+- Pass `-q` to `login` on macOS if `~/.hushlogin` is present
+
+## 0.25.0
+
+### Changed
+
+- Replaced `Options::hold` with `Options::drain_on_exit`
+
+## 0.24.2
+
+### Added
+
+- Escape sequence to move cursor forward tabs ( CSI Ps I )
 
 ## 0.24.1
 
