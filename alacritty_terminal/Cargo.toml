@@ -55,7 +55,7 @@ palette = { version = "0.7.6", features = ["serializing", "named"] }
 bytes = "1.9"
 
 [target.'cfg(unix)'.dependencies]
-rustix-openpty = "0.1.1"
+rustix-openpty = "0.2.0"
 signal-hook = "0.3.17"
 
 [target.'cfg(windows)'.dependencies]
