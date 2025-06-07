@@ -479,7 +479,8 @@ mod tests {
             .unwrap()
             .and_hms_milli_opt(12, 34, 56, 789)
             .unwrap();
-        let dt = DateTime::<Local>::from_local(naivedatetime_west, timezone_west);
+        // Need to use NaiveDateTime::and_local_timezone instead:
+        let dt = DateTime::<Local>::from_naive_utc_and_offset(naivedatetime_west, timezone_west);
         assert_eq!(seconds_with_millis.get_time_unit_value(&dt), 56_789);
         let day_of_year = PolarClockUnit::DayOfYear;
         assert_eq!(day_of_year.get_time_unit_value(&dt), 11);
