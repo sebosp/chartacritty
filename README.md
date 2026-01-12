@@ -1,8 +1,8 @@
 # Chartacritty = Alacritty plus charts and other useless decorations
 
 Last updated to:
-- Alacritty Terminal v0.25.1-dev
-- Alacritty (base) 0.16.0-dev
+- Alacritty Terminal v0.25.1
+- Alacritty (base) 0.16.1
 
 ![Chartacritty moon phase decoration, light beam decoration, polar clock decoration, hexagon background decorations and christmas spirit with snow!](https://user-images.githubusercontent.com/873436/208736841-340e92cf-c14a-4ac8-b901-253d714421d6.gif)
 ![Chartacritty prometheus metrics enabled!](https://user-images.githubusercontent.com/873436/205136141-90adcb8a-cdce-4e03-aa72-d7761041424c.png)
