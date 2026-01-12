@@ -28,7 +28,7 @@
 use super::super::charts::deserialize_rgb_from_str;
 use crate::charts::{ChartSizeInfo, TimeSeriesSource, TimeSeriesStats, Value2D};
 use serde::{Deserialize, Serialize};
-use tracing::{event, span, Level};
+use tracing::{Level, event, span};
 use vte::ansi::Rgb;
 
 /// `Decoration` contains several types of decorations to add to a chart
@@ -49,8 +49,8 @@ impl Decoration {
     /// Calls the internal methods to get the top_value
     pub fn init(&mut self, display_size: ChartSizeInfo) {
         match self {
-            Decoration::Reference(ref mut d) => d.init(display_size),
-            Decoration::Alert(ref mut d) => d.init(display_size),
+            Decoration::Reference(d) => d.init(display_size),
+            Decoration::Alert(d) => d.init(display_size),
             Decoration::None => (),
         };
     }
@@ -63,12 +63,8 @@ impl Decoration {
         sources: &[TimeSeriesSource],
     ) {
         match self {
-            Decoration::Reference(ref mut d) => {
-                d.update_opengl_vecs(display_size, offset, stats, sources)
-            },
-            Decoration::Alert(ref mut d) => {
-                d.update_opengl_vecs(display_size, offset, stats, sources)
-            },
+            Decoration::Reference(d) => d.update_opengl_vecs(display_size, offset, stats, sources),
+            Decoration::Alert(d) => d.update_opengl_vecs(display_size, offset, stats, sources),
             Decoration::None => (),
         };
     }

@@ -4,13 +4,13 @@ use std::num::NonZeroU32;
 
 use glutin::config::{ColorBufferType, Config, ConfigTemplateBuilder, GetGlConfig};
 use glutin::context::{
-    ContextApi, ContextAttributesBuilder, GlProfile, NotCurrentContext, Robustness, Version,
+    ContextApi, ContextAttributesBuilder, GlProfile, NotCurrentContext, Version,
 };
-use glutin::display::{Display, DisplayApiPreference, DisplayFeatures, GetGlDisplay};
+use glutin::display::{Display, DisplayApiPreference, GetGlDisplay};
 use glutin::error::Result as GlutinResult;
 use glutin::prelude::*;
 use glutin::surface::{Surface, SurfaceAttributesBuilder, WindowSurface};
-use log::{debug, LevelFilter};
+use log::{LevelFilter, debug};
 
 use winit::dpi::PhysicalSize;
 #[cfg(all(feature = "x11", not(any(target_os = "macos", windows))))]
@@ -110,12 +110,7 @@ pub fn create_gl_context(
     raw_window_handle: Option<RawWindowHandle>,
 ) -> GlutinResult<NotCurrentContext> {
     let debug = log::max_level() >= LevelFilter::Debug;
-    let mut builder = ContextAttributesBuilder::new().with_debug(debug);
-
-    // Try to enable robustness.
-    if gl_display.supported_features().contains(DisplayFeatures::CONTEXT_ROBUSTNESS) {
-        builder = builder.with_robustness(Robustness::RobustLoseContextOnReset);
-    }
+    let builder = ContextAttributesBuilder::new().with_debug(debug);
 
     let mut profiles = [
         builder
