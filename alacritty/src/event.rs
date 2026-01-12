@@ -1699,8 +1699,9 @@ impl<'a, N: Notify + 'a, T: EventListener> ActionContext<'a, N, T> {
 }
 
 /// Identified purpose of the touch input.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub enum TouchPurpose {
+    #[default]
     None,
     Select(TouchEvent),
     Scroll(TouchEvent),
@@ -1708,12 +1709,6 @@ pub enum TouchPurpose {
     ZoomPendingSlot(TouchEvent),
     Tap(TouchEvent),
     Invalid(HashSet<u64, RandomState>),
-}
-
-impl Default for TouchPurpose {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 /// Touch zooming state.

@@ -3,8 +3,8 @@ use std::mem;
 use crate::display::SizeInfo;
 use crate::gl;
 use crate::gl::types::*;
+use crate::renderer;
 use crate::renderer::shader::{ShaderError, ShaderProgram, ShaderVersion};
-use crate::renderer::{self, cstr};
 
 static HXBG_SHADER_F: &str = include_str!("../../res/hex_bg.f.glsl");
 static HXBG_SHADER_V: &str = include_str!("../../res/hex_bg.v.glsl");
@@ -186,9 +186,9 @@ impl HexagonShaderProgram {
         let program = ShaderProgram::new(shader_version, header, HXBG_SHADER_V, HXBG_SHADER_F)?;
 
         Ok(HexagonShaderProgram {
-            u_active_x_shine_offset: program.get_uniform_location(cstr!("activeXShineOffset")).ok(),
-            u_resolution: program.get_uniform_location(cstr!("iResolution")).ok(),
-            u_time: program.get_uniform_location(cstr!("iTime")).ok(),
+            u_active_x_shine_offset: program.get_uniform_location(c"activeXShineOffset").ok(),
+            u_resolution: program.get_uniform_location(c"iResolution").ok(),
+            u_time: program.get_uniform_location(c"iTime").ok(),
             program,
         })
     }
