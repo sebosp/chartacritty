@@ -1,31 +1,26 @@
 //! Nannou-based decorations for Alacritty
 
-use crate::charts::deserialize_rgb_from_str;
 use super::PolarClockState;
-use vte::ansi::Rgb;
+use super::moon_phase::MoonPhaseState;
+use crate::charts::deserialize_rgb_from_str;
 use crate::term::SizeInfo;
 use chrono::prelude::*;
-use nannou::lyon::tessellation::{FillTessellator, StrokeTessellator};
 use nannou::draw;
+pub use nannou::draw::State;
 pub use nannou::draw::primitive::Primitive;
 use nannou::draw::renderer::{GlyphCache, RenderPrimitive};
-pub use nannou::draw::State;
 use nannou::glam::Vec2;
+use nannou::lyon::tessellation::{FillTessellator, StrokeTessellator};
 use serde::{Deserialize, Serialize};
-use super::moon_phase::MoonPhaseState;
+use vte::ansi::Rgb;
 
-#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, PartialEq, Eq, Clone, Serialize, Deserialize)]
 pub enum NannouDrawArrayMode {
     Points,
+    #[default]
     LineStrip,
     LineLoop,
     GlTriangles,
-}
-
-impl Default for NannouDrawArrayMode {
-    fn default() -> Self {
-        Self::LineStrip
-    }
 }
 
 impl From<nannou::draw::primitive::Primitive> for NannouDrawArrayMode {
@@ -182,8 +177,7 @@ impl NannouDecoration {
                     let ctxt = draw::renderer::RenderContext {
                         intermediary_mesh: intermediary_state.intermediary_mesh(),
                         path_event_buffer: intermediary_state.path_event_buffer(),
-                        path_points_colored_buffer: intermediary_state
-                            .path_points_colored_buffer(),
+                        path_points_colored_buffer: intermediary_state.path_points_colored_buffer(),
                         path_points_textured_buffer: intermediary_state
                             .path_points_textured_buffer(),
                         text_buffer: intermediary_state.text_buffer(),

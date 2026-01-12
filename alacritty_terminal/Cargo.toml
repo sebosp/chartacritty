@@ -1,6 +1,6 @@
 [package]
 name = "alacritty_terminal"
-version = "0.25.1-dev"
+version = "0.25.1"
 authors = [
     "Christian Duerr <contact@christianduerr.com>",
     "Joe Wilm <joe@jwilm.com>",
@@ -11,8 +11,8 @@ description = "Library for writing terminal emulators"
 readme = "../README.md"
 homepage = "https://github.com/sebosp/alacritty"
 repository = "https://github.com/sebosp/chartacritty"
-edition = "2021"
-rust-version = "1.74.0"
+edition.workspace = true
+rust-version.workspace = true
 
 [features]
 default = ["serde"]
@@ -25,9 +25,9 @@ home = "0.5.5"
 libc = "0.2"
 log = "0.4"
 parking_lot = "0.12.0"
-polling = "3.0.0"
+polling = "3.8.0"
 regex-automata = "0.4.3"
-unicode-width = "0.1"
+unicode-width = "0.2.0"
 vte = { version = "0.15.0", default-features = false, features = [
     "std",
     "ansi",
@@ -56,7 +56,8 @@ bytes = "1.9"
 
 [target.'cfg(unix)'.dependencies]
 rustix-openpty = "0.2.0"
-signal-hook = "0.3.17"
+rustix = { version = "1.0.0", default-features = false, features = ["std"] }
+signal-hook = "0.3.10"
 
 [target.'cfg(windows)'.dependencies]
 piper = "0.2.4"

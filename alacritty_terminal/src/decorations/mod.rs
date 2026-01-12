@@ -3,6 +3,8 @@
 pub use self::nannou::NannouDecoration;
 pub use self::nannou::NannouDrawArrayMode;
 use crate::term::SizeInfo;
+use ::nannou::geom::point::pt3;
+use ::nannou::prelude::Point3;
 pub use hexagon_line_background::HexagonLineBackground;
 pub use hexagon_point_background::HexagonPointBackground;
 pub use hexagon_triangle_background::HexagonTriangleBackground;
@@ -10,15 +12,13 @@ use log::*;
 pub use polar_clock::PolarClockState;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
-use ::nannou::geom::point::pt3;
-use ::nannou::prelude::Point3;
 
 pub mod hexagon_line_background;
 pub mod hexagon_point_background;
 pub mod hexagon_triangle_background;
+pub mod moon_phase;
 pub mod nannou;
 pub mod polar_clock;
-pub mod moon_phase;
 
 // TODO: Use const init that calculates these magic numbers at compile time
 pub const COS_60: f32 = 0.49999997f32;
@@ -115,13 +115,13 @@ impl DecorationTypes {
     pub fn set_size_info(&mut self, size_info: SizeInfo) {
         debug!("Updating Triangle decorations");
         match self {
-            DecorationTypes::Triangles(ref mut hexagon_triangles) => {
+            DecorationTypes::Triangles(hexagon_triangles) => {
                 hexagon_triangles.set_size_info(size_info);
             },
-            DecorationTypes::Points(ref mut hexagon_points) => {
+            DecorationTypes::Points(hexagon_points) => {
                 hexagon_points.set_size_info(size_info);
             },
-            DecorationTypes::Lines(ref mut hexagon_lines) => {
+            DecorationTypes::Lines(hexagon_lines) => {
                 hexagon_lines.set_size_info(size_info);
             },
             DecorationTypes::None => {
@@ -133,15 +133,15 @@ impl DecorationTypes {
     /// `tick` is called every time there is a draw request for the terminal
     pub fn tick(&mut self, time: f32) {
         match self {
-            DecorationTypes::Points(ref mut hexagon_points) => hexagon_points.tick(time),
-            DecorationTypes::Triangles(ref mut tris) => tris.tick(time),
+            DecorationTypes::Points(hexagon_points) => hexagon_points.tick(time),
+            DecorationTypes::Triangles(tris) => tris.tick(time),
             _ => {},
         }
     }
 
     /// `init_timers` will initialize times/epochs in the animation to some chosen defaults
     pub fn init_timers(&mut self, time: Instant) {
-        if let DecorationTypes::Points(ref mut hexagon_points) = self {
+        if let DecorationTypes::Points(hexagon_points) = self {
             hexagon_points.init_timers(time);
         }
     }
@@ -157,7 +157,7 @@ pub enum DecorationLines {
 impl DecorationLines {
     pub fn set_size_info(&mut self, size_info: SizeInfo) {
         match self {
-            DecorationLines::Hexagon(ref mut hex_lines) => {
+            DecorationLines::Hexagon(hex_lines) => {
                 hex_lines.size_info = size_info;
                 hex_lines.update_opengl_vecs();
             },
@@ -176,7 +176,7 @@ impl DecorationPoints {
     /// `init_timers` will initialize times/epochs in the animation to some chosen defaults
     pub fn init_timers(&mut self, time: Instant) {
         match self {
-            DecorationPoints::Hexagon(ref mut hex_points) => {
+            DecorationPoints::Hexagon(hex_points) => {
                 hex_points.init_timers(time);
             },
         }
@@ -184,7 +184,7 @@ impl DecorationPoints {
 
     pub fn set_size_info(&mut self, size_info: SizeInfo) {
         match self {
-            DecorationPoints::Hexagon(ref mut hex_points) => {
+            DecorationPoints::Hexagon(hex_points) => {
                 hex_points.size_info = size_info;
                 hex_points.update_opengl_vecs();
                 hex_points.choose_random_vertices();
@@ -194,7 +194,7 @@ impl DecorationPoints {
 
     pub fn tick(&mut self, time: f32) {
         match self {
-            DecorationPoints::Hexagon(ref mut hex_points) => {
+            DecorationPoints::Hexagon(hex_points) => {
                 hex_points.tick(time);
             },
         }
@@ -213,10 +213,10 @@ impl DecorationTriangles {
     // TODO: Maybe make it a trait?
     pub fn set_size_info(&mut self, size_info: SizeInfo) {
         match self {
-            DecorationTriangles::Hexagon(ref mut hex_triangles) => {
+            DecorationTriangles::Hexagon(hex_triangles) => {
                 hex_triangles.set_size_info(size_info);
             },
-            DecorationTriangles::Nannou(ref mut nannou_triangles) => {
+            DecorationTriangles::Nannou(nannou_triangles) => {
                 nannou_triangles.set_size_info(size_info);
             },
         }
@@ -224,10 +224,10 @@ impl DecorationTriangles {
 
     pub fn tick(&mut self, time: f32) {
         match self {
-            DecorationTriangles::Hexagon(ref mut hex_triangles) => {
+            DecorationTriangles::Hexagon(hex_triangles) => {
                 hex_triangles.tick(time);
-            }
-            DecorationTriangles::Nannou(ref mut nannou) => {
+            },
+            DecorationTriangles::Nannou(nannou) => {
                 nannou.tick(time);
             },
         }

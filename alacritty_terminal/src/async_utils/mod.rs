@@ -5,7 +5,7 @@
 //! channel that may contain new data, may request OpenGL data or increment
 //! internal counters.
 use crate::charts::config::Config;
-use crate::charts::{prometheus, ChartSizeInfo, ChartsConfig, TimeSeriesChart, TimeSeriesSource};
+use crate::charts::{ChartSizeInfo, ChartsConfig, TimeSeriesChart, TimeSeriesSource, prometheus};
 use crate::event::{Event, EventListener};
 use crate::term::SizeInfo;
 use log::*;
@@ -13,7 +13,7 @@ use std::thread;
 use std::time::{Duration, UNIX_EPOCH};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{self, interval_at};
-use tracing::{event, span, Level};
+use tracing::{Level, event, span};
 
 /// `MetricRequest` defines remote data sources that should be loaded regularly
 #[derive(Debug, Clone)]
@@ -53,20 +53,20 @@ pub fn increment_internal_counter(
         let mut chart_updated = false;
         for series in &mut chart.sources {
             if counter_type == "input" {
-                if let TimeSeriesSource::AlacrittyInput(ref mut input) = series {
+                if let TimeSeriesSource::AlacrittyInput(input) = series {
                     input.series.upsert((epoch, Some(value)));
                     chart_updated = true;
                 }
             }
             if counter_type == "output" {
-                if let TimeSeriesSource::AlacrittyOutput(ref mut output) = series {
+                if let TimeSeriesSource::AlacrittyOutput(output) = series {
                     output.series.upsert((epoch, Some(value)));
                     chart_updated = true;
                 }
             }
             // Update the loaded item counters
             if counter_type == "async_loaded_items" {
-                if let TimeSeriesSource::AsyncLoadedItems(ref mut items) = series {
+                if let TimeSeriesSource::AsyncLoadedItems(items) = series {
                     items.series.upsert((epoch, Some(value)));
                     chart_updated = true;
                 }
