@@ -2057,10 +2057,6 @@ impl input::Processor<EventProxy, ActionContext<'_, Notifier, EventProxy>> {
             | WinitEvent::MemoryWarning
             | WinitEvent::AboutToWait => (),
         }
-        // NOTE: Charts, shaders, etc need to be constantly redrawn in chartacritty.
-        // In Wayland, the backgrounds are frozen unless we press a key.
-        // Testing but this may be too expensive.
-        // self.ctx.display.pending_update.dirty = true;
     }
 }
 
