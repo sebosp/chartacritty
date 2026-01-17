@@ -814,14 +814,9 @@ impl Display {
                         ),
                     }
                 });
-                tokio_handle.block_on(async {
-                    match chart_resize_rx.await {
-                        Ok(_) => {
-                            debug!("Got response from ChangeDisplaySize Task.");
-                        },
-                        Err(err) => {
-                            error!("Error response from ChangeDisplaySize Task: {:?}", err);
-                        },
+                tokio_handle.spawn(async {
+                    if let Err(err) = chart_resize_rx.await {
+                        error!("Error response from ChangeDisplaySize Task: {:?}", err);
                     }
                 });
             }
@@ -1097,8 +1092,6 @@ impl Display {
 
         if decorations_enabled {
             self.draw_decorations(&size_info);
-        } else {
-            debug!("Decorations are not enabled");
         }
 
         // Draw the charts
@@ -1106,8 +1099,6 @@ impl Display {
             if let (Some(tokio_handle), Some(charts_tx)) = (tokio_handle, charts_tx) {
                 self.draw_charts(config, &size_info, charts_tx, tokio_handle);
             }
-        } else {
-            debug!("Charts are not enabled");
         }
 
         self.draw_render_timer(config);
