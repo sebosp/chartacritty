@@ -54,6 +54,7 @@ const ALLOWED_TARGETS: &[&str] = &[
     "alacritty_config_derive",
     "alacritty_terminal",
     "alacritty",
+    "chartacritty",
     "crossfont",
 ];
 
