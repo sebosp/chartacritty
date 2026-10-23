@@ -1,15 +1,22 @@
+#[cfg(target_os = "openbsd")]
+use std::ffi::CStr;
+#[cfg(not(windows))]
+use std::ffi::CString;
 use std::ffi::OsStr;
-#[cfg(not(any(target_os = "macos", windows)))]
+#[cfg(not(any(target_os = "macos", target_os = "openbsd", windows)))]
 use std::fs;
 use std::io;
+#[cfg(not(windows))]
+use std::os::unix::ffi::OsStringExt;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 use std::process::{Command, Stdio};
+#[cfg(target_os = "openbsd")]
+use std::ptr;
 
 #[rustfmt::skip]
 #[cfg(not(windows))]
 use {
-    std::env,
     std::error::Error,
     std::os::unix::process::CommandExt,
     std::os::unix::io::RawFd,
@@ -60,10 +67,28 @@ where
     let mut command = Command::new(program);
     command.args(args).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
 
-    let working_directory = foreground_process_path(master_fd, shell_pid).ok();
+    let working_directory = foreground_process_path(master_fd, shell_pid)
+        .ok()
+        .and_then(|path| CString::new(path.into_os_string().into_vec()).ok());
+
     unsafe {
         command
             .pre_exec(move || {
+                // POSIX.1-2017 describes `fork` as async-signal-safe with the following note:
+                //
+                // > While the fork() function is async-signal-safe, there is no way for
+                // > an implementation to determine whether the fork handlers established by
+                // > pthread_atfork() are async-signal-safe. [...] It is therefore undefined for the
+                // > fork handlers to execute functions that are not async-signal-safe when fork()
+                // > is called from a signal handler.
+                //
+                // POSIX.1-2024 removes this guarantee and introduces an async-signal-safe
+                // replacement `_Fork`, which we'd like to use, but macOS doesn't support it yet.
+                //
+                // Since we aren't registering any fork handlers, and hopefully the OS doesn't
+                // either, we're fine on systems compatible with POSIX.1-2017, which should be
+                // enough for a long while. If this ever becomes a problem in the future, we should
+                // be able to switch to `_Fork`.
                 match libc::fork() {
                     -1 => return Err(io::Error::last_os_error()),
                     0 => (),
@@ -72,7 +97,7 @@ where
 
                 // Copy foreground process' working directory, ignoring invalid paths.
                 if let Some(working_directory) = working_directory.as_ref() {
-                    let _ = env::set_current_dir(working_directory);
+                    libc::chdir(working_directory.as_ptr());
                 }
 
                 if libc::setsid() == -1 {
@@ -88,7 +113,7 @@ where
 }
 
 /// Get working directory of controlling process.
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "openbsd")))]
 pub fn foreground_process_path(
     master_fd: RawFd,
     shell_pid: u32,
@@ -110,4 +135,33 @@ pub fn foreground_process_path(
     let cwd = macos::proc::cwd(pid)?;
 
     Ok(cwd)
+}
+
+#[cfg(target_os = "openbsd")]
+pub fn foreground_process_path(
+    master_fd: RawFd,
+    shell_pid: u32,
+) -> Result<PathBuf, Box<dyn Error>> {
+    let mut pid = unsafe { libc::tcgetpgrp(master_fd) };
+    if pid < 0 {
+        pid = shell_pid as pid_t;
+    }
+    let name = [libc::CTL_KERN, libc::KERN_PROC_CWD, pid];
+    let mut buf = [0u8; libc::PATH_MAX as usize];
+    let result = unsafe {
+        libc::sysctl(
+            name.as_ptr(),
+            name.len().try_into().unwrap(),
+            buf.as_mut_ptr() as *mut _,
+            &mut buf.len() as *mut _,
+            ptr::null_mut(),
+            0,
+        )
+    };
+    if result != 0 {
+        Err(io::Error::last_os_error().into())
+    } else {
+        let foreground_path = unsafe { CStr::from_ptr(buf.as_ptr().cast()) }.to_str()?;
+        Ok(PathBuf::from(foreground_path))
+    }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "alacritty_terminal"
-version = "0.25.1"
+version = "0.26.0"
 authors = [
     "Christian Duerr <contact@christianduerr.com>",
     "Joe Wilm <joe@jwilm.com>",
@@ -57,7 +57,7 @@ bytes = "1.11"
 [target.'cfg(unix)'.dependencies]
 rustix-openpty = "0.2.0"
 rustix = { version = "1.0.0", default-features = false, features = ["std"] }
-signal-hook = "0.3.10"
+signal-hook = "0.4.3"
 
 [target.'cfg(windows)'.dependencies]
 piper = "0.2.4"

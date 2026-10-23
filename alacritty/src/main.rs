@@ -20,7 +20,7 @@ use std::{env, fs};
 
 use log::info;
 #[cfg(windows)]
-use windows_sys::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole, FreeConsole};
+use windows_sys::Win32::System::Console::{AttachConsole, FreeConsole, ATTACH_PARENT_PROCESS};
 use winit::event_loop::EventLoop;
 #[cfg(all(feature = "x11", not(any(target_os = "macos", windows))))]
 use winit::raw_window_handle::{HasDisplayHandle, RawDisplayHandle};
@@ -34,8 +34,6 @@ mod daemon;
 mod display;
 mod event;
 mod input;
-#[cfg(unix)]
-mod ipc;
 mod logging;
 #[cfg(target_os = "macos")]
 mod macos;
@@ -43,6 +41,8 @@ mod message_bar;
 mod migrate;
 #[cfg(windows)]
 mod panic;
+#[cfg(unix)]
+mod polling;
 mod renderer;
 mod scheduler;
 mod string;
@@ -58,11 +58,13 @@ use crate::cli::MessageOptions;
 #[cfg(not(any(target_os = "macos", windows)))]
 use crate::cli::SocketMessage;
 use crate::cli::{Options, Subcommands};
-use crate::config::UiConfig;
 use crate::config::monitor::ConfigMonitor;
+use crate::config::UiConfig;
 use crate::event::{Event, Processor};
 #[cfg(target_os = "macos")]
 use crate::macos::locale;
+#[cfg(unix)]
+use crate::polling::{ipc, IoListener};
 
 fn main() -> Result<(), Box<dyn Error>> {
     #[cfg(windows)]
@@ -114,7 +116,7 @@ impl Drop for TemporaryFiles {
     fn drop(&mut self) {
         // Clean up the IPC socket file.
         #[cfg(unix)]
-        if let Some(socket_path) = &self.socket_path {
+        if let Some(socket_path) = self.socket_path.as_deref() {
             let _ = fs::remove_file(socket_path);
         }
 
@@ -183,19 +185,15 @@ fn alacritty(mut options: Options) -> Result<(), Box<dyn Error>> {
     #[cfg(target_os = "macos")]
     macos::disable_autofill();
 
-    // Create the IPC socket listener.
+    // Spawn the Unix I/O event polling thread.
     #[cfg(unix)]
-    let socket_path = if config.ipc_socket() {
-        match ipc::spawn_ipc_socket(&options, window_event_loop.create_proxy()) {
-            Ok(path) => Some(path),
-            Err(err) if options.daemon => return Err(err.into()),
-            Err(err) => {
-                log::warn!("Unable to create socket: {err:?}");
-                None
-            },
-        }
-    } else {
-        None
+    let socket_path = match IoListener::spawn(&config, &options, window_event_loop.create_proxy()) {
+        Ok(handle) => handle.ipc_socket_path,
+        Err(err) if options.daemon => return Err(err.into()),
+        Err(err) => {
+            log::warn!("Unable to create socket: {err:?}");
+            None
+        },
     };
 
     // Setup automatic RAII cleanup for our files.
