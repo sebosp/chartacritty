@@ -34,17 +34,17 @@ pub struct Options {
     pub embed: Option<String>,
 
     /// Specify alternative configuration file [default:
-    /// $XDG_CONFIG_HOME/alacritty/alacritty.toml].
+    /// $XDG_CONFIG_HOME/chartacritty/chartacritty.yml].
     #[cfg(not(any(target_os = "macos", windows)))]
     #[clap(long, value_hint = ValueHint::FilePath)]
     pub config_file: Option<PathBuf>,
 
-    /// Specify alternative configuration file [default: %APPDATA%\alacritty\alacritty.toml].
+    /// Specify alternative configuration file [default: %APPDATA%\chartacritty\chartacritty.yml].
     #[cfg(windows)]
     #[clap(long, value_hint = ValueHint::FilePath)]
     pub config_file: Option<PathBuf>,
 
-    /// Specify alternative configuration file [default: $HOME/.config/alacritty/alacritty.toml].
+    /// Specify alternative configuration file [default: $HOME/.config/chartacritty/chartacritty.yml].
     #[cfg(target_os = "macos")]
     #[clap(long, value_hint = ValueHint::FilePath)]
     pub config_file: Option<PathBuf>,

@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::result::Result as StdResult;
 use std::{env, fs, io};
 
-use log::{debug, error, info, warn};
+use log::{debug, error, info};
 use serde::Deserialize;
 use serde_yaml::Error as YamlError;
 use toml::de::Error as TomlError;
@@ -125,8 +125,8 @@ pub fn load(options: &mut Options) -> UiConfig {
     let config_path = options
         .config_file
         .clone()
-        .or_else(|| installed_config("toml"))
-        .or_else(|| installed_config("yml"));
+        .or_else(|| installed_config("yml"))
+        .or_else(|| installed_config("toml"));
 
     // Load the config using the following fallback behavior:
     //  - Config path + CLI overrides
@@ -222,9 +222,8 @@ pub fn deserialize_config(path: &Path, warn_pruned: bool) -> Result<Value> {
     // Convert YAML to TOML as a transitionary fallback mechanism.
     let extension = path.extension().unwrap_or_default();
     if (extension == "yaml" || extension == "yml") && !contents.trim().is_empty() {
-        warn!(
-            "YAML config {path:?} is deprecated, please migrate to TOML using `alacritty migrate`"
-        );
+        // Chartacritty keeps using YAML configs, so there is no need to warn about migrating.
+        debug!("Converting YAML config {path:?} to TOML");
 
         let mut value: serde_yaml::Value = serde_yaml::from_str(&contents)?;
         prune_yaml_nulls(&mut value, warn_pruned);
@@ -367,27 +366,27 @@ fn prune_yaml_nulls(value: &mut serde_yaml::Value, warn_pruned: bool) {
 /// Get the location of the first found default config file paths
 /// according to the following order:
 ///
-/// 1. $XDG_CONFIG_HOME/alacritty/alacritty.toml
-/// 2. $XDG_CONFIG_HOME/alacritty.toml
-/// 3. $HOME/.config/alacritty/alacritty.toml
-/// 4. $HOME/.alacritty.toml
-/// 5. /etc/alacritty/alacritty.toml
+/// 1. $XDG_CONFIG_HOME/chartacritty/chartacritty.yml
+/// 2. $XDG_CONFIG_HOME/chartacritty.yml
+/// 3. $HOME/.config/chartacritty/chartacritty.yml
+/// 4. $HOME/.chartacritty.yml
+/// 5. /etc/chartacritty/chartacritty.yml
 #[cfg(not(windows))]
 pub fn installed_config(suffix: &str) -> Option<PathBuf> {
-    let file_name = format!("alacritty.{suffix}");
+    let file_name = format!("chartacritty.{suffix}");
 
     // Try using XDG location by default.
-    xdg::BaseDirectories::with_prefix("alacritty")
+    xdg::BaseDirectories::with_prefix("chartacritty")
         .find_config_file(&file_name)
         .or_else(|| xdg::BaseDirectories::new().find_config_file(&file_name))
         .or_else(|| {
             if let Ok(home) = env::var("HOME") {
-                // Fallback path: $HOME/.config/alacritty/alacritty.toml.
-                let fallback = PathBuf::from(&home).join(".config/alacritty").join(&file_name);
+                // Fallback path: $HOME/.config/chartacritty/chartacritty.yml.
+                let fallback = PathBuf::from(&home).join(".config/chartacritty").join(&file_name);
                 if fallback.exists() {
                     return Some(fallback);
                 }
-                // Fallback path: $HOME/.alacritty.toml.
+                // Fallback path: $HOME/.chartacritty.yml.
                 let hidden_name = format!(".{file_name}");
                 let fallback = PathBuf::from(&home).join(hidden_name);
                 if fallback.exists() {
@@ -395,15 +394,17 @@ pub fn installed_config(suffix: &str) -> Option<PathBuf> {
                 }
             }
 
-            let fallback = PathBuf::from("/etc/alacritty").join(&file_name);
+            let fallback = PathBuf::from("/etc/chartacritty").join(&file_name);
             fallback.exists().then_some(fallback)
         })
 }
 
 #[cfg(windows)]
 pub fn installed_config(suffix: &str) -> Option<PathBuf> {
-    let file_name = format!("alacritty.{suffix}");
-    dirs::config_dir().map(|path| path.join("alacritty").join(file_name)).filter(|new| new.exists())
+    let file_name = format!("chartacritty.{suffix}");
+    dirs::config_dir()
+        .map(|path| path.join("chartacritty").join(file_name))
+        .filter(|new| new.exists())
 }
 
 #[cfg(test)]
