@@ -22,14 +22,18 @@ use crate::display::content::RenderableCell;
 use crate::gl;
 use crate::renderer::charts::ChartRenderer;
 use crate::renderer::hex_bg::HexBgRenderer;
+use crate::renderer::nannou::NannouRenderer;
 use crate::renderer::rects::{RectRenderer, RenderRect};
 use crate::renderer::shader::ShaderError;
+use crate::renderer::smoke::SmokeRenderer;
 
 pub mod charts;
 pub mod hex_bg;
+pub mod nannou;
 pub mod platform;
 pub mod rects;
 mod shader;
+pub mod smoke;
 mod text;
 
 pub use text::{GlyphCache, LoaderApi};
@@ -128,6 +132,8 @@ pub struct Renderer {
     rect_renderer: RectRenderer,
     chart_renderer: ChartRenderer,
     hex_bg_renderer: HexBgRenderer,
+    nannou_renderer: NannouRenderer,
+    smoke_renderer: SmokeRenderer,
     robustness: bool,
 }
 
@@ -189,19 +195,44 @@ impl Renderer {
             None => (shader_version.as_ref() >= "3.3" && !is_gles_context, true),
         };
 
-        let (text_renderer, rect_renderer, chart_renderer, hex_bg_renderer) = if use_glsl3 {
+        let (
+            text_renderer,
+            rect_renderer,
+            chart_renderer,
+            hex_bg_renderer,
+            nannou_renderer,
+            smoke_renderer,
+        ) = if use_glsl3 {
             let text_renderer = TextRendererProvider::Glsl3(Glsl3Renderer::new()?);
             let rect_renderer = RectRenderer::new(ShaderVersion::Glsl3)?;
             let chart_renderer = ChartRenderer::new(ShaderVersion::Glsl3)?;
             let hex_bg_renderer = HexBgRenderer::new(ShaderVersion::Glsl3)?;
-            (text_renderer, rect_renderer, chart_renderer, hex_bg_renderer)
+            let nannou_renderer = NannouRenderer::new(ShaderVersion::Glsl3)?;
+            let smoke_renderer = SmokeRenderer::new(ShaderVersion::Glsl3)?;
+            (
+                text_renderer,
+                rect_renderer,
+                chart_renderer,
+                hex_bg_renderer,
+                nannou_renderer,
+                smoke_renderer,
+            )
         } else {
             let text_renderer =
                 TextRendererProvider::Gles2(Gles2Renderer::new(allow_dsb, is_gles_context)?);
             let rect_renderer = RectRenderer::new(ShaderVersion::Gles2)?;
             let chart_renderer = ChartRenderer::new(ShaderVersion::Gles2)?;
             let hex_bg_renderer = HexBgRenderer::new(ShaderVersion::Gles2)?;
-            (text_renderer, rect_renderer, chart_renderer, hex_bg_renderer)
+            let nannou_renderer = NannouRenderer::new(ShaderVersion::Gles2)?;
+            let smoke_renderer = SmokeRenderer::new(ShaderVersion::Gles2)?;
+            (
+                text_renderer,
+                rect_renderer,
+                chart_renderer,
+                hex_bg_renderer,
+                nannou_renderer,
+                smoke_renderer,
+            )
         };
 
         // Enable debug logging for OpenGL as well.
@@ -214,7 +245,15 @@ impl Renderer {
             }
         }
 
-        Ok(Self { text_renderer, rect_renderer, chart_renderer, hex_bg_renderer, robustness })
+        Ok(Self {
+            text_renderer,
+            rect_renderer,
+            chart_renderer,
+            hex_bg_renderer,
+            nannou_renderer,
+            smoke_renderer,
+            robustness,
+        })
     }
 
     pub fn draw_cells<I: Iterator<Item = RenderableCell>>(
@@ -368,6 +407,33 @@ impl Renderer {
         Self::prepare_rect_rendering_state(size_info);
 
         self.hex_bg_renderer.draw(opengl_data, mode.into(), size_info, time_secs_with_ms);
+
+        self.activate_regular_state(size_info);
+    }
+
+    /// Draws tessellated nannou primitives, xyzrgba triangle lists, with their own colors.
+    pub fn draw_nannou_vertices(&mut self, size_info: &SizeInfo, opengl_data: &[f32]) {
+        if opengl_data.is_empty() {
+            return;
+        }
+
+        Self::prepare_rect_rendering_state(size_info);
+
+        self.nannou_renderer.draw(opengl_data);
+
+        self.activate_regular_state(size_info);
+    }
+
+    /// Draws faint smoky beams of light, `vertices` is a triangle list of
+    /// `smoke::SMOKE_VERTEX_FLOATS` floats per vertex, animated at `time` seconds.
+    pub fn draw_smoke(&mut self, size_info: &SizeInfo, vertices: &[f32], time: f32) {
+        if vertices.is_empty() {
+            return;
+        }
+
+        Self::prepare_rect_rendering_state(size_info);
+
+        self.smoke_renderer.draw(vertices, time);
 
         self.activate_regular_state(size_info);
     }

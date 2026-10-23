@@ -45,7 +45,7 @@ use crate::config::window::Dimensions;
 use crate::config::window::StartupMode;
 use crate::display::bell::VisualBell;
 use crate::display::color::{List, Rgb};
-use crate::display::content::{RenderableContent, RenderableCursor};
+use crate::display::content::{RenderableCell, RenderableContent, RenderableCursor};
 use crate::display::cursor::IntoRects;
 use crate::display::damage::{DamageTracker, damage_y_to_viewport_y};
 use crate::display::hint::{HintMatch, HintState};
@@ -54,6 +54,7 @@ use crate::display::window::Window;
 use crate::event::{Event, EventType, Mouse, SearchState};
 use crate::message_bar::{MessageBuffer, MessageType};
 use crate::renderer::rects::{RenderLine, RenderLines, RenderRect};
+use crate::renderer::smoke::SMOKE_VERTEX_FLOATS;
 use crate::renderer::{self, GlyphCache, Renderer, platform};
 use crate::scheduler::{Scheduler, TimerId, Topic};
 use crate::string::{ShortenDirection, StrShortener};
@@ -61,6 +62,7 @@ use crate::string::{ShortenDirection, StrShortener};
 // Chartacritty:
 use alacritty_terminal::decorations::{
     DecorationLines, DecorationPoints, DecorationTriangles, DecorationTypes, DecorationsConfig,
+    grid_lines, repeated_text,
 };
 use alacritty_terminal::term::TermChartsHandle;
 
@@ -420,6 +422,10 @@ pub struct Display {
     glyph_cache: GlyphCache,
     meter: Meter,
     decorations: DecorationsConfig,
+    /// The star travelling along the grid lines.
+    grid_line_star: grid_lines::GridLineStar,
+    /// Analysis of the text repeated across the visible lines.
+    repeated_text: repeated_text::RepeatedText,
     tokio_setup: Option<TermChartsHandle>,
 }
 
@@ -569,6 +575,8 @@ impl Display {
             meter: Default::default(),
             ime: Default::default(),
             decorations,
+            grid_line_star: Default::default(),
+            repeated_text: Default::default(),
             tokio_setup: None,
         })
     }
@@ -925,11 +933,17 @@ impl Display {
         self.damage_tracker.damage_vi_cursor(vi_cursor_viewport_point);
         self.damage_tracker.damage_selection(selection_range, display_offset);
 
+        self.update_repeated_text(&grid_cells, decorations_enabled);
+
         // Make sure this window's OpenGL context is active.
         self.make_current();
 
         self.renderer.clear(background_color, config.window_opacity());
+
+        // Behind the text, so that it remains readable.
+        self.draw_pattern_smoke();
         let mut lines = RenderLines::new();
+        let mut line_cells = Vec::new();
 
         // Optimize loop hint comparator.
         let has_highlighted_hint =
@@ -947,8 +961,25 @@ impl Display {
             let highlighted_hint = &self.highlighted_hint;
             let vi_highlighted_hint = &self.vi_highlighted_hint;
             let damage_tracker = &mut self.damage_tracker;
+            let collect_line_cells = decorations_enabled && self.decorations.grid_lines.enabled;
+            let repeated_text = &self.repeated_text;
 
             let cells = grid_cells.into_iter().map(|mut cell| {
+                // Dim repeated text and highlight the parts of it that differ.
+                if let Some(emphasis) = repeated_text.get(cell.point.line, cell.point.column.0) {
+                    cell.fg = emphasize(cell.fg, cell.bg, emphasis);
+                }
+
+                // Collect the characters that may form grid lines, i.e. nvim indent guides.
+                if collect_line_cells && grid_lines::is_line_char(cell.character) {
+                    line_cells.push((
+                        cell.point.line,
+                        cell.point.column.0,
+                        cell.character,
+                        cell.fg.0,
+                    ));
+                }
+
                 // Underline hints hovered by mouse or vi mode cursor.
                 if has_highlighted_hint {
                     let point = term::viewport_to_point(display_offset, cell.point);
@@ -1103,6 +1134,7 @@ impl Display {
 
         if decorations_enabled {
             self.draw_decorations(&size_info);
+            self.draw_grid_lines(&size_info, &line_cells);
         } else {
             debug!("Decorations are not enabled");
         }
@@ -1209,6 +1241,93 @@ impl Display {
                 }
             }
         }
+    }
+
+    /// Analyzes the visible text for repetitions, see `repeated_text`.
+    fn update_repeated_text(&mut self, grid_cells: &[RenderableCell], decorations_enabled: bool) {
+        if !decorations_enabled || !self.decorations.repeated_text.enabled {
+            self.repeated_text.clear();
+            return;
+        }
+
+        let mut lines = vec![vec![' '; self.size_info.columns()]; self.size_info.screen_lines()];
+        for cell in grid_cells {
+            if let Some(c) =
+                lines.get_mut(cell.point.line).and_then(|line| line.get_mut(cell.point.column.0))
+            {
+                *c = cell.character;
+            }
+        }
+
+        // Lines are dimmed depending on the other lines, so a single new line of output can
+        // change how the whole screen looks.
+        if self.repeated_text.update(&lines) {
+            self.damage_tracker.frame().mark_fully_damaged();
+            self.damage_tracker.next_frame().mark_fully_damaged();
+        }
+    }
+
+    /// Draws a faint smoky beam of light, in the color of its pattern, behind each span of
+    /// repeated text.
+    fn draw_pattern_smoke(&mut self) {
+        let spans = self.repeated_text.spans();
+        if spans.is_empty() {
+            return;
+        }
+
+        let size_info = self.size_info;
+        let (width, height) = (size_info.width(), size_info.height());
+        let (cw, ch) = (size_info.cell_width(), size_info.cell_height());
+        let mut vertices = Vec::with_capacity(spans.len() * 6 * SMOKE_VERTEX_FLOATS);
+        for span in spans {
+            let Rgb(color) = pattern_color(span.pattern);
+            let [r, g, b] = [color.r, color.g, color.b].map(|c| c as f32 / 255.);
+
+            // Overflow the span a bit, the shader fades out its ends and edges.
+            let left = size_info.padding_x() + (span.start as f32 - 0.5) * cw;
+            let right = size_info.padding_x() + (span.end as f32 + 0.5) * cw;
+            let top = size_info.padding_y() + (span.line as f32 - 0.25) * ch;
+            let bottom = top + ch * 1.5;
+
+            let x = |px: f32| px / width * 2. - 1.;
+            let y = |px: f32| 1. - px / height * 2.;
+            let corner = |px: f32, py: f32, u: f32, v: f32| {
+                [x(px), y(py), r, g, b, PATTERN_SMOKE_ALPHA, u, v]
+            };
+            let (top_left, top_right) = (corner(left, top, 0., 0.), corner(right, top, 1., 0.));
+            let (bottom_left, bottom_right) =
+                (corner(left, bottom, 0., 1.), corner(right, bottom, 1., 1.));
+            for vertex in [top_left, bottom_left, top_right, top_right, bottom_left, bottom_right] {
+                vertices.extend_from_slice(&vertex);
+            }
+        }
+
+        // The smoke drifts on every frame.
+        self.damage_tracker.frame().mark_fully_damaged();
+        self.damage_tracker.next_frame().mark_fully_damaged();
+
+        let time = self.decorations.get_elapsed_secs_with_millis();
+        self.renderer.draw_smoke(&size_info, &vertices, time);
+    }
+
+    /// Draws the runs of line characters found in the grid as nannou lines.
+    fn draw_grid_lines(&mut self, size_info: &SizeInfo, line_cells: &[grid_lines::LineCell]) {
+        let lines = grid_lines::find_grid_lines(line_cells);
+        if lines.is_empty() {
+            return;
+        }
+
+        // The accents move along the lines on every frame.
+        self.damage_tracker.frame().mark_fully_damaged();
+        self.damage_tracker.next_frame().mark_fully_damaged();
+
+        let time = self.decorations.get_elapsed_secs_with_millis();
+        let vertices: Vec<f32> =
+            grid_lines::gen_vertices(&lines, &mut self.grid_line_star, (*size_info).into(), time)
+                .into_iter()
+                .flat_map(|vertices| vertices.vecs)
+                .collect();
+        self.renderer.draw_nannou_vertices(size_info, &vertices);
     }
 
     /// Iterates over the decorations
@@ -1878,4 +1997,81 @@ fn window_size(
     let height = (padding.1).mul_add(2., grid_height).floor();
 
     PhysicalSize::new(width as u32, height as u32)
+}
+
+/// How much the unique parts of repeated text are moved towards the contrasting color.
+const UNIQUE_HIGHLIGHT: f32 = 0.3;
+
+/// How much repeated text, once dimmed, is tinted with the color of its pattern.
+const PATTERN_TINT: f32 = 0.25;
+
+/// Opacity of the smoke behind repeated text, the shader fades it further.
+const PATTERN_SMOKE_ALPHA: f32 = 0.35;
+
+/// A color for each repeated pattern, with the hue picked from the pattern id.
+fn pattern_color(pattern: u64) -> Rgb {
+    let hue = (pattern % 3600) as f32 / 3600.;
+    let (saturation, lightness) = (0.7f32, 0.6f32);
+
+    // HSL to RGB.
+    let chroma = (1. - (2. * lightness - 1.).abs()) * saturation;
+    let channel = |offset: f32| {
+        let k = (offset + hue * 12.) % 12.;
+        let value = lightness - chroma / 2. * (k - 3.).min(9. - k).clamp(-1., 1.);
+        (value * 255.).round() as u8
+    };
+    Rgb::new(channel(0.), channel(8.), channel(4.))
+}
+
+/// Dims repeated text towards the background, tinting it with the color of its pattern, and
+/// highlights the unique parts of it.
+fn emphasize(fg: Rgb, bg: Rgb, emphasis: repeated_text::Emphasis) -> Rgb {
+    match emphasis {
+        repeated_text::Emphasis::Repeated { dim, pattern } => {
+            let dimmed = fg * (1. - dim) + bg * dim;
+            dimmed * (1. - PATTERN_TINT) + pattern_color(pattern) * PATTERN_TINT
+        },
+        repeated_text::Emphasis::Unique => {
+            let luminance =
+                (0.2126 * bg.0.r as f32 + 0.7152 * bg.0.g as f32 + 0.0722 * bg.0.b as f32) / 255.;
+            let contrast =
+                if luminance < 0.5 { Rgb::new(255, 255, 255) } else { Rgb::new(0, 0, 0) };
+            fg * (1. - UNIQUE_HIGHLIGHT) + contrast * UNIQUE_HIGHLIGHT
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn emphasize_repeated_and_unique_text() {
+        let fg = Rgb::new(200, 200, 200);
+        let dark_bg = Rgb::new(20, 20, 20);
+        let light_bg = Rgb::new(240, 240, 240);
+
+        // Repeated text moves towards the background, tinted with the pattern color.
+        let repeated = |dim| repeated_text::Emphasis::Repeated { dim, pattern: 1234 };
+        let dimmed = emphasize(fg, dark_bg, repeated(0.5));
+        let tint = pattern_color(1234);
+        let expected = (110. * (1. - PATTERN_TINT) + tint.0.r as f32 * PATTERN_TINT) as i32;
+        assert!((dimmed.0.r as i32 - expected).abs() <= 1, "{dimmed:?}");
+        let dimmer = emphasize(fg, dark_bg, repeated(0.65));
+        let luma = |c: Rgb| c.0.r as u32 + c.0.g as u32 + c.0.b as u32;
+        assert!(luma(dimmer) < luma(dimmed));
+
+        // Unique text moves away from the background.
+        assert!(emphasize(fg, dark_bg, repeated_text::Emphasis::Unique).0.r > fg.0.r);
+        assert!(emphasize(fg, light_bg, repeated_text::Emphasis::Unique).0.r < fg.0.r);
+    }
+
+    #[test]
+    fn pattern_colors() {
+        // Different patterns get different hues.
+        assert_ne!(pattern_color(0), pattern_color(1200));
+        assert_ne!(pattern_color(1200), pattern_color(2400));
+        // Hue 0 is red.
+        assert_eq!(pattern_color(0), Rgb::new(224, 82, 82));
+    }
 }

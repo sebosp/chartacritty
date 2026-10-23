@@ -1,5 +1,7 @@
 //! Decorations for the Alacritty Terminal.
+pub use self::grid_lines::{GridLine, GridLinesConfig};
 pub use self::nannou::{NannouDecoration, NannouDrawArrayMode};
+pub use self::repeated_text::RepeatedTextConfig;
 use crate::term::SizeInfo;
 use bevy::math::Vec3;
 pub use hexagon_line_background::HexagonLineBackground;
@@ -10,12 +12,14 @@ pub use polar_clock::PolarClockState;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
 
+pub mod grid_lines;
 pub mod hexagon_line_background;
 pub mod hexagon_point_background;
 pub mod hexagon_triangle_background;
 pub mod moon_phase;
 pub mod nannou;
 pub mod polar_clock;
+pub mod repeated_text;
 
 // TODO: Use const init that calculates these magic numbers at compile time
 pub const COS_60: f32 = 0.49999997f32;
@@ -36,6 +40,14 @@ pub trait Decoration {
 pub struct DecorationsConfig {
     /// An array of active decorators
     pub decorators: Vec<DecorationTypes>,
+
+    /// Draws runs of line characters in the grid, i.e. nvim indent guides, as nannou lines.
+    #[serde(default)]
+    pub grid_lines: GridLinesConfig,
+
+    /// Dims text repeated across the visible lines and highlights the parts that differ.
+    #[serde(default)]
+    pub repeated_text: RepeatedTextConfig,
 
     /// The time at which config was initialized
     #[serde(skip)]
