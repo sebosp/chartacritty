@@ -906,9 +906,15 @@ impl Display {
 
         // Add damage from alacritty's UI elements overlapping terminal.
 
+        // Decorations are animated shaders covering the whole window and charts are drawn on top of
+        // the grid, neither is part of the terminal damage. Without full damage, compositors that
+        // honor it (e.g. Wayland) keep showing stale back buffers while the terminal is idle.
+        let has_decorations = decorations_enabled && !self.decorations.decorators.is_empty();
         let requires_full_damage = self.visual_bell.intensity() != 0.
             || self.hint_state.active()
-            || search_state.regex().is_some();
+            || search_state.regex().is_some()
+            || has_decorations
+            || charts_enabled;
         if requires_full_damage {
             self.damage_tracker.frame().mark_fully_damaged();
             self.damage_tracker.next_frame().mark_fully_damaged();

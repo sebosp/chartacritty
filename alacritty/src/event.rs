@@ -1927,8 +1927,8 @@ impl input::Processor<EventProxy, ActionContext<'_, Notifier, EventProxy>> {
                     TerminalEvent::MouseCursorDirty => self.reset_mouse_cursor(),
                     TerminalEvent::CursorBlinkingChange => self.ctx.update_cursor_blinking(),
                     TerminalEvent::Exit | TerminalEvent::ChildExit(_) | TerminalEvent::Wakeup => (),
-                    TerminalEvent::DecorEvent => self.ctx.display.pending_update.dirty = true,
-                    TerminalEvent::ChartEvent => self.ctx.display.pending_update.dirty = true,
+                    // Only a redraw is needed, a display update would also resize the pty/window.
+                    TerminalEvent::DecorEvent | TerminalEvent::ChartEvent => *self.ctx.dirty = true,
                 },
                 #[cfg(unix)]
                 EventType::IpcConfig(_) | EventType::IpcGetConfig(..) | EventType::Shutdown => (),
