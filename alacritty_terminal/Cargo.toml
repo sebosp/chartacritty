@@ -47,7 +47,13 @@ tracing-log = { version = "0.2" }
 percent-encoding = "2.3"
 rand = "0.9.3"
 lyon = { version = "1.0", features = ["serialization"] }
-nannou = { version = "0.19.0", git = "https://github.com/sebosp/nannou", branch = "feature/crates-upd-2025-06-07" }
+bevy = { version = "0.19.1", default-features = false, features = ["bevy_color", "bevy_render"] }
+nannou_draw = { version = "0.20.0", git = "https://github.com/sebosp/nannou", branch = "upstream-upd-2026-09-30" }
+# From nannou:
+# Kept in lockstep with the `parley` version used by `bevy_text` so that the
+# font database can be shared. System font discovery is feature-gated via
+# `nannou_draw/system_font_discovery`.
+parley = { version = "0.9.0", default-features = false, features = ["std"] }
 chrono = { version = "0.4.39", features = ["serde"] }
 moon-phase = "0.1.0"
 noise = "0.9.0"

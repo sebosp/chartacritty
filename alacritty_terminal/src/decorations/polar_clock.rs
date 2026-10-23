@@ -1,13 +1,12 @@
 //! The polar clock decoration
 
-use super::nannou::NannouVertices;
+use super::nannou::{NannouVertices, new_draw, to_bevy_color};
 use crate::term::SizeInfo;
-use chrono::prelude::*;
 use chrono::NaiveDate;
-use nannou::draw;
-use nannou::geom::path::Builder;
-use nannou::lyon;
-use nannou::prelude::*;
+use chrono::prelude::*;
+use lyon::path::Path;
+use palette::named::{DARKRED, GOLD, PALEGOLDENROD, PALETURQUOISE};
+use palette::{Srgb, Srgba};
 use serde::{Deserialize, Serialize};
 
 // Create a Polar clock that has increasingly more and more opacity, so that the more granular time
@@ -51,8 +50,8 @@ const MINUTE_OF_HOUR_STROKE_WEIGHT: f32 = 6.;
 const SECONDS_WITH_MILLIS_OF_MINUTE_STROKE_WEIGHT: f32 = 6.;
 
 /// Draws the progression arc for a time unit along its domain.
-fn build_time_arc_progress(x: f32, y: f32, radius: f32, arc_angles: f32) -> nannou::geom::Path {
-    let mut builder = Builder::new().with_svg();
+fn build_time_arc_progress(x: f32, y: f32, radius: f32, arc_angles: f32) -> Path {
+    let mut builder = Path::builder().with_svg();
     builder.move_to(lyon::math::point(x, y + radius));
     builder.arc(
         lyon::math::point(x, y),
@@ -64,8 +63,8 @@ fn build_time_arc_progress(x: f32, y: f32, radius: f32, arc_angles: f32) -> nann
 }
 
 /// Draws the whiskers showing time unit significant separators
-fn build_time_arc_whisker(x: f32, y: f32, radius: f32, arc_angles: f32) -> nannou::geom::Path {
-    let mut builder = Builder::new().with_svg();
+fn build_time_arc_whisker(x: f32, y: f32, radius: f32, arc_angles: f32) -> Path {
+    let mut builder = Path::builder().with_svg();
     builder.move_to(lyon::math::point(
         arc_angles.to_radians().cos() * radius + x,
         arc_angles.to_radians().sin() * radius + y,
@@ -88,7 +87,7 @@ pub struct PolarClockUnitProperties {
     /// The color that we want to use for our arc, the alpha is actually an alpha multiplier, not
     /// the real alpha, this is so that there is a global PolarClockState alpha and different
     /// components have slightly less alpha.
-    color: Rgba<f32>,
+    color: Srgba<f32>,
     /// The stroke weight of the arc
     stroke_weight: f32,
 }
@@ -97,10 +96,10 @@ impl PolarClockUnitProperties {
     /// Creates the default properties for the day of year arc.
     /// This is the outermost arc.
     fn with_default_day_of_year_props() -> Self {
-        let color: Rgb = DAY_OF_YEAR_RGB.into_format::<f32>();
+        let color: Srgb = DAY_OF_YEAR_RGB.into_format::<f32>();
         Self {
             radius_multiplier: DAY_OF_YEAR_RADIUS_MULTIPLIER,
-            color: rgba(color.red, color.green, color.blue, DAY_OF_YEAR_ALPHA_MULTIPLIER),
+            color: Srgba::new(color.red, color.green, color.blue, DAY_OF_YEAR_ALPHA_MULTIPLIER),
             stroke_weight: DAY_OF_YEAR_STROKE_WEIGHT,
         }
     }
@@ -108,10 +107,10 @@ impl PolarClockUnitProperties {
     /// Creates the default properties for the month of year arc.
     /// This is the second to outermost arc.
     fn with_default_month_of_year_props() -> Self {
-        let color: Rgb = MONTH_OF_YEAR_RGB.into_format::<f32>();
+        let color: Srgb = MONTH_OF_YEAR_RGB.into_format::<f32>();
         Self {
             radius_multiplier: MONTH_OF_YEAR_RADIUS_MULTIPLIER,
-            color: rgba(color.red, color.green, color.blue, MONTH_OF_YEAR_ALPHA_MULTIPLIER),
+            color: Srgba::new(color.red, color.green, color.blue, MONTH_OF_YEAR_ALPHA_MULTIPLIER),
             stroke_weight: MONTH_OF_YEAR_STROKE_WEIGHT,
         }
     }
@@ -119,10 +118,10 @@ impl PolarClockUnitProperties {
     /// Creates the default properties for the day of month arc.
     /// This is the third to outermost arc.
     fn with_default_day_of_month_props() -> Self {
-        let color: Rgb = DAY_OF_MONTH_RGB.into_format::<f32>();
+        let color: Srgb = DAY_OF_MONTH_RGB.into_format::<f32>();
         Self {
             radius_multiplier: DAY_OF_MONTH_RADIUS_MULTIPLIER,
-            color: rgba(color.red, color.green, color.blue, DAY_OF_MONTH_ALPHA_MULTIPLIER),
+            color: Srgba::new(color.red, color.green, color.blue, DAY_OF_MONTH_ALPHA_MULTIPLIER),
             stroke_weight: DAY_OF_MONTH_STROKE_WEIGHT,
         }
     }
@@ -130,10 +129,10 @@ impl PolarClockUnitProperties {
     /// Creates the default properties for the hour of day arc.
     /// This is the third arc from the center.
     fn with_default_hour_of_day_props() -> Self {
-        let color: Rgb = WORKHOUR_OF_DAY_RGB.into_format::<f32>();
+        let color: Srgb = WORKHOUR_OF_DAY_RGB.into_format::<f32>();
         Self {
             radius_multiplier: HOUR_OF_DAY_RADIUS_MULTIPLIER,
-            color: rgba(color.red, color.green, color.blue, WORKHOUR_OF_DAY_ALPHA_MULTIPLIER),
+            color: Srgba::new(color.red, color.green, color.blue, WORKHOUR_OF_DAY_ALPHA_MULTIPLIER),
             stroke_weight: HOUR_OF_DAY_STROKE_WEIGHT,
         }
     }
@@ -141,10 +140,10 @@ impl PolarClockUnitProperties {
     /// Creates the default properties for the minute of hour arc.
     /// This is the second arc from the center.
     fn with_default_minute_of_hour_props() -> Self {
-        let color: Rgb = MINUTE_OF_HOUR_RGB.into_format::<f32>();
+        let color: Srgb = MINUTE_OF_HOUR_RGB.into_format::<f32>();
         Self {
             radius_multiplier: MINUTE_OF_HOUR_RADIUS_MULTIPLIER,
-            color: rgba(color.red, color.green, color.blue, MINUTE_OF_HOUR_ALPHA_MULTIPLIER),
+            color: Srgba::new(color.red, color.green, color.blue, MINUTE_OF_HOUR_ALPHA_MULTIPLIER),
             stroke_weight: MINUTE_OF_HOUR_STROKE_WEIGHT,
         }
     }
@@ -152,10 +151,10 @@ impl PolarClockUnitProperties {
     /// Creates the default properties for the seconds with millis of minute
     /// This is the second arc from the center.
     fn with_default_seconds_with_millis_of_minute_props() -> Self {
-        let color: Rgb = SECONDS_WITH_MILLIS_OF_MINUTE_RGB.into_format::<f32>();
+        let color: Srgb = SECONDS_WITH_MILLIS_OF_MINUTE_RGB.into_format::<f32>();
         Self {
             radius_multiplier: SECONDS_WITH_MILLIS_OF_MINUTE_RADIUS_MULTIPLIER,
-            color: rgba(
+            color: Srgba::new(
                 color.red,
                 color.green,
                 color.blue,
@@ -320,7 +319,8 @@ impl PolarClockUnitState {
             } else {
                 (NONWORKHOUR_OF_DAY_RGB.into_format::<f32>(), NONWORKHOUR_OF_DAY_ALPHA_MULTIPLIER)
             };
-            self.props.color = rgba(hour_color.red, hour_color.green, hour_color.blue, hour_alpha);
+            self.props.color =
+                Srgba::new(hour_color.red, hour_color.green, hour_color.blue, hour_alpha);
         }
         if self.is_dirty || self.last_drawn_unit != current_tick_unit {
             self.last_drawn_unit = current_tick_unit;
@@ -339,7 +339,7 @@ impl PolarClockUnitState {
         size_info: SizeInfo,
         alpha: f32,
     ) -> Vec<NannouVertices> {
-        let draw = draw::Draw::default().triangle_mode();
+        let draw = new_draw();
         let progress_angle = 360f32 * self.unit.get_time_unit_value(tick_time) as f32
             / self.unit.get_time_unit_max_value(tick_time) as f32;
         let mut color = self.props.color;
@@ -347,7 +347,7 @@ impl PolarClockUnitState {
         draw.path()
             .stroke()
             .stroke_weight(self.props.stroke_weight)
-            .color(color)
+            .color(to_bevy_color(color.color, color.alpha))
             .caps_round()
             .events(
                 build_time_arc_progress(
@@ -358,7 +358,7 @@ impl PolarClockUnitState {
                 )
                 .iter(),
             );
-        let color = rgba(
+        let color = Srgba::new(
             GOLD.into_format::<f32>().red,
             GOLD.into_format::<f32>().green,
             GOLD.into_format::<f32>().blue,
@@ -369,27 +369,36 @@ impl PolarClockUnitState {
                 * (whisker % self.unit.get_time_unit_max_value(tick_time)) as f32
                 / self.unit.get_time_unit_max_value(tick_time) as f32;
             whisker_angle = (whisker_angle + 90f32) % 360f32;
-            draw.path().stroke().stroke_weight(2.).color(color).events(
-                build_time_arc_whisker(x, y, radius * self.props.radius_multiplier, whisker_angle)
+            draw.path()
+                .stroke()
+                .stroke_weight(2.)
+                .color(to_bevy_color(color.color, color.alpha))
+                .events(
+                    build_time_arc_whisker(
+                        x,
+                        y,
+                        radius * self.props.radius_multiplier,
+                        whisker_angle,
+                    )
                     .iter(),
-            );
+                );
         }
-        /*draw.tri()
-        .points(
-            Point2::new(
-                (radius * self.props.radius_multiplier * 0.95) * 90_f32.to_radians().cos() + x,
-                (radius * self.props.radius_multiplier * 0.95) * 90_f32.to_radians().sin() + y
-            ),
-            Point2::new(
-                ((radius + self.props.stroke_weight) * self.props.radius_multiplier) * 85_f32.to_radians().cos() + x,
-                ((radius + self.props.stroke_weight) * self.props.radius_multiplier) * 85_f32.to_radians().sin() + y
-            ),
-            Point2::new(
-                ((radius + self.props.stroke_weight) * self.props.radius_multiplier) * 95_f32.to_radians().cos() + x,
-                ((radius + self.props.stroke_weight) * self.props.radius_multiplier) * 95_f32.to_radians().sin() + y
-            )
-        )
-        .color(color);*/
+        // draw.tri()
+        // .points(
+        // Point2::new(
+        // (radius * self.props.radius_multiplier * 0.95) * 90_f32.to_radians().cos() + x,
+        // (radius * self.props.radius_multiplier * 0.95) * 90_f32.to_radians().sin() + y
+        // ),
+        // Point2::new(
+        // ((radius + self.props.stroke_weight) * self.props.radius_multiplier) *
+        // 85_f32.to_radians().cos() + x, ((radius + self.props.stroke_weight) *
+        // self.props.radius_multiplier) * 85_f32.to_radians().sin() + y ),
+        // Point2::new(
+        // ((radius + self.props.stroke_weight) * self.props.radius_multiplier) *
+        // 95_f32.to_radians().cos() + x, ((radius + self.props.stroke_weight) *
+        // self.props.radius_multiplier) * 95_f32.to_radians().sin() + y )
+        // )
+        // .color(color);
         super::NannouDecoration::gen_vertices_from_nannou_draw(draw, size_info)
     }
 }

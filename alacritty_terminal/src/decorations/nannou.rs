@@ -4,15 +4,40 @@ use super::PolarClockState;
 use super::moon_phase::MoonPhaseState;
 use crate::charts::deserialize_rgb_from_str;
 use crate::term::SizeInfo;
+use bevy::color::{Color, LinearRgba};
+use bevy::ecs::entity::Entity;
+use bevy::math::Vec2;
+use bevy::mesh::Mesh;
 use chrono::prelude::*;
-use nannou::draw;
-pub use nannou::draw::State;
-pub use nannou::draw::primitive::Primitive;
-use nannou::draw::renderer::{GlyphCache, RenderPrimitive};
-use nannou::glam::Vec2;
-use nannou::lyon::tessellation::{FillTessellator, StrokeTessellator};
+use lyon::tessellation::{FillTessellator, StrokeTessellator};
+use nannou_draw::draw::mesh::MeshExt;
+use nannou_draw::draw::primitive::Primitive;
+use nannou_draw::draw::render::{RenderContext, RenderPrimitive};
+use nannou_draw::draw::{Draw, DrawCommand, DrawContext};
+use nannou_draw::text::font::{NannouTextCxInner, SharedTextCx};
+use parley::{FontContext, LayoutContext};
 use serde::{Deserialize, Serialize};
+use std::sync::{Arc, LazyLock, Mutex};
 use vte::ansi::Rgb;
+
+/// Text context shared by every decoration `Draw`, no text is drawn but `Draw::new` requires one.
+static TEXT_CX: LazyLock<SharedTextCx> = LazyLock::new(|| {
+    SharedTextCx(Arc::new(Mutex::new(NannouTextCxInner {
+        font: FontContext::default(),
+        layout: LayoutContext::new(),
+    })))
+});
+
+/// Creates a nannou `Draw` that is not attached to any bevy window, its commands are tessellated
+/// by `NannouDecoration::gen_vertices_from_nannou_draw`.
+pub fn new_draw() -> Draw {
+    Draw::new(Entity::PLACEHOLDER, TEXT_CX.clone())
+}
+
+/// Converts a palette sRGB color and an alpha into a bevy color for nannou drawing.
+pub fn to_bevy_color(color: palette::Srgb, alpha: f32) -> Color {
+    Color::srgba(color.red, color.green, color.blue, alpha)
+}
 
 #[derive(Debug, Default, PartialEq, Eq, Clone, Serialize, Deserialize)]
 pub enum NannouDrawArrayMode {
@@ -23,19 +48,18 @@ pub enum NannouDrawArrayMode {
     GlTriangles,
 }
 
-impl From<nannou::draw::primitive::Primitive> for NannouDrawArrayMode {
-    fn from(src: nannou::draw::primitive::Primitive) -> Self {
+impl From<&Primitive> for NannouDrawArrayMode {
+    fn from(src: &Primitive) -> Self {
         match src {
-            nannou::draw::primitive::Primitive::Mesh(_) => NannouDrawArrayMode::GlTriangles,
-            nannou::draw::primitive::Primitive::Tri(_) => NannouDrawArrayMode::GlTriangles,
-            nannou::draw::primitive::Primitive::Polygon(_) => NannouDrawArrayMode::GlTriangles,
-            nannou::draw::primitive::Primitive::Ellipse(_) => NannouDrawArrayMode::GlTriangles,
-            nannou::draw::primitive::Primitive::Quad(_) => NannouDrawArrayMode::GlTriangles,
-            nannou::draw::primitive::Primitive::Rect(_) => NannouDrawArrayMode::GlTriangles,
-            nannou::draw::primitive::Primitive::Line(_) => NannouDrawArrayMode::LineStrip,
-            nannou::draw::primitive::Primitive::Text(_) => NannouDrawArrayMode::GlTriangles,
-            nannou::draw::primitive::Primitive::Texture(_) => NannouDrawArrayMode::GlTriangles,
-            nannou::draw::primitive::Primitive::Path(_) => NannouDrawArrayMode::LineStrip,
+            Primitive::Mesh(_) => NannouDrawArrayMode::GlTriangles,
+            Primitive::Tri(_) => NannouDrawArrayMode::GlTriangles,
+            Primitive::Polygon(_) => NannouDrawArrayMode::GlTriangles,
+            Primitive::Ellipse(_) => NannouDrawArrayMode::GlTriangles,
+            Primitive::Quad(_) => NannouDrawArrayMode::GlTriangles,
+            Primitive::Rect(_) => NannouDrawArrayMode::GlTriangles,
+            Primitive::Line(_) => NannouDrawArrayMode::LineStrip,
+            Primitive::Text(_) => NannouDrawArrayMode::GlTriangles,
+            Primitive::Path(_) => NannouDrawArrayMode::LineStrip,
             _ => NannouDrawArrayMode::LineStrip,
         }
     }
@@ -76,22 +100,6 @@ pub struct NannouDecoration {
 
 fn local_now() -> DateTime<Local> {
     Local::now()
-}
-
-// TODO: Move this somewhere sensical...
-fn new_glyph_cache() -> GlyphCache {
-    let size = nannou::draw::Renderer::DEFAULT_GLYPH_CACHE_SIZE;
-    let scale_tolerance = nannou::draw::Renderer::DEFAULT_GLYPH_CACHE_SCALE_TOLERANCE;
-    let position_tolerance = nannou::draw::Renderer::DEFAULT_GLYPH_CACHE_POSITION_TOLERANCE;
-    let [w, h] = size;
-    let cache = nannou::text::GlyphCache::builder()
-        .dimensions(w, h)
-        .scale_tolerance(scale_tolerance)
-        .position_tolerance(position_tolerance)
-        .build();
-    let pixel_buffer = vec![0u8; w as usize * h as usize];
-    let requires_upload = false;
-    GlyphCache { cache, pixel_buffer, requires_upload }
 }
 
 impl NannouDecoration {
@@ -146,65 +154,56 @@ impl NannouDecoration {
     /// Called after instantiation of the NannouDecoration, it will initialize the vertices for the
     /// decorations.
     pub fn update_opengl_vecs(&mut self) {
-        // tracing::info!("NannouDecoration::update_opengl_vecs(size_info) {:?}, center_idx: {}, x: {}, y:{}, radius: {}, coords: {:?}", self.size_info, center_idx, coord.x, coord.y, self.radius, coords);
+        // tracing::info!("NannouDecoration::update_opengl_vecs(size_info) {:?}, center_idx: {}, x:
+        // {}, y:{}, radius: {}, coords: {:?}", self.size_info, center_idx, coord.x, coord.y,
+        // self.radius, coords);
         self.vertices = self.gen_vertices();
     }
 
-    // Transforms nannou::draw::Draw into xyrgba vertices we can draw through our renderer
-    pub fn gen_vertices_from_nannou_draw(
-        draw: draw::Draw,
-        size_info: SizeInfo,
-    ) -> Vec<NannouVertices> {
+    // Transforms nannou::draw::Draw into xyzrgba vertices we can draw through our renderer.
+    // Adapted from nannou_draw `render.rs` `update_draw_mesh()`, but each primitive is tessellated
+    // into its own bevy Mesh instead of being uploaded through the bevy render app.
+    pub fn gen_vertices_from_nannou_draw(draw: Draw, size_info: SizeInfo) -> Vec<NannouVertices> {
         let mut res = vec![];
-        draw.finish_remaining_drawings();
-        // Trying to adapt nannou crate nannou/src/draw/renderer/mod.rs `fill()` function
-        let mut mesh = draw::Mesh::default();
-        // Construct the glyph cache.
-        let mut glyph_cache = new_glyph_cache();
+        let draw_cmds: Vec<_> = draw.drain_commands().collect();
+        let Ok(draw_state) = draw.state.read() else {
+            return res;
+        };
+        let Ok(intermediary_state) = draw_state.try_read_intermediary_state() else {
+            return res;
+        };
         let mut fill_tessellator = FillTessellator::new();
         let mut stroke_tessellator = StrokeTessellator::new();
         // Keep track of context changes.
-        let mut curr_ctxt = draw::Context::default();
-        let draw_cmds: Vec<_> = draw.drain_commands().collect();
-        let draw_state = draw.state();
-        let intermediary_state = draw_state.intermediary_state();
-        let scale_factor = 1.;
+        let mut curr_ctxt = DrawContext::default();
         for cmd in draw_cmds {
             match cmd {
-                draw::DrawCommand::Context(ctxt) => curr_ctxt = ctxt,
-                draw::DrawCommand::Primitive(prim) => {
+                DrawCommand::Context(ctxt) => curr_ctxt = ctxt,
+                DrawCommand::Primitive(prim) => {
                     // Info required during rendering.
-                    let ctxt = draw::renderer::RenderContext {
-                        intermediary_mesh: intermediary_state.intermediary_mesh(),
-                        path_event_buffer: intermediary_state.path_event_buffer(),
-                        path_points_colored_buffer: intermediary_state.path_points_colored_buffer(),
-                        path_points_textured_buffer: intermediary_state
-                            .path_points_textured_buffer(),
-                        text_buffer: intermediary_state.text_buffer(),
+                    let ctxt = RenderContext {
+                        intermediary_mesh: &intermediary_state.intermediary_mesh,
+                        path_event_buffer: &intermediary_state.path_event_buffer,
+                        path_points_vertex_buffer: &intermediary_state.path_points_vertex_buffer,
+                        text_buffer: &intermediary_state.text_buffer,
                         theme: draw_state.theme(),
                         transform: &curr_ctxt.transform,
                         fill_tessellator: &mut fill_tessellator,
                         stroke_tessellator: &mut stroke_tessellator,
-                        glyph_cache: &mut glyph_cache,
-                        output_attachment_size: Vec2::new(2., 2.),
-                        output_attachment_scale_factor: scale_factor,
+                        output_attachment_size: Vec2::new(size_info.width, size_info.height),
+                        output_attachment_scale_factor: 1.,
                     };
-
-                    let draw_array_mode = prim.clone().into();
-                    // Render the primitive.
-                    let _render = prim.render_primitive(ctxt, &mut mesh);
-                    let mut primitive_render_vecs = vec![];
-                    for vx in mesh.vertices() {
-                        primitive_render_vecs.push(size_info.scale_x(vx.x));
-                        primitive_render_vecs.push(size_info.scale_y(vx.y));
-                        primitive_render_vecs.push(0.0);
-                        primitive_render_vecs.push(vx.color.red);
-                        primitive_render_vecs.push(vx.color.green);
-                        primitive_render_vecs.push(vx.color.blue);
-                        primitive_render_vecs.push(vx.color.alpha);
+                    let draw_array_mode = NannouDrawArrayMode::from(&prim);
+                    let mut mesh = Mesh::init();
+                    prim.render_primitive(ctxt, &mut mesh);
+                    let vecs = mesh_to_xyzrgba_triangles(&mesh, size_info);
+                    if !vecs.is_empty() {
+                        res.push(NannouVertices { draw_array_mode, vecs });
                     }
-                    res.push(NannouVertices { draw_array_mode, vecs: primitive_render_vecs });
                 },
+                // Shader models, background colors, instanced and indirect drawing are not used
+                // by the decorations.
+                _ => {},
             }
         }
         res
@@ -213,32 +212,31 @@ impl NannouDecoration {
     /// `gen_vertices` Returns the vertices for an tree created at center x,y with a
     /// specific radius
     pub fn gen_vertices(&self) -> Vec<NannouVertices> {
-        /*let x = self.x;
-        let y = self.y;
-        let x_60_degrees_offset = COS_60 * self.radius;
-        let y_60_degrees_offset = SIN_60 * self.radius;
-        let ellipse_color = LIGHTSKYBLUE.into_format::<f32>();
-        let ellipse_stroke_color =
-            rgba(ellipse_color.red, ellipse_color.green, ellipse_color.blue, 0.01f32);
-        draw.ellipse().x_y(x, y).radius(self.radius * 0.8).stroke(ellipse_stroke_color).rgba(
-            ellipse_color.red,
-            ellipse_color.green,
-            ellipse_color.blue,
-            self.alpha,
-        );
-        draw.tri()
-            .points(
-                [self.size_info.scale_x(x), self.size_info.scale_y(y)],
-                [
-                    self.size_info.scale_x(x + x_60_degrees_offset),
-                    self.size_info.scale_y(y + y_60_degrees_offset),
-                ],
-                [self.size_info.scale_x(x + x_60_degrees_offset), self.size_info.scale_y(y)],
-            )
-            .rotate(30f32)
-            .color(VIOLET);
-
-        */
+        // let x = self.x;
+        // let y = self.y;
+        // let x_60_degrees_offset = COS_60 * self.radius;
+        // let y_60_degrees_offset = SIN_60 * self.radius;
+        // let ellipse_color = LIGHTSKYBLUE.into_format::<f32>();
+        // let ellipse_stroke_color =
+        // rgba(ellipse_color.red, ellipse_color.green, ellipse_color.blue, 0.01f32);
+        // draw.ellipse().x_y(x, y).radius(self.radius * 0.8).stroke(ellipse_stroke_color).rgba(
+        // ellipse_color.red,
+        // ellipse_color.green,
+        // ellipse_color.blue,
+        // self.alpha,
+        // );
+        // draw.tri()
+        // .points(
+        // [self.size_info.scale_x(x), self.size_info.scale_y(y)],
+        // [
+        // self.size_info.scale_x(x + x_60_degrees_offset),
+        // self.size_info.scale_y(y + y_60_degrees_offset),
+        // ],
+        // [self.size_info.scale_x(x + x_60_degrees_offset), self.size_info.scale_y(y)],
+        // )
+        // .rotate(30f32)
+        // .color(VIOLET);
+        //
         let mut all_recs = self.polar_clock.day_of_year.vecs.clone();
         all_recs.append(&mut self.polar_clock.month_of_year.vecs.clone());
         all_recs.append(&mut self.polar_clock.day_of_month.vecs.clone());
@@ -250,6 +248,29 @@ impl NannouDecoration {
     }
 }
 
+/// Expands the indexed triangle list of a tessellated mesh into xyzrgba vertices for
+/// `glDrawArrays(GL_TRIANGLES)`, with positions scaled to NDC and colors back in sRGB.
+fn mesh_to_xyzrgba_triangles(mesh: &Mesh, size_info: SizeInfo) -> Vec<f32> {
+    let points = mesh.points();
+    let colors = mesh.colors();
+    let count = mesh.count_indices();
+    let mut res = Vec::with_capacity(count * 7);
+    for i in 0..count {
+        let idx = mesh.get_index(i) as usize;
+        let [x, y, _z] = points[idx];
+        let [r, g, b, a] = colors[idx];
+        let color = Color::LinearRgba(LinearRgba::new(r, g, b, a)).to_srgba();
+        res.push(size_info.scale_x(x));
+        res.push(size_info.scale_y(y));
+        res.push(0.0);
+        res.push(color.red);
+        res.push(color.green);
+        res.push(color.blue);
+        res.push(color.alpha);
+    }
+    res
+}
+
 pub fn parse_svg_path() -> Vec<f32> {
     // tree is created by hand on some svg editor, let's make an SVG Path parser to create the
     // lines, this should be read from the config file
@@ -257,4 +278,36 @@ pub fn parse_svg_path() -> Vec<f32> {
     let _tree = "M 8 8 L 7 7 L 7 6 L 7 5 L 6 4 L 6 2 L 8 2 L 9 1 L 7 1 L 8 0 L 5 -1 L 5 1 L 2 -1 \
                  L 3 1 L 3 2 L 2 2 L 1 3 L 2 3 L 3 3 L 3 4 L 3 4 L 4 5 L 5 6 L 4 7 L 3 8";
     res
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nannou_draw_tessellates_into_triangles() {
+        let size_info = SizeInfo { width: 1000., height: 800., ..Default::default() };
+        let mut decoration =
+            NannouDecoration::new(Rgb { r: 25, g: 88, b: 167 }, 0.5, size_info, 100.);
+        decoration.set_size_info(size_info);
+        assert!(!decoration.vertices.is_empty());
+        for vertices in &decoration.vertices {
+            // Triangle list of xyzrgba vertices.
+            assert!(!vertices.vecs.is_empty());
+            assert_eq!(vertices.vecs.len() % (3 * 7), 0);
+            for vertex in vertices.vecs.chunks_exact(7) {
+                assert!((-1.5..=1.5).contains(&vertex[0]), "x out of range: {vertex:?}");
+                assert!((-1.5..=1.5).contains(&vertex[1]), "y out of range: {vertex:?}");
+                assert!(vertex[3..].iter().all(|c| (0.0..=1.0).contains(c)), "{vertex:?}");
+            }
+        }
+        // The ellipse of the moon phase is tessellated as triangles.
+        assert!(
+            decoration
+                .moon_state
+                .vecs
+                .iter()
+                .any(|v| v.draw_array_mode == NannouDrawArrayMode::GlTriangles)
+        );
+    }
 }
