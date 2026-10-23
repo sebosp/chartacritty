@@ -1,4 +1,10 @@
 #if defined(GLES2_RENDERER)
+// The vortex street and snow effects use unqualified types, which need a default precision.
+#if defined(GL_FRAGMENT_PRECISION_HIGH)
+precision highp float;
+#else
+precision mediump float;
+#endif
 #define float_t mediump float
 #define color_t mediump vec4
 #define FRAG_COLOR gl_FragColor
