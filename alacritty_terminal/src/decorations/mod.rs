@@ -2,6 +2,7 @@
 pub use self::grid_lines::{GridLine, GridLinesConfig};
 pub use self::nannou::{NannouDecoration, NannouDrawArrayMode};
 pub use self::repeated_text::RepeatedTextConfig;
+pub use self::tables::TablesConfig;
 use crate::term::SizeInfo;
 use bevy::math::Vec3;
 pub use hexagon_line_background::HexagonLineBackground;
@@ -20,6 +21,7 @@ pub mod moon_phase;
 pub mod nannou;
 pub mod polar_clock;
 pub mod repeated_text;
+pub mod tables;
 
 // TODO: Use const init that calculates these magic numbers at compile time
 pub const COS_60: f32 = 0.49999997f32;
@@ -48,6 +50,10 @@ pub struct DecorationsConfig {
     /// Dims text repeated across the visible lines and highlights the parts that differ.
     #[serde(default)]
     pub repeated_text: RepeatedTextConfig,
+
+    /// Draws the cells of the tables in the view as rounded rectangles.
+    #[serde(default)]
+    pub tables: TablesConfig,
 
     /// The time at which config was initialized
     #[serde(skip)]

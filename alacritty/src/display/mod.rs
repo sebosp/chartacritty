@@ -62,7 +62,7 @@ use crate::string::{ShortenDirection, StrShortener};
 // Chartacritty:
 use alacritty_terminal::decorations::{
     DecorationLines, DecorationPoints, DecorationTriangles, DecorationTypes, DecorationsConfig,
-    grid_lines, repeated_text,
+    grid_lines, repeated_text, tables,
 };
 use alacritty_terminal::term::TermChartsHandle;
 
@@ -426,6 +426,8 @@ pub struct Display {
     grid_line_star: grid_lines::GridLineStar,
     /// Analysis of the text repeated across the visible lines.
     repeated_text: repeated_text::RepeatedText,
+    /// The tables in the view, drawn as rounded rectangles behind their cells.
+    tables: tables::Tables,
     tokio_setup: Option<TermChartsHandle>,
 }
 
@@ -577,6 +579,7 @@ impl Display {
             decorations,
             grid_line_star: Default::default(),
             repeated_text: Default::default(),
+            tables: Default::default(),
             tokio_setup: None,
         })
     }
@@ -933,7 +936,7 @@ impl Display {
         self.damage_tracker.damage_vi_cursor(vi_cursor_viewport_point);
         self.damage_tracker.damage_selection(selection_range, display_offset);
 
-        self.update_repeated_text(&grid_cells, decorations_enabled);
+        self.update_text_decorations(&grid_cells, decorations_enabled);
 
         // Make sure this window's OpenGL context is active.
         self.make_current();
@@ -941,6 +944,10 @@ impl Display {
         self.renderer.clear(background_color, config.window_opacity());
 
         // Behind the text, so that it remains readable.
+        let tables_vertices = self.tables.vertices();
+        if !tables_vertices.is_empty() {
+            self.renderer.draw_nannou_vertices(&size_info, tables_vertices);
+        }
         self.draw_pattern_smoke();
         let mut lines = RenderLines::new();
         let mut line_cells = Vec::new();
@@ -1245,25 +1252,43 @@ impl Display {
         }
     }
 
-    /// Analyzes the visible text for repetitions, see `repeated_text`.
-    fn update_repeated_text(&mut self, grid_cells: &[RenderableCell], decorations_enabled: bool) {
-        if !decorations_enabled || !self.decorations.repeated_text.enabled {
-            self.repeated_text.clear();
-            return;
-        }
+    /// Analyzes the visible text for repetitions and tables, see `repeated_text` and `tables`.
+    fn update_text_decorations(
+        &mut self,
+        grid_cells: &[RenderableCell],
+        decorations_enabled: bool,
+    ) {
+        let repeated_text = decorations_enabled && self.decorations.repeated_text.enabled;
+        let tables = decorations_enabled && self.decorations.tables.enabled;
 
-        let mut lines = vec![vec![' '; self.size_info.columns()]; self.size_info.screen_lines()];
-        for cell in grid_cells {
-            if let Some(c) =
-                lines.get_mut(cell.point.line).and_then(|line| line.get_mut(cell.point.column.0))
-            {
-                *c = cell.character;
+        let lines = (repeated_text || tables).then(|| {
+            let mut lines =
+                vec![vec![' '; self.size_info.columns()]; self.size_info.screen_lines()];
+            for cell in grid_cells {
+                if let Some(c) = lines
+                    .get_mut(cell.point.line)
+                    .and_then(|line| line.get_mut(cell.point.column.0))
+                {
+                    *c = cell.character;
+                }
             }
-        }
+            lines
+        });
 
-        // Lines are dimmed depending on the other lines, so a single new line of output can
-        // change how the whole screen looks.
-        if self.repeated_text.update(&lines) {
+        // Lines are dimmed depending on the other lines and a single new line can turn the lines
+        // above it into a table, so a single new line of output can change the whole screen.
+        let mut changed = false;
+        match lines.as_deref() {
+            Some(lines) if repeated_text => changed |= self.repeated_text.update(lines),
+            _ => self.repeated_text.clear(),
+        }
+        match lines.as_deref() {
+            Some(lines) if tables => {
+                changed |= self.tables.update(lines, self.size_info.into());
+            },
+            _ => changed |= self.tables.clear(),
+        }
+        if changed {
             self.damage_tracker.frame().mark_fully_damaged();
             self.damage_tracker.next_frame().mark_fully_damaged();
         }
