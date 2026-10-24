@@ -16,6 +16,10 @@ const MIN_TOKENS: usize = 3;
 /// Minimum Dice similarity, over the tokens, for two lines to be considered repetitions.
 const MIN_SIMILARITY: f32 = 0.5;
 
+/// Minimum number of alphanumeric characters of the repeated text of a line for it to be part of
+/// a pattern, so that i.e. lines only sharing some punctuation are left as is.
+const MIN_PATTERN_ALNUM: usize = 5;
+
 /// Number of other similar lines needed for a line to be considered repeated.
 const MIN_PEERS: usize = 2;
 
@@ -68,6 +72,21 @@ pub struct PatternSpan {
     pub pattern: u64,
 }
 
+/// A line that is part of a pattern, including the first instance of the pattern.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PatternInstance {
+    /// Viewport line.
+    pub line: usize,
+    /// Column where the repeated text of the line starts.
+    pub start: usize,
+    /// Column after the end of the repeated text of the line.
+    pub end: usize,
+    pub pattern: u64,
+}
+
+/// The color of a cell as `(r, g, b)`, text is only repeated when it has the same color.
+pub type CellColor = (u8, u8, u8);
+
 /// The result of analyzing the visible lines.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct Analysis {
@@ -75,6 +94,10 @@ pub struct Analysis {
     pub emphasis: Vec<Vec<Option<Emphasis>>>,
     /// The runs of repeated text, in order of lines and columns.
     pub spans: Vec<PatternSpan>,
+    /// The runs of repeated text of the first instances of the patterns, which are left as is.
+    pub first_spans: Vec<PatternSpan>,
+    /// The lines that are part of a pattern, in order of lines.
+    pub instances: Vec<PatternInstance>,
 }
 
 /// Finds the representative of the group of `line`, compressing the path to it.
@@ -91,7 +114,8 @@ fn find(groups: &mut [usize], mut line: usize) -> usize {
 struct Token {
     start: usize,
     end: usize,
-    /// Interned text of the token, tokens with the same text have the same id.
+    /// Interned text and color of the token, tokens with the same text and color have the same
+    /// id.
     id: u32,
 }
 
@@ -102,7 +126,11 @@ struct LineTokens {
     hash: u64,
 }
 
-fn tokenize(line: &[char], interner: &mut HashMap<String, u32>) -> LineTokens {
+/// The interned texts and colors of the tokens.
+type Interner = HashMap<(String, CellColor), u32>;
+
+/// Splits the `line` into tokens, `colors` are the colors of its columns, default when missing.
+fn tokenize(line: &[char], colors: &[CellColor], interner: &mut Interner) -> LineTokens {
     let mut texts: Vec<(usize, usize, String)> = vec![];
     for (column, &c) in line.iter().enumerate() {
         if c.is_whitespace() {
@@ -126,9 +154,10 @@ fn tokenize(line: &[char], interner: &mut HashMap<String, u32>) -> LineTokens {
     let tokens = texts
         .into_iter()
         .map(|(start, end, text)| {
-            text.hash(&mut hasher);
+            let color = colors.get(start).copied().unwrap_or_default();
+            (&text, color).hash(&mut hasher);
             let next_id = interner.len() as u32;
-            let id = *interner.entry(text).or_insert(next_id);
+            let id = *interner.entry((text, color)).or_insert(next_id);
             Token { start, end, id }
         })
         .collect();
@@ -228,18 +257,34 @@ fn dim_for(lines: usize) -> f32 {
 /// Lines similar to at least `MIN_PEERS` other lines form a pattern, the text they share is
 /// repeated and the rest unique. The first, topmost, line of every pattern is left as is.
 pub fn analyze(lines: &[Vec<char>]) -> Analysis {
-    analyze_with_memo(lines, &mut PairMemo::new())
+    analyze_with_memo(lines, &[], &mut PairMemo::new())
 }
 
-/// Same as `analyze`, re-using the matches of line pairs from previous calls in `memo`, since most
-/// lines are still visible, maybe scrolled, from one frame to the next.
-fn analyze_with_memo(lines: &[Vec<char>], memo: &mut PairMemo) -> Analysis {
-    let mut interner = HashMap::new();
-    let lines_tokens: Vec<LineTokens> =
-        lines.iter().map(|line| tokenize(line, &mut interner)).collect();
+/// Same as `analyze`, with the `colors` of every column of the `lines`: text is only repeated when
+/// it has the same color.
+pub fn analyze_colored(lines: &[Vec<char>], colors: &[Vec<CellColor>]) -> Analysis {
+    analyze_with_memo(lines, colors, &mut PairMemo::new())
+}
+
+/// Same as `analyze_colored`, re-using the matches of line pairs from previous calls in `memo`,
+/// since most lines are still visible, maybe scrolled, from one frame to the next.
+fn analyze_with_memo(
+    lines: &[Vec<char>],
+    colors: &[Vec<CellColor>],
+    memo: &mut PairMemo,
+) -> Analysis {
+    let mut interner = Interner::new();
+    let lines_tokens: Vec<LineTokens> = lines
+        .iter()
+        .enumerate()
+        .map(|(i, line)| {
+            let colors = colors.get(i).map(Vec::as_slice).unwrap_or_default();
+            tokenize(line, colors, &mut interner)
+        })
+        .collect();
     // Token ids are only valid for this call, the memo only keeps positions within the lines.
     let mut texts = vec![String::new(); interner.len()];
-    for (text, id) in interner {
+    for ((text, _), id) in interner {
         texts[id as usize] = text;
     }
 
@@ -247,8 +292,6 @@ fn analyze_with_memo(lines: &[Vec<char>], memo: &mut PairMemo) -> Analysis {
     let mut peers = vec![0usize; lines.len()];
     let mut shared: Vec<Vec<usize>> =
         lines_tokens.iter().map(|line| vec![0; line.tokens.len()]).collect();
-    // Whether a similar line is above the line, otherwise it is the first instance of a pattern.
-    let mut has_earlier_peer = vec![false; lines.len()];
     // Similar lines are grouped together into patterns.
     let mut groups: Vec<usize> = (0..lines.len()).collect();
     let mut used = HashSet::new();
@@ -293,7 +336,6 @@ fn analyze_with_memo(lines: &[Vec<char>], memo: &mut PairMemo) -> Analysis {
 
             peers[i] += 1;
             peers[j] += 1;
-            has_earlier_peer[j] = true;
             let (root_i, root_j) = (find(&mut groups, i), find(&mut groups, j));
             groups[root_j.max(root_i)] = root_j.min(root_i);
             for (count, &matched) in shared[i].iter_mut().zip(mask_a) {
@@ -308,11 +350,30 @@ fn analyze_with_memo(lines: &[Vec<char>], memo: &mut PairMemo) -> Analysis {
 
     let is_repeated = |i: usize, count: usize| count as f32 >= peers[i] as f32 * SHARED_FRACTION;
 
+    // Lines that are part of a pattern: similar to enough lines and repeating enough text.
+    let eligible: Vec<bool> = lines_tokens
+        .iter()
+        .enumerate()
+        .map(|(i, line_tokens)| {
+            let alnum: usize = line_tokens
+                .tokens
+                .iter()
+                .zip(&shared[i])
+                .filter(|&(_, &count)| is_repeated(i, count))
+                .map(|(token, _)| texts[token.id as usize].chars().filter(|c| c.is_alphanumeric()))
+                .map(Iterator::count)
+                .sum();
+            peers[i] >= MIN_PEERS && alnum >= MIN_PATTERN_ALNUM
+        })
+        .collect();
+
     // The pattern of a group is identified by the text its lines repeat, the most common one
     // amongst its lines, so that it remains the same while the lines scroll.
     let mut signatures: HashMap<usize, HashMap<u64, usize>> = HashMap::new();
+    // The first, topmost, line of every group.
+    let mut first_lines: HashMap<usize, usize> = HashMap::new();
     for (i, line_tokens) in lines_tokens.iter().enumerate() {
-        if peers[i] < MIN_PEERS {
+        if !eligible[i] {
             continue;
         }
         let mut hasher = DefaultHasher::new();
@@ -323,6 +384,7 @@ fn analyze_with_memo(lines: &[Vec<char>], memo: &mut PairMemo) -> Analysis {
         }
         let root = find(&mut groups, i);
         *signatures.entry(root).or_default().entry(hasher.finish()).or_default() += 1;
+        first_lines.entry(root).or_insert(i);
     }
     let patterns: HashMap<usize, u64> = signatures
         .into_iter()
@@ -339,21 +401,31 @@ fn analyze_with_memo(lines: &[Vec<char>], memo: &mut PairMemo) -> Analysis {
     let mut res = Analysis {
         emphasis: lines.iter().map(|line| vec![None; line.len()]).collect(),
         spans: vec![],
+        first_spans: vec![],
+        instances: vec![],
     };
     for (i, line_tokens) in lines_tokens.iter().enumerate() {
-        if peers[i] < MIN_PEERS || !has_earlier_peer[i] {
+        if !eligible[i] {
             continue;
         }
-        let pattern = patterns[&find(&mut groups, i)];
+        let root = find(&mut groups, i);
+        let pattern = patterns[&root];
         let borders = border_tokens(&line_tokens.tokens, &texts);
+
+        // The first instance of the pattern is left as is.
+        let first = first_lines[&root] == i;
+
+        let mut spans = vec![];
         let mut span: Option<PatternSpan> = None;
         for ((token, &count), border) in line_tokens.tokens.iter().zip(&shared[i]).zip(borders) {
             let emphasis = if is_repeated(i, count) {
                 // The smoke stays clear of the characters drawing tables and lines.
                 if border {
-                    res.spans.extend(span.take());
-                    res.emphasis[i][token.start..token.end]
-                        .fill(Some(Emphasis::Repeated { dim: dim_for(count + 1), pattern }));
+                    spans.extend(span.take());
+                    if !first {
+                        res.emphasis[i][token.start..token.end]
+                            .fill(Some(Emphasis::Repeated { dim: dim_for(count + 1), pattern }));
+                    }
                     continue;
                 }
 
@@ -367,12 +439,29 @@ fn analyze_with_memo(lines: &[Vec<char>], memo: &mut PairMemo) -> Analysis {
                 span.end = token.end;
                 Emphasis::Repeated { dim: dim_for(count + 1), pattern }
             } else {
-                res.spans.extend(span.take());
+                spans.extend(span.take());
                 Emphasis::Unique
             };
-            res.emphasis[i][token.start..token.end].fill(Some(emphasis));
+            if !first {
+                res.emphasis[i][token.start..token.end].fill(Some(emphasis));
+            }
         }
-        res.spans.extend(span);
+        spans.extend(span);
+
+        // The repeated text of the line, ignoring table borders.
+        if let (Some(start), Some(end)) = (spans.first(), spans.last()) {
+            res.instances.push(PatternInstance {
+                line: i,
+                start: start.start,
+                end: end.end,
+                pattern,
+            });
+        }
+        if first {
+            res.first_spans.extend(spans);
+        } else {
+            res.spans.extend(spans);
+        }
     }
     res
 }
@@ -386,19 +475,26 @@ pub struct RepeatedText {
 }
 
 impl RepeatedText {
-    /// Analyzes the `lines`, returns whether the emphasis changed since the last call.
-    pub fn update(&mut self, lines: &[Vec<char>]) -> bool {
+    /// Analyzes the `lines` and the `colors` of their columns, returns whether the analysis
+    /// changed since the last call.
+    pub fn update(&mut self, lines: &[Vec<char>], colors: &[Vec<CellColor>]) -> bool {
         let mut hasher = DefaultHasher::new();
         lines.hash(&mut hasher);
+        colors.hash(&mut hasher);
         let hash = hasher.finish();
         if self.hash == Some(hash) {
             return false;
         }
         self.hash = Some(hash);
-        let analysis = analyze_with_memo(lines, &mut self.memo);
+        let analysis = analyze_with_memo(lines, colors, &mut self.memo);
         let changed = analysis != self.analysis;
         self.analysis = analysis;
         changed
+    }
+
+    /// The lines that are part of a pattern in the last analysis.
+    pub fn instances(&self) -> &[PatternInstance] {
+        &self.analysis.instances
     }
 
     /// Emphasis of the cell at the viewport `line` and `column`.
@@ -409,6 +505,22 @@ impl RepeatedText {
     /// The runs of repeated text of the last analysis.
     pub fn spans(&self) -> &[PatternSpan] {
         &self.analysis.spans
+    }
+
+    /// The runs of repeated text of the first instances of the patterns, which are not dimmed.
+    pub fn first_spans(&self) -> &[PatternSpan] {
+        &self.analysis.first_spans
+    }
+
+    /// The pattern of the repeated text at the viewport `line` and `column`, if any.
+    pub fn pattern_at(&self, line: usize, column: usize) -> Option<u64> {
+        self.analysis
+            .instances
+            .iter()
+            .find(|instance| {
+                instance.line == line && (instance.start..instance.end).contains(&column)
+            })
+            .map(|instance| instance.pattern)
     }
 
     /// Forgets the analysis, i.e. when the feature is disabled.
@@ -506,13 +618,13 @@ mod tests {
 
         // Box drawing borders and rules.
         let boxed = lines(&[
-            "│ a │ x 1 │",
-            "├───┼─────┤",
-            "│ a │ x 2 │",
-            "├───┼─────┤",
-            "│ a │ x 3 │",
-            "├───┼─────┤",
-            "│ a │ x 4 │",
+            "│ alpha │ beta 1 │",
+            "├───────┼────────┤",
+            "│ alpha │ beta 2 │",
+            "├───────┼────────┤",
+            "│ alpha │ beta 3 │",
+            "├───────┼────────┤",
+            "│ alpha │ beta 4 │",
         ]);
         let res = analyze(&boxed);
         for span in &res.spans {
@@ -520,6 +632,73 @@ mod tests {
             assert!(!text.contains(['│', '─', '┼', '├', '┤']), "{text:?}");
         }
         assert!(!res.spans.is_empty());
+    }
+
+    #[test]
+    fn patterns_need_enough_alphanumeric_text() {
+        // The lines only share "- item", 4 alphanumeric characters.
+        let lines = lines(&["- first item", "- second item", "- third item", "- fourth item"]);
+        let res = analyze(&lines);
+        assert!(res.emphasis.iter().flatten().all(Option::is_none));
+        assert!(res.instances.is_empty());
+    }
+
+    #[test]
+    fn repeated_text_needs_the_same_color() {
+        let text: Vec<String> = (0..4).map(|i| format!("Compiling crate{i} v0.1.{i}")).collect();
+        let lines = lines(&text.iter().map(String::as_str).collect::<Vec<_>>());
+        let colored = |colors: [CellColor; 4]| -> Vec<Vec<CellColor>> {
+            colors.iter().zip(&lines).map(|(&color, line)| vec![color; line.len()]).collect()
+        };
+
+        let (green, red) = ((0, 255, 0), (255, 0, 0));
+        let res = analyze_colored(&lines, &colored([green; 4]));
+        assert_eq!(res.instances.len(), 4);
+
+        // Two lines of each color are not enough to make a pattern.
+        let res = analyze_colored(&lines, &colored([green, red, green, red]));
+        assert!(res.instances.is_empty());
+    }
+
+    #[test]
+    fn instances_include_the_first_line() {
+        let lines = lines(&[
+            "$ ping 1.1.1.1",
+            "64 bytes from 1.1.1.1: icmp_seq=1 ttl=57 time=12.3 ms",
+            "64 bytes from 1.1.1.1: icmp_seq=2 ttl=57 time=11.8 ms",
+            "  64 bytes from 1.1.1.1: icmp_seq=3 ttl=57 time=13.1 ms",
+        ]);
+        let res = analyze(&lines);
+        let instances: Vec<(usize, usize, usize)> = res
+            .instances
+            .iter()
+            .map(|instance| (instance.line, instance.start, instance.end))
+            .collect();
+        assert_eq!(instances, [(1, 0, 53), (2, 0, 53), (3, 2, 55)]);
+        assert!(res.instances.iter().all(|instance| instance.pattern == res.instances[0].pattern));
+
+        // The first line is not dimmed but its spans are known, i.e. to outline them on hover.
+        assert!(res.first_spans.iter().all(|span| span.line == 1));
+        assert_eq!(res.first_spans.len(), res.spans.iter().filter(|span| span.line == 2).count());
+    }
+
+    #[test]
+    fn pattern_under_the_mouse() {
+        let lines = lines(&[
+            "$ ping 1.1.1.1",
+            "64 bytes from 1.1.1.1: icmp_seq=1 ttl=57 time=12.3 ms",
+            "64 bytes from 1.1.1.1: icmp_seq=2 ttl=57 time=11.8 ms",
+            "64 bytes from 1.1.1.1: icmp_seq=3 ttl=57 time=13.1 ms",
+        ]);
+        let mut repeated = RepeatedText::default();
+        repeated.update(&lines, &[]);
+        let pattern = repeated.instances()[0].pattern;
+        // Including the first line and the unique parts within the repeated text.
+        assert_eq!(repeated.pattern_at(1, 0), Some(pattern));
+        assert_eq!(repeated.pattern_at(2, 32), Some(pattern));
+        assert_eq!(repeated.pattern_at(3, 52), Some(pattern));
+        assert_eq!(repeated.pattern_at(3, 53), None);
+        assert_eq!(repeated.pattern_at(0, 0), None);
     }
 
     #[test]
@@ -585,11 +764,11 @@ mod tests {
     #[test]
     fn cache_reports_changes() {
         let mut repeated = RepeatedText::default();
-        let a = lines(&["a b c 1", "a b c 2", "a b c 3"]);
-        assert!(repeated.update(&a));
-        assert!(!repeated.update(&a));
-        assert_eq!(repeated.get(0, 6), None);
-        assert_eq!(repeated.get(1, 6), Some(Emphasis::Unique));
+        let a = lines(&["abc def ghi 1", "abc def ghi 2", "abc def ghi 3"]);
+        assert!(repeated.update(&a, &[]));
+        assert!(!repeated.update(&a, &[]));
+        assert_eq!(repeated.get(0, 12), None);
+        assert_eq!(repeated.get(1, 12), Some(Emphasis::Unique));
         assert!(matches!(repeated.get(1, 0), Some(Emphasis::Repeated { .. })));
         assert_eq!(repeated.get(9, 0), None);
         assert_eq!(repeated.spans().len(), 2);
@@ -622,11 +801,11 @@ mod bench {
 
         // Scroll by one line, as a new line of output arrives.
         let mut memo = PairMemo::new();
-        analyze_with_memo(&lines, &mut memo);
+        analyze_with_memo(&lines, &[], &mut memo);
         let mut scrolled = lines[1..].to_vec();
         scrolled.push("64 bytes from 1.1.1.1: icmp_seq=80 ttl=57 time=1.2 ms".chars().collect());
         let start = std::time::Instant::now();
-        analyze_with_memo(&scrolled, &mut memo);
+        analyze_with_memo(&scrolled, &[], &mut memo);
         eprintln!("analyze 80x200 scrolled with memo: {:?}", start.elapsed());
         assert!(res.emphasis.iter().any(|l| l.iter().any(Option::is_some)));
     }

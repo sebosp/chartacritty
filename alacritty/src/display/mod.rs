@@ -62,7 +62,7 @@ use crate::string::{ShortenDirection, StrShortener};
 // Chartacritty:
 use alacritty_terminal::decorations::{
     DecorationLines, DecorationPoints, DecorationTriangles, DecorationTypes, DecorationsConfig,
-    grid_lines, repeated_text, tables,
+    grid_lines, pattern_links, repeated_text, tables,
 };
 use alacritty_terminal::term::TermChartsHandle;
 
@@ -426,6 +426,8 @@ pub struct Display {
     grid_line_star: grid_lines::GridLineStar,
     /// Analysis of the text repeated across the visible lines.
     repeated_text: repeated_text::RepeatedText,
+    /// Viewport point of the mouse, to highlight the repeated text pattern under it.
+    pattern_mouse_point: Option<Point<usize>>,
     /// The tables in the view, drawn as rounded rectangles behind their cells.
     tables: tables::Tables,
     tokio_setup: Option<TermChartsHandle>,
@@ -579,6 +581,7 @@ impl Display {
             decorations,
             grid_line_star: Default::default(),
             repeated_text: Default::default(),
+            pattern_mouse_point: Default::default(),
             tables: Default::default(),
             tokio_setup: None,
         })
@@ -948,7 +951,9 @@ impl Display {
         if !tables_vertices.is_empty() {
             self.renderer.draw_nannou_vertices(&size_info, tables_vertices);
         }
-        self.draw_pattern_smoke();
+        let hovered_pattern = self.hovered_pattern();
+        self.draw_pattern_smoke(hovered_pattern);
+        self.draw_pattern_links(decorations_enabled, hovered_pattern);
         let mut lines = RenderLines::new();
         let mut line_cells = Vec::new();
 
@@ -986,7 +991,7 @@ impl Display {
 
                 // Dim repeated text and highlight the parts of it that differ.
                 if let Some(emphasis) = repeated_text.get(cell.point.line, cell.point.column.0) {
-                    cell.fg = emphasize(cell.fg, cell.bg, emphasis);
+                    cell.fg = emphasize(cell.fg, cell.bg, emphasis, hovered_pattern);
                 }
 
                 // Underline hints hovered by mouse or vi mode cursor.
@@ -1261,25 +1266,26 @@ impl Display {
         let repeated_text = decorations_enabled && self.decorations.repeated_text.enabled;
         let tables = decorations_enabled && self.decorations.tables.enabled;
 
-        let lines = (repeated_text || tables).then(|| {
-            let mut lines =
-                vec![vec![' '; self.size_info.columns()]; self.size_info.screen_lines()];
+        // The characters of the visible lines and their colors, before any emphasis.
+        let (columns, screen_lines) = (self.size_info.columns(), self.size_info.screen_lines());
+        let mut lines = vec![vec![' '; columns]; screen_lines];
+        let mut colors = vec![vec![repeated_text::CellColor::default(); columns]; screen_lines];
+        if repeated_text || tables {
             for cell in grid_cells {
-                if let Some(c) = lines
-                    .get_mut(cell.point.line)
-                    .and_then(|line| line.get_mut(cell.point.column.0))
-                {
+                let (line, column) = (cell.point.line, cell.point.column.0);
+                if let Some(c) = lines.get_mut(line).and_then(|line| line.get_mut(column)) {
                     *c = cell.character;
+                    colors[line][column] = (cell.fg.0.r, cell.fg.0.g, cell.fg.0.b);
                 }
             }
-            lines
-        });
+        }
+        let lines = (repeated_text || tables).then_some(lines);
 
         // Lines are dimmed depending on the other lines and a single new line can turn the lines
         // above it into a table, so a single new line of output can change the whole screen.
         let mut changed = false;
         match lines.as_deref() {
-            Some(lines) if repeated_text => changed |= self.repeated_text.update(lines),
+            Some(lines) if repeated_text => changed |= self.repeated_text.update(lines, &colors),
             _ => self.repeated_text.clear(),
         }
         match lines.as_deref() {
@@ -1294,19 +1300,72 @@ impl Display {
         }
     }
 
+    /// The repeated text pattern under the mouse.
+    fn hovered_pattern(&self) -> Option<u64> {
+        let point = self.pattern_mouse_point?;
+        self.repeated_text.pattern_at(point.line, point.column.0)
+    }
+
+    /// Connects the lines of every repeated text pattern, see `pattern_links`.
+    fn draw_pattern_links(&mut self, decorations_enabled: bool, hovered_pattern: Option<u64>) {
+        if !decorations_enabled || !self.decorations.pattern_links.enabled {
+            return;
+        }
+
+        let size_info = self.size_info;
+        let links = pattern_links::layout(self.repeated_text.instances(), size_info.into());
+        if links.is_empty() {
+            return;
+        }
+
+        // Sections travel along the links on every frame.
+        self.damage_tracker.frame().mark_fully_damaged();
+        self.damage_tracker.next_frame().mark_fully_damaged();
+
+        let time = self.decorations.get_elapsed_secs_with_millis();
+        let vertices: Vec<f32> = pattern_links::gen_vertices(
+            &links,
+            size_info.into(),
+            time,
+            hovered_pattern,
+            pattern_rgb,
+        )
+        .into_iter()
+        .flat_map(|vertices| vertices.vecs)
+        .collect();
+        self.renderer.draw_nannou_vertices(&size_info, &vertices);
+    }
+
     /// Draws a faint smoky beam of light, in the color of its pattern, behind each span of
-    /// repeated text.
-    fn draw_pattern_smoke(&mut self) {
+    /// repeated text, the spans of the pattern under the mouse are outlined instead.
+    fn draw_pattern_smoke(&mut self, hovered_pattern: Option<u64>) {
+        let size_info = self.size_info;
+        if let Some(hovered) = hovered_pattern {
+            let repeated_text = &self.repeated_text;
+            let spans: Vec<_> = repeated_text
+                .spans()
+                .iter()
+                .chain(repeated_text.first_spans())
+                .filter(|span| span.pattern == hovered)
+                .copied()
+                .collect();
+            let vertices: Vec<f32> =
+                pattern_links::gen_outline_vertices(&spans, size_info.into(), pattern_rgb)
+                    .into_iter()
+                    .flat_map(|vertices| vertices.vecs)
+                    .collect();
+            self.renderer.draw_nannou_vertices(&size_info, &vertices);
+        }
+
         let spans = self.repeated_text.spans();
         if spans.is_empty() {
             return;
         }
 
-        let size_info = self.size_info;
         let (width, height) = (size_info.width(), size_info.height());
         let (cw, ch) = (size_info.cell_width(), size_info.cell_height());
         let mut vertices = Vec::with_capacity(spans.len() * 6 * SMOKE_VERTEX_FLOATS);
-        for span in spans {
+        for span in spans.iter().filter(|span| Some(span.pattern) != hovered_pattern) {
             let Rgb(color) = pattern_color(span.pattern);
             let [r, g, b] = [color.r, color.g, color.b].map(|c| c as f32 / 255.);
 
@@ -1471,6 +1530,18 @@ impl Display {
         // Force full redraw if the vi mode highlight was cleared.
         if dirty {
             self.damage_tracker.frame().mark_fully_damaged();
+        }
+
+        // Highlight the repeated text pattern under the mouse.
+        let display_offset = term.grid().display_offset();
+        let pattern_mouse_point = (self.window.mouse_visible() && mouse.inside_text_area)
+            .then(|| mouse.point(&self.size_info, display_offset))
+            .and_then(|point| term::point_to_viewport(display_offset, point));
+        let hovered_pattern = self.hovered_pattern();
+        self.pattern_mouse_point = pattern_mouse_point;
+        if self.hovered_pattern() != hovered_pattern {
+            self.damage_tracker.frame().mark_fully_damaged();
+            dirty = true;
         }
 
         // Abort if mouse highlighting conditions are not met.
@@ -2032,8 +2103,11 @@ const UNIQUE_HIGHLIGHT: f32 = 0.3;
 /// How much repeated text, once dimmed, is tinted with the color of its pattern.
 const PATTERN_TINT: f32 = 0.25;
 
+/// How much the repeated text of the pattern under the mouse is tinted with its color.
+const HOVERED_PATTERN_TINT: f32 = 0.4;
+
 /// Opacity of the smoke behind repeated text, the shader fades it further.
-const PATTERN_SMOKE_ALPHA: f32 = 0.35;
+const PATTERN_SMOKE_ALPHA: f32 = 0.175;
 
 /// A color for each repeated pattern, with the hue picked from the pattern id.
 fn pattern_color(pattern: u64) -> Rgb {
@@ -2050,10 +2124,20 @@ fn pattern_color(pattern: u64) -> Rgb {
     Rgb::new(channel(0.), channel(8.), channel(4.))
 }
 
+/// The color of a pattern as `[r, g, b]`.
+fn pattern_rgb(pattern: u64) -> [u8; 3] {
+    let Rgb(color) = pattern_color(pattern);
+    [color.r, color.g, color.b]
+}
+
 /// Dims repeated text towards the background, tinting it with the color of its pattern, and
-/// highlights the unique parts of it.
-fn emphasize(fg: Rgb, bg: Rgb, emphasis: repeated_text::Emphasis) -> Rgb {
+/// highlights the unique parts of it. The text of the `hovered` pattern is not dimmed but tinted
+/// further instead.
+fn emphasize(fg: Rgb, bg: Rgb, emphasis: repeated_text::Emphasis, hovered: Option<u64>) -> Rgb {
     match emphasis {
+        repeated_text::Emphasis::Repeated { pattern, .. } if hovered == Some(pattern) => {
+            fg * (1. - HOVERED_PATTERN_TINT) + pattern_color(pattern) * HOVERED_PATTERN_TINT
+        },
         repeated_text::Emphasis::Repeated { dim, pattern } => {
             let dimmed = fg * (1. - dim) + bg * dim;
             dimmed * (1. - PATTERN_TINT) + pattern_color(pattern) * PATTERN_TINT
@@ -2080,17 +2164,22 @@ mod tests {
 
         // Repeated text moves towards the background, tinted with the pattern color.
         let repeated = |dim| repeated_text::Emphasis::Repeated { dim, pattern: 1234 };
-        let dimmed = emphasize(fg, dark_bg, repeated(0.5));
+        let dimmed = emphasize(fg, dark_bg, repeated(0.5), None);
         let tint = pattern_color(1234);
         let expected = (110. * (1. - PATTERN_TINT) + tint.0.r as f32 * PATTERN_TINT) as i32;
         assert!((dimmed.0.r as i32 - expected).abs() <= 1, "{dimmed:?}");
-        let dimmer = emphasize(fg, dark_bg, repeated(0.65));
+        let dimmer = emphasize(fg, dark_bg, repeated(0.65), None);
         let luma = |c: Rgb| c.0.r as u32 + c.0.g as u32 + c.0.b as u32;
         assert!(luma(dimmer) < luma(dimmed));
 
+        // The text of the pattern under the mouse is not dimmed.
+        let hovered = emphasize(fg, dark_bg, repeated(0.65), Some(1234));
+        assert!(luma(hovered) > luma(dimmed));
+        assert_ne!(emphasize(fg, dark_bg, repeated(0.65), Some(1)), hovered);
+
         // Unique text moves away from the background.
-        assert!(emphasize(fg, dark_bg, repeated_text::Emphasis::Unique).0.r > fg.0.r);
-        assert!(emphasize(fg, light_bg, repeated_text::Emphasis::Unique).0.r < fg.0.r);
+        assert!(emphasize(fg, dark_bg, repeated_text::Emphasis::Unique, None).0.r > fg.0.r);
+        assert!(emphasize(fg, light_bg, repeated_text::Emphasis::Unique, None).0.r < fg.0.r);
     }
 
     #[test]
