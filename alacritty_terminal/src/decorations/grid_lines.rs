@@ -72,6 +72,32 @@ fn horizontal_offset(c: char) -> Option<f32> {
     }
 }
 
+/// Arms of a line character: whether it draws up to the top, bottom, left and right edges of its
+/// cell, i.e. the corner "┌" draws from the center of the cell to its bottom and its right.
+fn arms(c: char) -> [bool; 4] {
+    const UP: [bool; 4] = [true, false, false, false];
+    const DOWN: [bool; 4] = [false, true, false, false];
+    const LEFT: [bool; 4] = [false, false, true, false];
+    const RIGHT: [bool; 4] = [false, false, false, true];
+    let or = |arms: &[[bool; 4]]| {
+        arms.iter().fold([false; 4], |acc, arm| std::array::from_fn(|i| acc[i] || arm[i]))
+    };
+    match c {
+        '─' | '━' | '═' | '╌' | '╍' | '┄' | '┅' | '┈' | '┉' => or(&[LEFT, RIGHT]),
+        '┌' | '╭' | '╔' => or(&[DOWN, RIGHT]),
+        '┐' | '╮' | '╗' => or(&[DOWN, LEFT]),
+        '└' | '╰' | '╚' => or(&[UP, RIGHT]),
+        '┘' | '╯' | '╝' => or(&[UP, LEFT]),
+        '├' | '╠' => or(&[UP, DOWN, RIGHT]),
+        '┤' | '╣' => or(&[UP, DOWN, LEFT]),
+        '┬' | '╦' => or(&[DOWN, LEFT, RIGHT]),
+        '┴' | '╩' => or(&[UP, LEFT, RIGHT]),
+        '┼' | '╬' => [true; 4],
+        // Vertical lines and the eighth blocks.
+        _ => or(&[UP, DOWN]),
+    }
+}
+
 /// Whether the character may be part of a grid line.
 pub fn is_line_char(c: char) -> bool {
     vertical_offset(c).is_some() || horizontal_offset(c).is_some()
@@ -91,6 +117,10 @@ pub struct GridLine {
     pub offset: f32,
     /// Foreground color of the characters forming the line.
     pub color: Rgb,
+    /// Fraction of a cell the line is shorter at its start and end, the first and last
+    /// characters of a run may only draw from the center of their cells, i.e. "┌──┐".
+    pub start_trim: f32,
+    pub end_trim: f32,
 }
 
 /// A line character in the viewport: `(viewport line, column, character, foreground color)`.
@@ -101,53 +131,73 @@ pub type LineCell = (usize, usize, char, Rgb);
 pub fn find_grid_lines(cells: &[LineCell]) -> Vec<GridLine> {
     // Keyed by column for vertical lines and by line for horizontal lines, the values are the
     // positions along the line, kept sorted by the BTreeMap.
-    let mut vertical: BTreeMap<usize, BTreeMap<usize, (f32, Rgb)>> = BTreeMap::new();
-    let mut horizontal: BTreeMap<usize, BTreeMap<usize, (f32, Rgb)>> = BTreeMap::new();
+    let mut vertical: BTreeMap<usize, BTreeMap<usize, (f32, Rgb, char)>> = BTreeMap::new();
+    let mut horizontal: BTreeMap<usize, BTreeMap<usize, (f32, Rgb, char)>> = BTreeMap::new();
     for &(line, column, c, color) in cells {
         if let Some(offset) = vertical_offset(c) {
-            vertical.entry(column).or_default().insert(line, (offset, color));
+            vertical.entry(column).or_default().insert(line, (offset, color, c));
         }
         if let Some(offset) = horizontal_offset(c) {
-            horizontal.entry(line).or_default().insert(column, (offset, color));
+            horizontal.entry(line).or_default().insert(column, (offset, color, c));
         }
     }
+
+    // Trims the ends of the line whose characters do not reach the edges of their cells.
+    let finish = |line: GridLine, first: char, last: char| -> Option<GridLine> {
+        if line.len < MIN_RUN_LEN {
+            return None;
+        }
+        let ([up, _, left, _], [_, down, _, right]) = (arms(first), arms(last));
+        let (reaches_start, reaches_end) = match line.orientation {
+            Orientation::Vertical => (up, down),
+            Orientation::Horizontal => (left, right),
+        };
+        Some(GridLine {
+            start_trim: if reaches_start { 0. } else { 0.5 },
+            end_trim: if reaches_end { 0. } else { 0.5 },
+            ..line
+        })
+    };
 
     let mut res = vec![];
     for (orientation, groups) in
         [(Orientation::Vertical, vertical), (Orientation::Horizontal, horizontal)]
     {
         for (fixed, positions) in groups {
-            let mut run: Option<GridLine> = None;
-            for (pos, (offset, color)) in positions {
+            // The run and its first and last characters.
+            let mut run: Option<(GridLine, char, char)> = None;
+            for (pos, (offset, color, c)) in positions {
                 match &mut run {
                     // Extend the run while the cells are consecutive and the line is drawn at the
                     // same position across the cell with the same color, i.e. nvim highlights the
                     // indent guide of the cursor scope with its own color.
-                    Some(line)
+                    Some((line, _, last))
                         if line.start + line.len == pos
                             && line.offset == offset
                             && line.color == color =>
                     {
                         line.len += 1;
+                        *last = c;
                     },
                     _ => {
-                        if let Some(line) = run.take().filter(|line| line.len >= MIN_RUN_LEN) {
-                            res.push(line);
-                        }
-                        run = Some(GridLine {
+                        res.extend(
+                            run.take().and_then(|(line, first, last)| finish(line, first, last)),
+                        );
+                        let line = GridLine {
                             orientation,
                             fixed,
                             start: pos,
                             len: 1,
                             offset,
                             color,
-                        });
+                            start_trim: 0.,
+                            end_trim: 0.,
+                        };
+                        run = Some((line, c, c));
                     },
                 }
             }
-            if let Some(line) = run.filter(|line| line.len >= MIN_RUN_LEN) {
-                res.push(line);
-            }
+            res.extend(run.and_then(|(line, first, last)| finish(line, first, last)));
         }
     }
     res
@@ -163,14 +213,14 @@ impl GridLine {
         match self.orientation {
             Orientation::Vertical => {
                 let x = (self.fixed as f32 + self.offset) * cw;
-                let top = y(self.start as f32 * ch);
-                let bottom = y((self.start + self.len) as f32 * ch);
+                let top = y((self.start as f32 + self.start_trim) * ch);
+                let bottom = y(((self.start + self.len) as f32 - self.end_trim) * ch);
                 (Vec2::new(x, top), Vec2::new(x, bottom))
             },
             Orientation::Horizontal => {
                 let line_y = y((self.fixed as f32 + self.offset) * ch);
-                let left = self.start as f32 * cw;
-                let right = (self.start + self.len) as f32 * cw;
+                let left = (self.start as f32 + self.start_trim) * cw;
+                let right = ((self.start + self.len) as f32 - self.end_trim) * cw;
                 (Vec2::new(left, line_y), Vec2::new(right, line_y))
             },
         }
@@ -346,10 +396,14 @@ mod tests {
             len: 3,
             offset: 1. / 16.,
             color: GUIDE,
+            start_trim: 0.,
+            end_trim: 0.,
         }));
         // The corners join the borders.
         assert!(vertical.iter().any(|l| l.fixed == 0 && l.start == 5 && l.len == 2));
         assert!(vertical.iter().any(|l| l.fixed == 3 && l.start == 5 && l.len == 2));
+        // "┌" starts at the center of its cell, the "│" below reaches the bottom of its cell.
+        assert!(vertical.iter().all(|l| l.fixed == 2 || (l.start_trim == 0.5 && l.end_trim == 0.)));
         assert_eq!(horizontal, vec![&GridLine {
             orientation: Orientation::Horizontal,
             fixed: 5,
@@ -357,7 +411,39 @@ mod tests {
             len: 4,
             offset: 0.5,
             color: GUIDE,
+            // The corners only draw from the center of their cells.
+            start_trim: 0.5,
+            end_trim: 0.5,
         }]);
+    }
+
+    #[test]
+    fn box_lines_have_the_length_of_their_characters() {
+        let size_info = size_info();
+        let text = ["┌──┐", "│  │", "└──┘"];
+        let cells: Vec<_> = text
+            .iter()
+            .enumerate()
+            .flat_map(|(line, text)| {
+                text.chars()
+                    .enumerate()
+                    .filter(|(_, c)| is_line_char(*c))
+                    .map(move |(column, c)| (line, column, c, GUIDE))
+            })
+            .collect();
+        let lines = find_grid_lines(&cells);
+        assert_eq!(lines.len(), 4);
+        let (cw, ch) = (size_info.cell_width, size_info.cell_height);
+        for line in &lines {
+            let (start, end) = line.endpoints(size_info);
+            let length = (end - start).length();
+            // From the center of a corner to the center of the other one.
+            let expected = match line.orientation {
+                Orientation::Horizontal => 3. * cw,
+                Orientation::Vertical => 2. * ch,
+            };
+            assert!((length - expected).abs() < 1e-3, "{line:?}: {length} != {expected}");
+        }
     }
 
     #[test]
@@ -381,6 +467,8 @@ mod tests {
             len: 5,
             offset: 0.5,
             color: GUIDE,
+            start_trim: 0.,
+            end_trim: 0.,
         }]);
     }
 
