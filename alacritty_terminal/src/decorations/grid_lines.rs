@@ -361,6 +361,30 @@ mod tests {
     }
 
     #[test]
+    fn gutter_line() {
+        // bat/less style line numbers, the empty lines must not interrupt the line.
+        let text = ["  41 │", "  42 │ # TODO", "  43 │", "  44 │ ## Tauri", "  45 │"];
+        let cells: Vec<_> = text
+            .iter()
+            .enumerate()
+            .flat_map(|(line, text)| {
+                text.chars()
+                    .enumerate()
+                    .filter(|(_, c)| is_line_char(*c))
+                    .map(move |(column, c)| (line, column, c, GUIDE))
+            })
+            .collect();
+        assert_eq!(find_grid_lines(&cells), vec![GridLine {
+            orientation: Orientation::Vertical,
+            fixed: 5,
+            start: 0,
+            len: 5,
+            offset: 0.5,
+            color: GUIDE,
+        }]);
+    }
+
+    #[test]
     fn splits_runs_by_color() {
         // The cursor scope guide is highlighted from line 2 on.
         let cells: Vec<_> =

@@ -965,12 +965,9 @@ impl Display {
             let repeated_text = &self.repeated_text;
 
             let cells = grid_cells.into_iter().map(|mut cell| {
-                // Dim repeated text and highlight the parts of it that differ.
-                if let Some(emphasis) = repeated_text.get(cell.point.line, cell.point.column.0) {
-                    cell.fg = emphasize(cell.fg, cell.bg, emphasis);
-                }
-
-                // Collect the characters that may form grid lines, i.e. nvim indent guides.
+                // Collect the characters that may form grid lines, i.e. nvim indent guides, with
+                // their original color, the emphasis below differs from line to line and would
+                // split them.
                 if collect_line_cells && grid_lines::is_line_char(cell.character) {
                     line_cells.push((
                         cell.point.line,
@@ -978,6 +975,11 @@ impl Display {
                         cell.character,
                         cell.fg.0,
                     ));
+                }
+
+                // Dim repeated text and highlight the parts of it that differ.
+                if let Some(emphasis) = repeated_text.get(cell.point.line, cell.point.column.0) {
+                    cell.fg = emphasize(cell.fg, cell.bg, emphasis);
                 }
 
                 // Underline hints hovered by mouse or vi mode cursor.
