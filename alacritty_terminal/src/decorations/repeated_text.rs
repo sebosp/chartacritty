@@ -180,6 +180,42 @@ fn lcs_matches(a: &[Token], b: &[Token]) -> PairMatch {
 /// Token matches between pairs of lines, keyed by the hashes of both lines, smallest first.
 type PairMemo = HashMap<(u64, u64), PairMatch>;
 
+/// Characters always used to draw borders of tables and lines.
+fn is_border_char(c: char) -> bool {
+    // Box drawing and block elements, i.e. "│", "─", "┼" or "▏".
+    matches!(c, '|' | '\u{2500}'..='\u{259F}')
+}
+
+/// Characters drawing borders when next to other border characters, i.e. "+---+" or "|===|",
+/// but not in "a-b" or "x = 1".
+fn is_border_joiner(c: char) -> bool {
+    matches!(c, '-' | '=' | '+' | '~')
+}
+
+/// Marks the tokens drawing table borders and lines.
+fn border_tokens(tokens: &[Token], texts: &[String]) -> Vec<bool> {
+    let char_of = |token: &Token| {
+        let mut chars = texts[token.id as usize].chars();
+        chars.next().filter(|_| chars.next().is_none())
+    };
+    let chars: Vec<Option<char>> = tokens.iter().map(char_of).collect();
+    let is_border = |c: Option<char>| c.is_some_and(|c| is_border_char(c) || is_border_joiner(c));
+    let adjacent = |k: usize, other: usize| {
+        let (first, second) = if k < other { (k, other) } else { (other, k) };
+        tokens[first].end == tokens[second].start && is_border(chars[other])
+    };
+
+    (0..tokens.len())
+        .map(|k| match chars[k] {
+            Some(c) if is_border_char(c) => true,
+            Some(c) if is_border_joiner(c) => {
+                (k > 0 && adjacent(k, k - 1)) || (k + 1 < tokens.len() && adjacent(k, k + 1))
+            },
+            _ => false,
+        })
+        .collect()
+}
+
 /// Dim amount for text shared by `lines` lines.
 fn dim_for(lines: usize) -> f32 {
     let saturation =
@@ -309,9 +345,18 @@ fn analyze_with_memo(lines: &[Vec<char>], memo: &mut PairMemo) -> Analysis {
             continue;
         }
         let pattern = patterns[&find(&mut groups, i)];
+        let borders = border_tokens(&line_tokens.tokens, &texts);
         let mut span: Option<PatternSpan> = None;
-        for (token, &count) in line_tokens.tokens.iter().zip(&shared[i]) {
+        for ((token, &count), border) in line_tokens.tokens.iter().zip(&shared[i]).zip(borders) {
             let emphasis = if is_repeated(i, count) {
+                // The smoke stays clear of the characters drawing tables and lines.
+                if border {
+                    res.spans.extend(span.take());
+                    res.emphasis[i][token.start..token.end]
+                        .fill(Some(Emphasis::Repeated { dim: dim_for(count + 1), pattern }));
+                    continue;
+                }
+
                 // The line itself also contains the token.
                 let span = span.get_or_insert(PatternSpan {
                     line: i,
@@ -435,6 +480,46 @@ mod tests {
             .map(|span| lines[2][span.start..span.end].iter().collect())
             .collect();
         assert_eq!(spans, ["64 bytes from 1.1.1.1: icmp_seq=", "ttl=57 time=", ".", "ms"]);
+    }
+
+    #[test]
+    fn smoke_avoids_table_borders() {
+        let piped = lines(&[
+            "| crate-a | 1.0 | ok |",
+            "|---------|-----|----|",
+            "| crate-b | 2.0 | ok |",
+            "| crate-c | 3.0 | ok |",
+            "| crate-d | 4.0 | ok |",
+        ]);
+        let res = analyze(&piped);
+        let spans: Vec<String> = res
+            .spans
+            .iter()
+            .filter(|span| span.line == 3)
+            .map(|span| piped[3][span.start..span.end].iter().collect())
+            .collect();
+        // The dash of "crate-c" is text, the pipes are borders.
+        assert_eq!(spans, ["crate-", ".0", "ok"]);
+        assert!(res.spans.iter().all(|span| span.line != 1));
+        // The borders are still dimmed.
+        assert!(matches!(res.emphasis[3][0], Some(Emphasis::Repeated { .. })));
+
+        // Box drawing borders and rules.
+        let boxed = lines(&[
+            "│ a │ x 1 │",
+            "├───┼─────┤",
+            "│ a │ x 2 │",
+            "├───┼─────┤",
+            "│ a │ x 3 │",
+            "├───┼─────┤",
+            "│ a │ x 4 │",
+        ]);
+        let res = analyze(&boxed);
+        for span in &res.spans {
+            let text: String = boxed[span.line][span.start..span.end].iter().collect();
+            assert!(!text.contains(['│', '─', '┼', '├', '┤']), "{text:?}");
+        }
+        assert!(!res.spans.is_empty());
     }
 
     #[test]
