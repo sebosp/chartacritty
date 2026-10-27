@@ -455,7 +455,7 @@ impl Display {
         let rasterizer = Rasterizer::new()?;
 
         let font_size = config.font.size().scale(scale_factor);
-        debug!("Loading \"{}\" font", &config.font.normal().family);
+        debug!("Loading \"{}\" font", config.font.normal().family);
         let font = config.font.clone().with_size(font_size);
         let mut glyph_cache = GlyphCache::new(rasterizer, &font)?;
 

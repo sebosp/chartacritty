@@ -143,12 +143,15 @@ pub fn changed_fraction(
     if total == 0 { 0. } else { changed as f32 / total as f32 }
 }
 
+/// The characters and colors of each line on the screen.
+type Screen = (Vec<Vec<char>>, Vec<Vec<CellColor>>);
+
 /// The wind, blowing as the screen changes.
 #[derive(Debug, Default)]
 pub struct Wind {
     activity: f32,
     strength: f32,
-    previous: Option<(Vec<Vec<char>>, Vec<Vec<CellColor>>)>,
+    previous: Option<Screen>,
 }
 
 impl Wind {

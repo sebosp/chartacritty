@@ -476,6 +476,7 @@ pub fn spawn_charts_intervals(
 }
 /// `spawn_datasource_interval_polls` creates intervals for each series requested
 /// Each series will have to reply to a mspc tx with the data
+#[allow(clippy::result_unit_err)]
 pub async fn spawn_datasource_interval_polls(
     item: &MetricRequest,
     tx: mpsc::Sender<AsyncTask>,
