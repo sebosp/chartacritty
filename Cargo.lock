@@ -741,9 +741,7 @@ dependencies = [
  "guillotiere",
  "half",
  "image",
- "ktx2",
  "rectangle-pack",
- "ruzstd",
  "serde",
  "thiserror 2.0.21",
  "tracing",
@@ -3379,15 +3377,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ktx2"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d50be8a24c37debdf3170be6ca396d5b5b165f37f94837891adac735ca416b8"
-dependencies = [
- "bitflags 2.13.2",
-]
-
-[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3670,7 +3659,7 @@ dependencies = [
 [[package]]
 name = "nannou_core"
 version = "0.20.0"
-source = "git+https://github.com/sebosp/nannou?branch=upstream-upd-2026-09-30#bb4496de6d9bcd8040e1e6f6e20e7444d8a71ad7"
+source = "git+https://github.com/sebosp/nannou?branch=upstream-upd-2026-09-30#015d07034b7fd216e93e3ab44e208922479d2ad5"
 dependencies = [
  "glam",
  "num-traits",
@@ -3680,7 +3669,7 @@ dependencies = [
 [[package]]
 name = "nannou_draw"
 version = "0.20.0"
-source = "git+https://github.com/sebosp/nannou?branch=upstream-upd-2026-09-30#bb4496de6d9bcd8040e1e6f6e20e7444d8a71ad7"
+source = "git+https://github.com/sebosp/nannou?branch=upstream-upd-2026-09-30#015d07034b7fd216e93e3ab44e208922479d2ad5"
 dependencies = [
  "bevy",
  "bitflags 2.13.2",
@@ -4890,15 +4879,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 
 [[package]]
-name = "ruzstd"
-version = "0.8.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7c1c839d570d835527c9a5e4db7cb2198683a988cb9d7293fc8674e6bd58fc8"
-dependencies = [
- "twox-hash",
-]
-
-[[package]]
 name = "ryu"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5788,12 +5768,6 @@ name = "try-lock"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
-
-[[package]]
-name = "twox-hash"
-version = "2.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5283634e518fe9e82c7b20520bb4bc209009fd16c82077c802f8111ecbb0117a"
 
 [[package]]
 name = "typeid"
