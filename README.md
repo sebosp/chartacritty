@@ -1,9 +1,16 @@
 # Chartacritty = Alacritty plus charts and other useless decorations
 
 Last updated to:
-- Alacritty Terminal v0.25.1
-- Alacritty (base) 0.16.1
+- Alacritty Terminal v0.26.0
+- Alacritty (base) 0.17.0
 
+![Chartacritty 0.17.0: tables, grid lines, repeated text, the bonsai losing its leaves in the wind and the sun and rain timeline](https://github.com/sebosp/chartacritty/releases/download/v0.17.0-dev/chartacritty-demo.gif)
+
+The [full resolution video](https://github.com/sebosp/chartacritty/releases/download/v0.17.0-dev/chartacritty-demo.mp4)
+is attached to the [v0.17.0-dev release](https://github.com/sebosp/chartacritty/releases/tag/v0.17.0-dev).
+
+![Tables, indent guides, repeated ping output with its pattern highlighted on hover, the bonsai and the sunrise and rain outlook](extra/promo/chartacritty-decorations.png)
+![After a burst of output the wind blew the bonsai leaves to the ground](extra/promo/chartacritty-falling-leaves.png)
 ![Chartacritty moon phase decoration, light beam decoration, polar clock decoration, hexagon background decorations and christmas spirit with snow!](https://user-images.githubusercontent.com/873436/208736841-340e92cf-c14a-4ac8-b901-253d714421d6.gif)
 ![Chartacritty prometheus metrics enabled!](https://user-images.githubusercontent.com/873436/205136141-90adcb8a-cdce-4e03-aa72-d7761041424c.png)
 
@@ -19,10 +26,104 @@ This is a modified version of Alacritty that includes:
 - "Suspended in a light beam" (from Sagan's poem The Pale Blue Dot). a beam of "light" that travels through the background decorations "now and then".
 - Shader Toy [Vortex Street](https://www.shadertoy.com/view/MlS3Rh)
 - Shader Toy [Snowy](https://www.shadertoy.com/view/4dl3R4)
+- Decorations that read the text on screen: tables, grid lines, repeated text and the links between its patterns.
+- Nature: faint grass and an origami red maple bonsai moving in a wind made by the changes on screen.
+- Sunrise, sunset and rain forecast for your rough location, with a 24 hour timeline along the top.
+
+See the [CHANGELOG](./CHANGELOG.md) for what changed in each release.
+
+## Configuration
+
+Chartacritty reads `~/.config/chartacritty/chartacritty.yml` (or `chartacritty.toml`), it does not
+read Alacritty's config. The [example config](./chartacritty.yml) is the setup of the screenshots
+and documents every option, all of the decorations below are enabled by default.
+
+## Decorations from the screen contents
+
+These decorations look at the characters on screen, they are drawn behind the text.
+
+- `grid_lines`: runs of line characters, i.e. nvim indent guides `▏ ▏ ▏` or `│` borders, are drawn
+  as continuous lines, trimmed to the reach of their end characters, with a star travelling from
+  line to line.
+- `repeated_text`: lines similar to each other, i.e. `ping` output, have their repeated text dimmed
+  (longer than 4 alphanumeric characters) and the parts that differ highlighted. Hovering a
+  pattern outlines it everywhere on screen.
+- `pattern_links`: faint lines in the padding link the lines sharing a pattern, patterns on the
+  right half of the screen are linked from the right side of the window.
+- `tables`: the cells of box drawing tables and markdown/ASCII tables (`| a | b |`, `+---+`) are
+  drawn as rounded rectangles, each table in its own color.
+
+```yaml
+decorations:
+  grid_lines:
+    enabled: true
+  repeated_text:
+    enabled: true
+  pattern_links:
+    enabled: true
+  tables:
+    enabled: true
+```
+
+## Nature
+
+Faint grass along the bottom of the window and a big origami red maple bonsai made of outlined
+triangles. Each leaf is tied to the trunk by one vertex and slowly rotates, now and then a bit
+brighter.
+
+The grass and the bonsai share a wind that blows with the number of characters and colors that
+change on screen between frames (not the redraws): while the terminal is idle the leaves grow, a
+burst of output makes the wind stronger, shakes the leaves and blows them to the ground, and they
+grow back once the terminal is calm again.
+
+```yaml
+decorations:
+  nature:
+    grass: true
+    grass_lines: 1.2     # Height of the grass in lines
+    bonsai: true
+    bonsai_x: 0.72       # 0 is the left of the window, 1 its right
+    bonsai_height: 0.6   # Share of the window height
+    alpha: 1.0           # Multiplies the opacity of the grass and the bonsai
+```
+
+## Sun and weather
+
+With a rough location (it does not need to be precise), chartacritty computes the sunrise and the
+sunset (NOAA solar equations) and fetches the forecast around you from
+[Open-Meteo](https://open-meteo.com) in the background, no API key needed. Only the configured
+coordinates and 16 points around them, 15 and 35 km away, are sent.
+
+- The bottom right corner, next to the charts, shows how long until the next sunrise or sunset,
+  so you know when you can go for a walk, and whether rain is falling, coming or nearby, so you
+  know if you can run for groceries. A rain shader falls in that corner while it rains or rain is
+  coming.
+- A timeline along the top of the window goes from 12 hours ago on the left to 12 hours ahead on
+  the right, with a small triangle pointing down at the current time. The daylight is a faint sun
+  color, brighter for the sunlight left today, clouds are white-ish and rain is blue-ish. It uses
+  up to 12 pixels of `window.padding.y` when set.
+
+```yaml
+decorations:
+  location:
+    latitude: 52.37
+    longitude: 4.90
+  weather:
+    enabled: true
+    sun: true
+    rain: true
+    columns: 32
+    lines: 6
+    refresh_minutes: 10
+    timeline: true
+    timeline_height: 6.0
+```
 
 ## Nannou State
 
-We're back with nannou, using a small fork sebop_nannou.
+The nannou decorations use [nannou_draw](https://github.com/nannou-org/nannou) 0.20 (bevy) from the
+fork [sebosp/nannou](https://github.com/sebosp/nannou), only to tessellate, the vertices are drawn
+by chartacritty's OpenGL renderer.
 
 ## Integrating Shader Toys
 
@@ -118,143 +219,6 @@ And just have fun in general...
 
 ## Mirror the screenshot setup
 
-```yaml
-keyboard:
-  bindings:
-    - { key: Comma,    mods: Alt,     action: ToggleChartShow                  }
-    - { key: Period,   mods: Alt,     chars: "\x1b."                           }
-charts:
-  default_dimensions:
-    x: 50
-    y: 25
-  position:
-    x: 1000
-  spacing: 10
-  charts:
-    - name: async loaded items
-      series:
-        - name: Number of input items for TimeSeries
-          type: async_items_loaded
-          refresh: 1
-          color: "0x9c27b0"
-          alpha: 1.0
-    - name: output newlines
-      series:
-        - name: output
-          type: alacritty_output
-          color: "0x00ff00"
-          alpha: 1.0
-          missing_values_policy: last
-          collision_policy: Increment
-    - name: input newlines
-      series:
-        - name: input
-          type: alacritty_input
-          color: "0xff0000"
-          alpha: 1.0
-          missing_values_policy: last
-          collision_policy: Increment
-    - name: load
-      decorations:
-        - type: reference
-          value: 16.0
-          color: "0x03dac6"
-          alpha: 0.3
-          height_multiplier: 0.05
-        - type: alert
-          target: prometheus alerts # ties to below series of the same name
-          threshold: 0
-          comparator: '>'
-          color: "0xff0000"
-      series:
-        - name: load average 1 min
-          type: prometheus
-          refresh: 15
-          source: 'http://localhost:9090/api/v1/query_range?query=node_load1'
-          color: "0xbb86cf"
-          alpha: 0.9
-          missing_values_policy: avg
-          collision_policy: Overwrite
-          metrics_capacity: 30
-        - name: load average 5 min
-          type: prometheus
-          refresh: 15
-          source: 'http://localhost:9090/api/v1/query_range?query=node_load5'
-          color: "0xba68c8"
-          alpha: 0.6
-          missing_values_policy: avg
-          collision_policy: Overwrite
-          metrics_capacity: 30
-        - name: load average 15 min
-          type: prometheus
-          refresh: 15
-          source: 'http://localhost:9090/api/v1/query_range?query=node_load15'
-          color: "0xee98fb"
-          alpha: 0.3
-          missing_values_policy: avg
-          collision_policy: Overwrite
-          metrics_capacity: 30
-        - name: prometheus alerts
-          type: prometheus
-          refresh: 15
-          source: 'http://localhost:9090/api/v1/query_range?query=ALERTS'
-          color: "0xff0000"
-          collision_policy: Overwrite
-          missing_values_policy: zero  # The ALERT type queries tend to disappear, so making them zero by default
-          alpha: 0.0                   # This is meant only for alerting, so it will be set to transparent
-    - name: memory
-      series:
-        - name: memory used
-          type: prometheus
-          refresh: 15
-          source: 'http://localhost:9090/api/v1/query_range?query=node_memory_Active_bytes'
-          color: "0xcf6679"
-          alpha: 1.0
-          missing_values_policy: avg
-          collision_policy: Overwrite
-          metrics_capacity: 30
-        - name: memory total
-          type: prometheus
-          refresh: 15
-          source: 'http://localhost:9090/api/v1/query_range?query=node_memory_MemTotal_bytes'
-          color: "0xe1f5fe"
-          alpha: 1.0
-          missing_values_policy: avg
-          collision_policy: Overwrite
-          metrics_capacity: 30
-decorations:
-  decorators:
-    - type: Triangles
-      props:
-        type: Hexagon
-        props:
-          vertex_color: "0x1958a7"
-          center_color: "0x000000"
-          alpha: 0.05
-          radius: 100
-    - type: Triangles
-      props:
-        type: Nannou
-        props:
-          color: "0x1958a7"
-          alpha: 0.2
-          radius: 100 # This needs to be the same as the above radius or the hexs won't match
-#    - type: Points
-#      props:
-#        type: Hexagon
-#        props:
-#          animated: true
-#          color: "0x1958a7"
-#          alpha: 0.4
-#          radius: 100
-#          update_interval: 15
-#    - type: Lines
-#      props:
-#        type: Hexagon
-#        props:
-#          color: "0x1958a7"
-#          alpha: 0.3
-#          radius: 100
-#debug:
-#  print_events: true
-```
+The [example config](./chartacritty.yml) is the setup of the screenshots, copy it to
+`~/.config/chartacritty/chartacritty.yml` and point the prometheus charts to your own Prometheus.
+The charts can be toggled with `Alt+,` (`ToggleChartShow`).

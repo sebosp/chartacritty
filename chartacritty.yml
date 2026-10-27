@@ -44,11 +44,11 @@ font:
   size: 10.0
 
 
-# If `true`, bold text is drawn using the bright color variants.
-draw_bold_text_with_bright_colors: true
-
 # Colors (Tomorrow Night Bright)
 colors:
+  # If `true`, bold text is drawn using the bright color variants.
+  draw_bold_text_with_bright_colors: true
+
   # Default colors
   primary:
     background: '0x151515'
@@ -104,8 +104,9 @@ selection:
   save_to_clipboard: true
 
 
-# Live config reload (changes require restart)
-live_config_reload: true
+general:
+  # Live config reload (changes require restart)
+  live_config_reload: true
 
 # Shell
 #
@@ -116,10 +117,11 @@ live_config_reload: true
 #   - (Linux/macOS) /bin/bash --login
 #   - (Linux/BSD) user login shell
 #   - (Windows) powershell
-shell:
-  program: /bin/bash
-#  args:
-#    - --login
+terminal:
+  shell:
+    program: /bin/bash
+#    args:
+#      - --login
 
 # Send ESC (\x1b) before characters when alt is pressed.
 # alt_send_esc: true
@@ -138,9 +140,10 @@ hints:
 # binding with the same triggers is defined. To unset a default binding, it can
 # be mapped to the `ReceiveChar` action. Alternatively, you can use `None` for
 # a no-op if you do not wish to receive input characters for that binding.
-key_bindings:
-  - { key: Comma,    mods: Alt,     action: ToggleChartShow                  }
-  - { key: Period,   mods: Alt,     chars: "\x1b."                           }
+keyboard:
+  bindings:
+    - { key: Comma,    mods: Alt,     action: ToggleChartShow                  }
+    - { key: Period,   mods: Alt,     chars: "\x1b."                           }
 charts:
   default_dimensions:
     x: 50
@@ -377,6 +380,42 @@ charts:
           collision_policy: Overwrite
           metrics_capacity: 30
 decorations:
+  # Runs of line characters, i.e. nvim indent guides and borders, drawn as continuous lines.
+  grid_lines:
+    enabled: true
+  # Dims text repeated across the visible lines (longer than 4 alphanumeric characters) and
+  # highlights the parts that differ, hovering a pattern highlights it across the screen.
+  repeated_text:
+    enabled: true
+  # Faint lines in the padding linking the lines that share a repeated pattern.
+  pattern_links:
+    enabled: true
+  # The cells of tables, box drawing or markdown/ASCII, behind rounded rectangles.
+  tables:
+    enabled: true
+  # Grass along the bottom and an origami red maple bonsai, moved by a wind that blows as the
+  # characters on screen change: leaves grow while idle and fall under heavy activity.
+  nature:
+    grass: true
+    grass_lines: 1.2     # Height of the grass in lines
+    bonsai: true
+    bonsai_x: 0.72       # 0 is the left of the window, 1 its right
+    bonsai_height: 0.6   # Share of the window height
+    alpha: 1.0           # Multiplies the opacity of the grass and the bonsai
+  # A rough location (no need to be precise) enables the sunrise/sunset and the rain forecast
+  # from Open-Meteo (https://open-meteo.com, no API key needed).
+  # location:
+  #   latitude: 52.37
+  #   longitude: 4.90
+  weather:
+    enabled: true
+    sun: true              # Next sunrise or sunset in the bottom right corner
+    rain: true             # Rain outlook and a rain shader in the bottom right corner
+    columns: 32            # Size of the bottom right corner, in cells
+    lines: 6
+    refresh_minutes: 10
+    timeline: true         # -12h to +12h along the top: daylight, sunlight left, clouds, rain
+    timeline_height: 6.0   # Pixels, uses up to 12 pixels of `window.padding.y` when set
   decorators:
     - type: Triangles
       props:
@@ -388,7 +427,7 @@ decorations:
           radius: 100
     - type: Triangles
       props:
-        type: Lyon
+        type: Nannou
         props:
           color: "0x1958a7"
           alpha: 0.2

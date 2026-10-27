@@ -1,6 +1,7 @@
 # Changelog
 
-All notable changes to Alacritty are documented in this file.
+All notable changes to Chartacritty are documented in this file, the changes inherited from
+Alacritty follow below in their own sections.
 The sections should follow the order `Packaging`, `Added`, `Changed`, `Fixed` and `Removed`.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
@@ -8,7 +9,52 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Notable changes to the `alacritty_terminal` crate are documented in its
 [CHANGELOG](./alacritty_terminal/CHANGELOG.md).
 
-## 0.17.0
+## Chartacritty 0.17.0-dev
+
+Based on Alacritty 0.17.0 and alacritty_terminal 0.26.0.
+
+### Packaging
+
+- Updated rustls, rustls-webpki and tokio for RUSTSEC-2026-0346 to RUSTSEC-2026-0349,
+  RUSTSEC-2026-0382 and RUSTSEC-2026-0386
+- Dropped the bevy tonemapping LUTs and their `ruzstd` decompressor (RUSTSEC-2026-0344),
+  nannou_draw is only used to tessellate
+- The example `chartacritty.yml` uses the current config keys and documents every new decoration
+
+### Added
+
+- `decorations.grid_lines`: runs of line characters, i.e. nvim indent guides and borders, drawn as
+  continuous lines trimmed to the reach of their end characters, with a star travelling from line to line
+- `decorations.repeated_text`: text repeated across the visible lines, i.e. `ping` output, is
+  dimmed and the parts that differ are highlighted, hovering a pattern outlines it everywhere
+- `decorations.pattern_links`: faint lines in the padding linking the lines sharing a pattern,
+  patterns on the right half of the screen are linked from the right side of the window
+- `decorations.tables`: the cells of box drawing and markdown/ASCII tables drawn as rounded
+  rectangles, each table in its own color
+- `decorations.nature`: faint grass along the bottom and an origami red maple bonsai drawn as
+  outlined triangles, moved by a wind blowing as the characters on screen change; leaves grow
+  while idle, fall to the ground under heavy activity and grow back once calm
+- `decorations.location`: a rough location to compute the sunrise and the sunset
+- `decorations.weather`: the next sunrise or sunset and the rain outlook from
+  [Open-Meteo](https://open-meteo.com) in the bottom right corner, with a rain shader when rain
+  is falling or coming
+- A timeline along the top of the window, from 12 hours ago to 12 hours ahead, with the daylight,
+  the sunlight left today, the cloud cover, the rain and a marker at the current time
+
+### Changed
+
+- Synced with Alacritty 0.17.0
+- Nannou decorations ported to nannou_draw 0.20 (bevy)
+- The config is loaded from `~/.config/chartacritty/chartacritty.yml` (then
+  `chartacritty.toml`) instead of Alacritty's config paths, without the YAML deprecation warning
+- Log messages from the `chartacritty` crate are shown
+
+### Fixed
+
+- Animated decorations stuttering on Wayland while the terminal is idle
+- GLES2 compilation of the hexagon background shader
+
+## Alacritty 0.17.0
 
 ### Packaging
 
