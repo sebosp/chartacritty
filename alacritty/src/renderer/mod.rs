@@ -25,7 +25,7 @@ use crate::renderer::hex_bg::HexBgRenderer;
 use crate::renderer::nannou::NannouRenderer;
 use crate::renderer::rects::{RectRenderer, RenderRect};
 use crate::renderer::shader::ShaderError;
-use crate::renderer::smoke::SmokeRenderer;
+use crate::renderer::rain::RainRenderer;
 
 pub mod charts;
 pub mod hex_bg;
@@ -33,7 +33,7 @@ pub mod nannou;
 pub mod platform;
 pub mod rects;
 mod shader;
-pub mod smoke;
+pub mod rain;
 mod text;
 
 pub use text::{GlyphCache, LoaderApi};
@@ -133,7 +133,7 @@ pub struct Renderer {
     chart_renderer: ChartRenderer,
     hex_bg_renderer: HexBgRenderer,
     nannou_renderer: NannouRenderer,
-    smoke_renderer: SmokeRenderer,
+    rain_renderer: RainRenderer,
     robustness: bool,
 }
 
@@ -201,21 +201,21 @@ impl Renderer {
             chart_renderer,
             hex_bg_renderer,
             nannou_renderer,
-            smoke_renderer,
+            rain_renderer,
         ) = if use_glsl3 {
             let text_renderer = TextRendererProvider::Glsl3(Glsl3Renderer::new()?);
             let rect_renderer = RectRenderer::new(ShaderVersion::Glsl3)?;
             let chart_renderer = ChartRenderer::new(ShaderVersion::Glsl3)?;
             let hex_bg_renderer = HexBgRenderer::new(ShaderVersion::Glsl3)?;
             let nannou_renderer = NannouRenderer::new(ShaderVersion::Glsl3)?;
-            let smoke_renderer = SmokeRenderer::new(ShaderVersion::Glsl3)?;
+            let rain_renderer = RainRenderer::new(ShaderVersion::Glsl3)?;
             (
                 text_renderer,
                 rect_renderer,
                 chart_renderer,
                 hex_bg_renderer,
                 nannou_renderer,
-                smoke_renderer,
+                rain_renderer,
             )
         } else {
             let text_renderer =
@@ -224,14 +224,14 @@ impl Renderer {
             let chart_renderer = ChartRenderer::new(ShaderVersion::Gles2)?;
             let hex_bg_renderer = HexBgRenderer::new(ShaderVersion::Gles2)?;
             let nannou_renderer = NannouRenderer::new(ShaderVersion::Gles2)?;
-            let smoke_renderer = SmokeRenderer::new(ShaderVersion::Gles2)?;
+            let rain_renderer = RainRenderer::new(ShaderVersion::Gles2)?;
             (
                 text_renderer,
                 rect_renderer,
                 chart_renderer,
                 hex_bg_renderer,
                 nannou_renderer,
-                smoke_renderer,
+                rain_renderer,
             )
         };
 
@@ -251,7 +251,7 @@ impl Renderer {
             chart_renderer,
             hex_bg_renderer,
             nannou_renderer,
-            smoke_renderer,
+            rain_renderer,
             robustness,
         })
     }
@@ -424,16 +424,16 @@ impl Renderer {
         self.activate_regular_state(size_info);
     }
 
-    /// Draws faint smoky beams of light, `vertices` is a triangle list of
-    /// `smoke::SMOKE_VERTEX_FLOATS` floats per vertex, animated at `time` seconds.
-    pub fn draw_smoke(&mut self, size_info: &SizeInfo, vertices: &[f32], time: f32) {
+    /// Draws rain, `vertices` is a triangle list of `rain::RAIN_VERTEX_FLOATS` floats per vertex,
+    /// animated at `time` seconds and slanted by `wind`, from 0 to 1.
+    pub fn draw_rain(&mut self, size_info: &SizeInfo, vertices: &[f32], time: f32, wind: f32) {
         if vertices.is_empty() {
             return;
         }
 
         Self::prepare_rect_rendering_state(size_info);
 
-        self.smoke_renderer.draw(vertices, time);
+        self.rain_renderer.draw(vertices, time, wind);
 
         self.activate_regular_state(size_info);
     }

@@ -1,10 +1,12 @@
 //! Pattern links decoration.
 //!
 //! Connects the lines of every repeated text pattern, see `repeated_text`, with very faint lines
-//! in the color of the pattern. Every pattern has a vertical trunk in the left padding of the
-//! window and a branch along the bottom of each of its lines, between the lines so that it does
-//! not cross any text, up to the end of the repeated text. Brighter sections travel back and
-//! forth along the links, from one line of the pattern to the next.
+//! in the color of the pattern. Every pattern has a vertical trunk in the padding of the window
+//! and a branch along the bottom of each of its lines, between the lines so that it does not
+//! cross any text. Patterns on the left half of the window have their trunk in the left padding
+//! and branches up to the end of the repeated text, patterns on the right half have their trunk
+//! in the right padding and branches up to the start of the repeated text, so that the links do
+//! not cross the whole window.
 
 use super::nannou::{NannouVertices, new_draw};
 use super::repeated_text::{PatternInstance, PatternSpan};
@@ -24,19 +26,6 @@ const BASE_WEIGHT: f32 = 1.;
 /// Opacity and width of the links of the pattern under the mouse.
 const HOVERED_ALPHA: f32 = 0.6;
 const HOVERED_WEIGHT: f32 = 1.5;
-
-/// Opacity and width of the sections travelling along the links, and of their glow.
-const PULSE_ALPHA: f32 = 0.45;
-const PULSE_WEIGHT: f32 = 1.5;
-const GLOW_ALPHA: f32 = 0.1;
-const GLOW_WEIGHT: f32 = 4.;
-
-/// Length of the travelling sections and their speed, in cells and cells per second.
-const PULSE_CELLS: f32 = 3.;
-const PULSE_CELLS_PER_SEC: f32 = 8.;
-
-/// Number of travelling sections per pattern.
-const PULSES: usize = 2;
 
 /// Opacity and width of the outlines of the repeated text of the pattern under the mouse.
 const OUTLINE_ALPHA: f32 = 0.85;
@@ -70,121 +59,92 @@ pub struct PatternLinks {
     pub branches: Vec<(f32, f32)>,
 }
 
-impl PatternLinks {
-    /// The route from the first line of the pattern to the last one, through the trunk.
-    fn route(&self) -> Vec<Vec2> {
-        let mut route = vec![];
-        let last = self.branches.len() - 1;
-        for (index, &(y, end)) in self.branches.iter().enumerate() {
-            if index > 0 {
-                route.push(Vec2::new(self.trunk_x, y));
-            }
-            route.push(Vec2::new(end, y));
-            if index < last {
-                route.push(Vec2::new(self.trunk_x, y));
-            }
-        }
-        route
-    }
+/// Assigns lanes to the vertical extents of trunks, ordered by their top, so that trunks that
+/// overlap vertically are in different lanes. Returns the lane of every trunk and the number of
+/// lanes.
+fn assign_lanes(extents: &[(f32, f32)]) -> (Vec<usize>, usize) {
+    let mut lanes_bottom: Vec<f32> = vec![];
+    let lanes = extents
+        .iter()
+        .map(|&(top, bottom)| match lanes_bottom.iter().position(|&lane| lane < top) {
+            Some(lane) => {
+                lanes_bottom[lane] = bottom;
+                lane
+            },
+            None => {
+                lanes_bottom.push(bottom);
+                lanes_bottom.len() - 1
+            },
+        })
+        .collect();
+    (lanes, lanes_bottom.len())
 }
 
 /// Places the links of the patterns with at least two lines.
 ///
-/// Patterns whose lines overlap vertically get their own lanes for their trunks, from the left
-/// edge of the window towards the text.
+/// Patterns whose lines overlap vertically get their own lanes for their trunks, from the edge
+/// of the window towards the text.
 pub fn layout(instances: &[PatternInstance], size_info: SizeInfo) -> Vec<PatternLinks> {
     let (cw, ch) = (size_info.cell_width, size_info.cell_height);
     let (padding_x, padding_y) = (size_info.padding_x, size_info.padding_y);
+    let half_columns = size_info.columns as f32 / 2.;
 
     let mut patterns: BTreeMap<u64, Vec<&PatternInstance>> = BTreeMap::new();
     for instance in instances {
         patterns.entry(instance.pattern).or_default().push(instance);
     }
 
-    // Branches of patterns, ordered by their first line.
-    let mut branches: Vec<(u64, Vec<(f32, f32)>)> = patterns
-        .into_iter()
-        .filter(|(_, instances)| instances.len() >= 2)
-        .map(|(pattern, mut instances)| {
-            instances.sort_by_key(|instance| instance.line);
-            let branches = instances
-                .iter()
-                .map(|instance| {
-                    // Between the line and the next one, under the repeated text.
-                    let y = padding_y + (instance.line + 1) as f32 * ch;
-                    (y, padding_x + instance.end as f32 * cw)
-                })
-                .collect();
-            (pattern, branches)
-        })
-        .collect();
-    branches.sort_by(|a, b| a.1[0].0.total_cmp(&b.1[0].0));
-
-    // Greedy assignment of lanes to the vertical extents of the trunks.
-    let mut lanes_bottom: Vec<f32> = vec![];
-    let lanes: Vec<usize> = branches
-        .iter()
-        .map(|(_, branches)| {
-            let (top, bottom) = (branches[0].0, branches[branches.len() - 1].0);
-            match lanes_bottom.iter().position(|&lane_bottom| lane_bottom < top) {
-                Some(lane) => {
-                    lanes_bottom[lane] = bottom;
-                    lane
-                },
-                None => {
-                    lanes_bottom.push(bottom);
-                    lanes_bottom.len() - 1
-                },
-            }
-        })
-        .collect();
-    let spacing =
-        (padding_x / (lanes_bottom.len() + 1) as f32).clamp(MIN_LANE_SPACING, MAX_LANE_SPACING);
-
-    branches
-        .into_iter()
-        .zip(lanes)
-        .map(|((pattern, branches), lane)| PatternLinks {
-            pattern,
-            trunk_x: spacing * (lane + 1) as f32,
-            branches,
-        })
-        .collect()
-}
-
-/// Length of a polyline.
-fn length(points: &[Vec2]) -> f32 {
-    points.windows(2).map(|pair| pair[0].distance(pair[1])).sum()
-}
-
-/// The part of the polyline between the distances `from` and `to` along it.
-fn sub_polyline(points: &[Vec2], from: f32, to: f32) -> Vec<Vec2> {
-    let mut res = vec![];
-    let mut travelled = 0.;
-    for pair in points.windows(2) {
-        let (a, b) = (pair[0], pair[1]);
-        let segment = a.distance(b);
-        let (start, end) = (travelled, travelled + segment);
-        travelled = end;
-        if segment == 0. || end < from || start > to {
+    // Branches of the patterns on each side, ordered by their first line.
+    let (mut left, mut right): (Vec<_>, Vec<_>) = (vec![], vec![]);
+    for (pattern, mut instances) in patterns {
+        if instances.len() < 2 {
             continue;
         }
-        let at = |distance: f32| a.lerp(b, ((distance - start) / segment).clamp(0., 1.));
-        if res.is_empty() {
-            res.push(at(from));
-        }
-        res.push(at(to));
+        instances.sort_by_key(|instance| instance.line);
+        let center = instances
+            .iter()
+            .map(|instance| (instance.start + instance.end) as f32 / 2.)
+            .sum::<f32>()
+            / instances.len() as f32;
+        let on_right = center > half_columns;
+        let branches: Vec<(f32, f32)> = instances
+            .iter()
+            .map(|instance| {
+                // Between the line and the next one, under the repeated text.
+                let y = padding_y + (instance.line + 1) as f32 * ch;
+                let column = if on_right { instance.start } else { instance.end };
+                (y, padding_x + column as f32 * cw)
+            })
+            .collect();
+        if on_right { right.push((pattern, branches)) } else { left.push((pattern, branches)) }
     }
-    res.dedup();
+
+    let grid_right = padding_x + size_info.columns as f32 * cw;
+    let right_padding = (size_info.width - grid_right).max(0.);
+    let mut res = vec![];
+    for (mut side, on_right) in [(left, false), (right, true)] {
+        side.sort_by(|a, b| a.1[0].0.total_cmp(&b.1[0].0));
+        let extents: Vec<(f32, f32)> = side
+            .iter()
+            .map(|(_, branches)| (branches[0].0, branches[branches.len() - 1].0))
+            .collect();
+        let (lanes, count) = assign_lanes(&extents);
+        let padding = if on_right { right_padding } else { padding_x };
+        let spacing = (padding / (count + 1) as f32).clamp(MIN_LANE_SPACING, MAX_LANE_SPACING);
+        for ((pattern, branches), lane) in side.into_iter().zip(lanes) {
+            let offset = spacing * (lane + 1) as f32;
+            let trunk_x = if on_right { size_info.width - offset } else { offset };
+            res.push(PatternLinks { pattern, trunk_x, branches });
+        }
+    }
     res
 }
 
-/// Generates the vertices of the links, `color` gives the color of every pattern, `hovered` is
-/// the pattern under the mouse and `time` is in seconds.
+/// Generates the vertices of the links, `color` gives the color of every pattern and `hovered`
+/// is the pattern under the mouse.
 pub fn gen_vertices(
     links: &[PatternLinks],
     size_info: SizeInfo,
-    time: f32,
     hovered: Option<u64>,
     color: impl Fn(u64) -> [u8; 3],
 ) -> Vec<NannouVertices> {
@@ -201,42 +161,20 @@ pub fn gen_vertices(
     let draw = new_draw();
     for links in links {
         let [r, g, b] = color(links.pattern);
-        let color = |alpha: f32| Color::srgba_u8(r, g, b, (alpha * 255.) as u8);
         let (alpha, weight) = if hovered == Some(links.pattern) {
             (HOVERED_ALPHA, HOVERED_WEIGHT)
         } else {
             (BASE_ALPHA, BASE_WEIGHT)
         };
+        let color = Color::srgba_u8(r, g, b, (alpha * 255.) as u8);
 
         // The trunk and the branches.
         let (top, bottom) = (links.branches[0].0, links.branches[links.branches.len() - 1].0);
         let trunk = polyline(vec![Vec2::new(links.trunk_x, top), Vec2::new(links.trunk_x, bottom)]);
-        draw.path().stroke().weight(weight).color(color(alpha)).points(trunk);
+        draw.path().stroke().weight(weight).color(color).points(trunk);
         for &(y, end) in &links.branches {
             let branch = polyline(vec![Vec2::new(links.trunk_x, y), Vec2::new(end, y)]);
-            draw.path().stroke().weight(weight).color(color(alpha)).points(branch);
-        }
-
-        // Sections going back and forth along the route between the lines of the pattern.
-        let route = links.route();
-        let route_length = length(&route);
-        let pulse = (PULSE_CELLS * size_info.cell_width).min(route_length);
-        let travel = route_length - pulse;
-        let period = (travel / (PULSE_CELLS_PER_SEC * size_info.cell_width)).max(0.5);
-        let phase = (links.pattern % 1000) as f32 / 1000.;
-        for index in 0..PULSES {
-            let t = (time / (2. * period) + phase + index as f32 / PULSES as f32).fract();
-            let from = travel * (1. - (2. * t - 1.).abs());
-            let section = polyline(sub_polyline(&route, from, from + pulse));
-            if section.len() < 2 {
-                continue;
-            }
-            draw.path()
-                .stroke()
-                .weight(GLOW_WEIGHT)
-                .color(color(GLOW_ALPHA))
-                .points(section.clone());
-            draw.path().stroke().weight(PULSE_WEIGHT).color(color(PULSE_ALPHA)).points(section);
+            draw.path().stroke().weight(weight).color(color).points(branch);
         }
     }
     super::NannouDecoration::gen_vertices_from_nannou_draw(draw, size_info)
@@ -338,51 +276,42 @@ mod tests {
     }
 
     #[test]
-    fn route_goes_through_every_line() {
-        let links = PatternLinks {
-            pattern: 1,
-            trunk_x: 5.,
-            branches: vec![(10., 50.), (30., 60.), (50., 40.)],
-        };
-        assert_eq!(links.route(), [
-            Vec2::new(50., 10.),
-            Vec2::new(5., 10.),
-            Vec2::new(5., 30.),
-            Vec2::new(60., 30.),
-            Vec2::new(5., 30.),
-            Vec2::new(5., 50.),
-            Vec2::new(40., 50.),
+    fn patterns_on_the_right_link_from_the_right() {
+        // Centered after the middle of the 76 columns.
+        let instances =
+            [instance(2, 50, 5), instance(6, 52, 5), instance(1, 0, 6), instance(7, 0, 6)];
+        let links = layout(&instances, size_info());
+        let right = links.iter().find(|links| links.pattern == 5).unwrap();
+        let (cw, ch, pad_x, pad_y) = (10., 20., 20., 4.);
+        // In the right padding, after the end of the grid at 780 pixels.
+        assert!(right.trunk_x > 780. && right.trunk_x < 800.);
+        // Up to the start of the repeated text.
+        assert_eq!(right.branches, [
+            (pad_y + 3. * ch, pad_x + 50. * cw),
+            (pad_y + 7. * ch, pad_x + 52. * cw)
         ]);
-    }
-
-    #[test]
-    fn sub_polylines() {
-        let points = [Vec2::new(0., 0.), Vec2::new(10., 0.), Vec2::new(10., 10.)];
-        assert_eq!(length(&points), 20.);
-        assert_eq!(sub_polyline(&points, 5., 15.), [
-            Vec2::new(5., 0.),
-            Vec2::new(10., 0.),
-            Vec2::new(10., 5.)
-        ]);
-        assert_eq!(sub_polyline(&points, 12., 14.), [Vec2::new(10., 2.), Vec2::new(10., 4.)]);
+        // Overlapping patterns on different sides may share their lane.
+        let left = links.iter().find(|links| links.pattern == 6).unwrap();
+        assert!(left.trunk_x < 20.);
+        assert_eq!(left.trunk_x, 800. - right.trunk_x);
     }
 
     #[test]
     fn vertices_in_the_pattern_color() {
         let links = layout(&[instance(0, 0, 9), instance(2, 0, 9)], size_info());
-        let vertices = gen_vertices(&links, size_info(), 1.5, None, |_| [255, 0, 0]);
-        // The trunk, two branches and the glow and center of two travelling sections.
-        assert_eq!(vertices.len(), 7);
+        let vertices = gen_vertices(&links, size_info(), None, |_| [255, 0, 0]);
+        // The trunk and two branches.
+        assert_eq!(vertices.len(), 3);
         for vertex in vertices.iter().flat_map(|vertices| vertices.vecs.chunks_exact(7)) {
             assert!((vertex[3] - 1.).abs() < 1e-3 && vertex[4] < 1e-3, "{vertex:?}");
-            assert!(vertex[6] <= PULSE_ALPHA + 1e-2, "{vertex:?}");
+            assert!(vertex[6] <= BASE_ALPHA + 1e-2, "{vertex:?}");
         }
 
         // The links of the pattern under the mouse stand out.
         let max_alpha = |vertices: &[NannouVertices]| {
             vertices[0].vecs.chunks_exact(7).map(|vertex| vertex[6]).fold(0., f32::max)
         };
-        let hovered = gen_vertices(&links, size_info(), 1.5, Some(9), |_| [255, 0, 0]);
+        let hovered = gen_vertices(&links, size_info(), Some(9), |_| [255, 0, 0]);
         assert!(max_alpha(&hovered) > max_alpha(&vertices) * 2.);
     }
 }

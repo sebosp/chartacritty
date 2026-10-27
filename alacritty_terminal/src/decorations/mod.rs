@@ -1,9 +1,12 @@
 //! Decorations for the Alacritty Terminal.
 pub use self::grid_lines::{GridLine, GridLinesConfig};
 pub use self::nannou::{NannouDecoration, NannouDrawArrayMode};
+pub use self::nature::NatureConfig;
 pub use self::pattern_links::PatternLinksConfig;
 pub use self::repeated_text::RepeatedTextConfig;
+pub use self::sun::Location;
 pub use self::tables::TablesConfig;
+pub use self::weather::WeatherConfig;
 use crate::term::SizeInfo;
 use bevy::math::Vec3;
 pub use hexagon_line_background::HexagonLineBackground;
@@ -20,10 +23,14 @@ pub mod hexagon_point_background;
 pub mod hexagon_triangle_background;
 pub mod moon_phase;
 pub mod nannou;
+pub mod nature;
 pub mod pattern_links;
 pub mod polar_clock;
 pub mod repeated_text;
+pub mod sun;
 pub mod tables;
+pub mod timeline;
+pub mod weather;
 
 // TODO: Use const init that calculates these magic numbers at compile time
 pub const COS_60: f32 = 0.49999997f32;
@@ -60,6 +67,18 @@ pub struct DecorationsConfig {
     /// Draws the cells of the tables in the view as rounded rectangles.
     #[serde(default)]
     pub tables: TablesConfig,
+
+    /// Grass and a bonsai moving with the wind made by the changes of the screen.
+    #[serde(default)]
+    pub nature: NatureConfig,
+
+    /// The location of the terminal, roughly, for the sunrise, the sunset and the rain forecast.
+    #[serde(default)]
+    pub location: Option<Location>,
+
+    /// The corner of the window showing the next sunrise or sunset and the rain forecast.
+    #[serde(default)]
+    pub weather: WeatherConfig,
 
     /// The time at which config was initialized
     #[serde(skip)]

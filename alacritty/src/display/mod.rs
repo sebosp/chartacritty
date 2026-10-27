@@ -53,16 +53,17 @@ use crate::display::meter::Meter;
 use crate::display::window::Window;
 use crate::event::{Event, EventType, Mouse, SearchState};
 use crate::message_bar::{MessageBuffer, MessageType};
+use crate::renderer::rain::RAIN_VERTEX_FLOATS;
 use crate::renderer::rects::{RenderLine, RenderLines, RenderRect};
-use crate::renderer::smoke::SMOKE_VERTEX_FLOATS;
 use crate::renderer::{self, GlyphCache, Renderer, platform};
 use crate::scheduler::{Scheduler, TimerId, Topic};
 use crate::string::{ShortenDirection, StrShortener};
 
 // Chartacritty:
+use alacritty_terminal::charts::Value2D;
 use alacritty_terminal::decorations::{
     DecorationLines, DecorationPoints, DecorationTriangles, DecorationTypes, DecorationsConfig,
-    grid_lines, pattern_links, repeated_text, tables,
+    grid_lines, nature, pattern_links, repeated_text, sun, tables, timeline, weather,
 };
 use alacritty_terminal::term::TermChartsHandle;
 
@@ -430,6 +431,14 @@ pub struct Display {
     pattern_mouse_point: Option<Point<usize>>,
     /// The tables in the view, drawn as rounded rectangles behind their cells.
     tables: tables::Tables,
+    /// The grass and the bonsai, moving with the changes of the screen.
+    nature: nature::Nature,
+    /// The characters of the visible lines, before any emphasis.
+    visible_lines: Vec<Vec<char>>,
+    /// The rain forecast, when a location is configured.
+    weather: Option<weather::WeatherWatcher>,
+    /// Right edge of the charts, in pixels from the left of the window.
+    charts_right: f32,
     tokio_setup: Option<TermChartsHandle>,
 }
 
@@ -548,6 +557,13 @@ impl Display {
         let mut decorations =
             DecorationsConfig::optional_decor_to_sized(decorations_config, size_info.into());
         decorations.init_timers();
+        let weather = decorations
+            .location
+            .filter(|_| decorations.weather.enabled && decorations.weather.rain)
+            .map(|location| {
+                weather::WeatherWatcher::spawn(location, decorations.weather.refresh_minutes)
+            });
+        let charts_right = charts_right_edge(config, size_info.padding_x());
         // Disable vsync.
         if let Err(err) = surface.set_swap_interval(&context, SwapInterval::DontWait) {
             info!("Failed to disable vsync: {err}");
@@ -583,6 +599,10 @@ impl Display {
             repeated_text: Default::default(),
             pattern_mouse_point: Default::default(),
             tables: Default::default(),
+            nature: Default::default(),
+            visible_lines: Default::default(),
+            weather,
+            charts_right,
             tokio_setup: None,
         })
     }
@@ -947,12 +967,18 @@ impl Display {
         self.renderer.clear(background_color, config.window_opacity());
 
         // Behind the text, so that it remains readable.
+        self.draw_nature(decorations_enabled);
         let tables_vertices = self.tables.vertices();
         if !tables_vertices.is_empty() {
             self.renderer.draw_nannou_vertices(&size_info, tables_vertices);
         }
+        let weather_corner = self.weather_corner(decorations_enabled);
+        if let Some(corner) = &weather_corner {
+            self.draw_rain(corner);
+        }
+        self.draw_timeline(decorations_enabled);
         let hovered_pattern = self.hovered_pattern();
-        self.draw_pattern_smoke(hovered_pattern);
+        self.draw_pattern_outlines(hovered_pattern);
         self.draw_pattern_links(decorations_enabled, hovered_pattern);
         let mut lines = RenderLines::new();
         let mut line_cells = Vec::new();
@@ -1162,6 +1188,10 @@ impl Display {
             debug!("Charts are not enabled");
         }
 
+        if let Some(corner) = &weather_corner {
+            self.draw_weather_text(corner, foreground_color);
+        }
+
         self.draw_render_timer(config);
 
         // Draw hyperlink uri preview.
@@ -1257,7 +1287,8 @@ impl Display {
         }
     }
 
-    /// Analyzes the visible text for repetitions and tables, see `repeated_text` and `tables`.
+    /// Analyzes the visible text for repetitions and tables, see `repeated_text` and `tables`, and
+    /// its changes for the wind of `nature`.
     fn update_text_decorations(
         &mut self,
         grid_cells: &[RenderableCell],
@@ -1265,12 +1296,15 @@ impl Display {
     ) {
         let repeated_text = decorations_enabled && self.decorations.repeated_text.enabled;
         let tables = decorations_enabled && self.decorations.tables.enabled;
+        let nature = decorations_enabled && self.nature_enabled();
+        let weather = decorations_enabled && self.weather_enabled();
 
         // The characters of the visible lines and their colors, before any emphasis.
         let (columns, screen_lines) = (self.size_info.columns(), self.size_info.screen_lines());
         let mut lines = vec![vec![' '; columns]; screen_lines];
         let mut colors = vec![vec![repeated_text::CellColor::default(); columns]; screen_lines];
-        if repeated_text || tables {
+        let analyzed = repeated_text || tables || nature || weather;
+        if analyzed {
             for cell in grid_cells {
                 let (line, column) = (cell.point.line, cell.point.column.0);
                 if let Some(c) = lines.get_mut(line).and_then(|line| line.get_mut(column)) {
@@ -1279,7 +1313,11 @@ impl Display {
                 }
             }
         }
-        let lines = (repeated_text || tables).then_some(lines);
+        if nature {
+            self.nature.observe(&lines, &colors);
+        }
+        self.visible_lines.clone_from(&lines);
+        let lines = analyzed.then_some(lines);
 
         // Lines are dimmed depending on the other lines and a single new line can turn the lines
         // above it into a table, so a single new line of output can change the whole screen.
@@ -1318,82 +1356,198 @@ impl Display {
             return;
         }
 
-        // Sections travel along the links on every frame.
-        self.damage_tracker.frame().mark_fully_damaged();
-        self.damage_tracker.next_frame().mark_fully_damaged();
-
-        let time = self.decorations.get_elapsed_secs_with_millis();
-        let vertices: Vec<f32> = pattern_links::gen_vertices(
-            &links,
-            size_info.into(),
-            time,
-            hovered_pattern,
-            pattern_rgb,
-        )
-        .into_iter()
-        .flat_map(|vertices| vertices.vecs)
-        .collect();
+        let vertices: Vec<f32> =
+            pattern_links::gen_vertices(&links, size_info.into(), hovered_pattern, pattern_rgb)
+                .into_iter()
+                .flat_map(|vertices| vertices.vecs)
+                .collect();
         self.renderer.draw_nannou_vertices(&size_info, &vertices);
     }
 
-    /// Draws a faint smoky beam of light, in the color of its pattern, behind each span of
-    /// repeated text, the spans of the pattern under the mouse are outlined instead.
-    fn draw_pattern_smoke(&mut self, hovered_pattern: Option<u64>) {
+    /// Outlines the repeated text of the pattern under the mouse, everywhere in the view.
+    fn draw_pattern_outlines(&mut self, hovered_pattern: Option<u64>) {
+        let Some(hovered) = hovered_pattern else { return };
         let size_info = self.size_info;
-        if let Some(hovered) = hovered_pattern {
-            let repeated_text = &self.repeated_text;
-            let spans: Vec<_> = repeated_text
-                .spans()
-                .iter()
-                .chain(repeated_text.first_spans())
-                .filter(|span| span.pattern == hovered)
-                .copied()
+        let repeated_text = &self.repeated_text;
+        let spans: Vec<_> = repeated_text
+            .spans()
+            .iter()
+            .chain(repeated_text.first_spans())
+            .filter(|span| span.pattern == hovered)
+            .copied()
+            .collect();
+        let vertices: Vec<f32> =
+            pattern_links::gen_outline_vertices(&spans, size_info.into(), pattern_rgb)
+                .into_iter()
+                .flat_map(|vertices| vertices.vecs)
                 .collect();
-            let vertices: Vec<f32> =
-                pattern_links::gen_outline_vertices(&spans, size_info.into(), pattern_rgb)
-                    .into_iter()
-                    .flat_map(|vertices| vertices.vecs)
-                    .collect();
-            self.renderer.draw_nannou_vertices(&size_info, &vertices);
-        }
+        self.renderer.draw_nannou_vertices(&size_info, &vertices);
+    }
 
-        let spans = self.repeated_text.spans();
-        if spans.is_empty() {
+    fn nature_enabled(&self) -> bool {
+        let nature = &self.decorations.nature;
+        nature.grass || nature.bonsai
+    }
+
+    fn weather_enabled(&self) -> bool {
+        let weather = &self.decorations.weather;
+        self.decorations.location.is_some() && weather.enabled && (weather.sun || weather.rain)
+    }
+
+    /// Draws the grass and the bonsai, see `nature`.
+    fn draw_nature(&mut self, decorations_enabled: bool) {
+        if !decorations_enabled || !self.nature_enabled() {
             return;
         }
 
-        let (width, height) = (size_info.width(), size_info.height());
-        let (cw, ch) = (size_info.cell_width(), size_info.cell_height());
-        let mut vertices = Vec::with_capacity(spans.len() * 6 * SMOKE_VERTEX_FLOATS);
-        for span in spans.iter().filter(|span| Some(span.pattern) != hovered_pattern) {
-            let Rgb(color) = pattern_color(span.pattern);
-            let [r, g, b] = [color.r, color.g, color.b].map(|c| c as f32 / 255.);
-
-            // Overflow the span a bit, the shader fades out its ends and edges.
-            let left = size_info.padding_x() + (span.start as f32 - 0.5) * cw;
-            let right = size_info.padding_x() + (span.end as f32 + 0.5) * cw;
-            let top = size_info.padding_y() + (span.line as f32 - 0.25) * ch;
-            let bottom = top + ch * 1.5;
-
-            let x = |px: f32| px / width * 2. - 1.;
-            let y = |px: f32| 1. - px / height * 2.;
-            let corner = |px: f32, py: f32, u: f32, v: f32| {
-                [x(px), y(py), r, g, b, PATTERN_SMOKE_ALPHA, u, v]
-            };
-            let (top_left, top_right) = (corner(left, top, 0., 0.), corner(right, top, 1., 0.));
-            let (bottom_left, bottom_right) =
-                (corner(left, bottom, 0., 1.), corner(right, bottom, 1., 1.));
-            for vertex in [top_left, bottom_left, top_right, top_right, bottom_left, bottom_right] {
-                vertices.extend_from_slice(&vertex);
-            }
-        }
-
-        // The smoke drifts on every frame.
+        // The grass and the leaves move on every frame.
         self.damage_tracker.frame().mark_fully_damaged();
         self.damage_tracker.next_frame().mark_fully_damaged();
 
+        let size_info = self.size_info;
         let time = self.decorations.get_elapsed_secs_with_millis();
-        self.renderer.draw_smoke(&size_info, &vertices, time);
+        let vertices = self.nature.frame(&self.decorations.nature, size_info.into(), time);
+        self.renderer.draw_nannou_vertices(&size_info, &vertices);
+    }
+
+    /// The corner of the window showing the sun and the rain, at the bottom right of the grid
+    /// and right of the charts.
+    fn weather_corner(&self, decorations_enabled: bool) -> Option<WeatherCorner> {
+        if !decorations_enabled || !self.weather_enabled() {
+            return None;
+        }
+        let config = &self.decorations.weather;
+        let size_info = &self.size_info;
+        let (columns, screen_lines) = (size_info.columns(), size_info.screen_lines());
+        let charts_column = ((self.charts_right - size_info.padding_x()) / size_info.cell_width())
+            .ceil()
+            .max(0.) as usize;
+        let first_column = columns.saturating_sub(config.columns).max(charts_column + 1);
+        if first_column + 8 > columns {
+            return None;
+        }
+        let lines = config.lines.clamp(2, screen_lines);
+        Some(WeatherCorner {
+            first_line: screen_lines - lines,
+            first_column,
+            columns: columns - first_column,
+        })
+    }
+
+    /// Draws the timeline of the daylight and the weather along the top of the window.
+    fn draw_timeline(&mut self, decorations_enabled: bool) {
+        let config = &self.decorations.weather;
+        let Some(location) = self.decorations.location else { return };
+        if !decorations_enabled || !config.enabled || !config.timeline {
+            return;
+        }
+
+        // In the top padding when there is enough of it.
+        let size_info = self.size_info;
+        let height = config.timeline_height.max(size_info.padding_y().min(12.));
+        let forecast = self.weather.as_ref().and_then(|weather| weather.forecast());
+        let now = chrono::Utc::now();
+        let vertices =
+            timeline::gen_vertices(now, location, forecast.as_ref(), size_info.into(), height);
+        self.renderer.draw_nannou_vertices(&size_info, &vertices);
+    }
+
+    /// Draws the rain forecast at the location as rain in the weather corner.
+    fn draw_rain(&mut self, corner: &WeatherCorner) {
+        let now = chrono::Utc::now().timestamp();
+        let Some(forecast) = self.weather.as_ref().and_then(|weather| weather.forecast()) else {
+            return;
+        };
+        let intensity = weather::RainOutlook::new(&forecast, now).intensity();
+        if intensity <= 0. {
+            return;
+        }
+
+        // The rain falls on every frame.
+        self.damage_tracker.frame().mark_fully_damaged();
+        self.damage_tracker.next_frame().mark_fully_damaged();
+
+        let size_info = self.size_info;
+        let (width, height) = (size_info.width(), size_info.height());
+        let (cw, ch) = (size_info.cell_width(), size_info.cell_height());
+        let left = size_info.padding_x() + corner.first_column as f32 * cw;
+        let right = width;
+        let top = size_info.padding_y() + corner.first_line as f32 * ch;
+        let bottom = height;
+
+        let x = |px: f32| px / width * 2. - 1.;
+        let y = |px: f32| 1. - px / height * 2.;
+        let [r, g, b] = [0.62, 0.74, 0.9];
+        let vertex = |px: f32, py: f32, u: f32, v: f32| [x(px), y(py), r, g, b, intensity, u, v];
+        let (top_left, top_right) = (vertex(left, top, 0., 0.), vertex(right, top, 1., 0.));
+        let (bottom_left, bottom_right) =
+            (vertex(left, bottom, 0., 1.), vertex(right, bottom, 1., 1.));
+        let mut vertices = Vec::with_capacity(6 * RAIN_VERTEX_FLOATS);
+        for vertex in [top_left, bottom_left, top_right, top_right, bottom_left, bottom_right] {
+            vertices.extend_from_slice(&vertex);
+        }
+
+        let time = self.decorations.get_elapsed_secs_with_millis();
+        self.renderer.draw_rain(&size_info, &vertices, time, self.nature.wind());
+    }
+
+    /// Writes the next sunrise or sunset and the rain forecast in the top lines of the weather
+    /// corner, right aligned, where the grid is empty.
+    fn draw_weather_text(&mut self, corner: &WeatherCorner, fg: Rgb) {
+        let config = &self.decorations.weather;
+        let Some(location) = self.decorations.location else { return };
+        let now = chrono::Utc::now();
+
+        let mut texts = vec![];
+        if config.sun {
+            let sun = sun::sun_status(now, location).map(|(event, _)| {
+                let (name, time) = match event {
+                    sun::NextSunEvent::Sunrise(time) => ("sunrise", time),
+                    sun::NextSunEvent::Sunset(time) => ("sunset", time),
+                };
+                let minutes = (time - now).num_minutes();
+                let local = time.with_timezone(&chrono::Local).format("%H:%M");
+                format!("{name} {local} in {}", weather::format_minutes(minutes))
+            });
+            texts.push(sun.unwrap_or_else(|| String::from("no sunrise nor sunset soon")));
+        }
+        if config.rain {
+            let forecast = self.weather.as_ref().and_then(|weather| weather.forecast());
+            texts.push(match forecast {
+                Some(forecast) => weather::RainOutlook::new(&forecast, now.timestamp()).describe(),
+                None => String::from("rain forecast pending"),
+            });
+        }
+
+        // Faint, the weather is only a glance away.
+        let bg = self.colors[NamedColor::Background];
+        let fg = fg * 0.55 + bg * 0.45;
+        let size_info = self.size_info;
+        for (offset, text) in texts.iter().enumerate() {
+            let line = corner.first_line + offset;
+            let length = text.chars().count();
+            if length > corner.columns || line >= size_info.screen_lines() {
+                continue;
+            }
+            let column = corner.first_column + corner.columns - length;
+            let free = self.visible_lines.get(line).is_some_and(|cells| {
+                cells.iter().skip(column.saturating_sub(1)).all(|c| c.is_whitespace())
+            });
+            if !free {
+                continue;
+            }
+            let cells = text.chars().enumerate().map(|(i, character)| RenderableCell {
+                point: Point::new(line, Column(column + i)),
+                character,
+                extra: None,
+                flags: Flags::empty(),
+                bg_alpha: 0.,
+                fg,
+                bg,
+                underline: fg,
+            });
+            self.renderer.draw_cells(&size_info, &mut self.glyph_cache, cells);
+        }
     }
 
     /// Draws the runs of line characters found in the grid as nannou lines.
@@ -2106,8 +2260,35 @@ const PATTERN_TINT: f32 = 0.25;
 /// How much the repeated text of the pattern under the mouse is tinted with its color.
 const HOVERED_PATTERN_TINT: f32 = 0.4;
 
-/// Opacity of the smoke behind repeated text, the shader fades it further.
-const PATTERN_SMOKE_ALPHA: f32 = 0.175;
+/// The cells at the bottom right of the grid showing the sun and the rain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct WeatherCorner {
+    first_line: usize,
+    first_column: usize,
+    columns: usize,
+}
+
+/// Right edge of the charts in pixels from the left of the window, laid out like
+/// `ChartsConfig::setup_chart_spacing`, 0 without charts.
+fn charts_right_edge(config: &UiConfig, padding_x: f32) -> f32 {
+    let Some(charts) = &config.charts else { return 0. };
+    let charts = &charts.config;
+    let mut next = charts.position;
+    let mut right = 0f32;
+    for chart in &charts.charts {
+        let dimensions = chart.dimensions.or(charts.default_dimensions).unwrap_or_default();
+        let position = match chart.position {
+            Some(position) => position,
+            None => {
+                let Some(position) = next else { continue };
+                next = Some(Value2D { x: position.x + dimensions.x + charts.spacing, y: 0. });
+                position
+            },
+        };
+        right = right.max(padding_x + position.x + dimensions.x);
+    }
+    right
+}
 
 /// A color for each repeated pattern, with the hue picked from the pattern id.
 fn pattern_color(pattern: u64) -> Rgb {

@@ -32,6 +32,7 @@ futures = "0.3.31"
 lyon = "1.0"
 ahash = { version = "0.8.11", features = ["no-rng"] }
 bitflags = "2.6.0"
+chrono = "0.4.39"
 clap = { version = "4.5", features = ["derive", "env"] }
 copypasta = { version = "0.10.1", default-features = false }
 crossfont = "0.8.1"
