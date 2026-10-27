@@ -4,7 +4,7 @@ Last updated to:
 - Alacritty Terminal v0.26.0
 - Alacritty (base) 0.17.0
 
-![Chartacritty 0.17.0: tables, grid lines, repeated text, the bonsai losing its leaves in the wind and the sun and rain timeline](https://github.com/sebosp/chartacritty/releases/download/v0.17.0-dev/chartacritty-demo.gif)
+![Chartacritty 0.17.0: tables, grid lines, repeated text, the bonsai losing its leaves in the wind and the sun and rain timeline](extra/promo/chartacritty-demo.gif)
 
 The [full resolution video](https://github.com/sebosp/chartacritty/releases/download/v0.17.0-dev/chartacritty-demo.mp4)
 is attached to the [v0.17.0-dev release](https://github.com/sebosp/chartacritty/releases/tag/v0.17.0-dev).
